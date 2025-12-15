@@ -21,7 +21,7 @@ The directory structure is as follows:
 ├── **scripts** (Starting points to run preprocessing, training, evaluation, and generate visualisations) \
 │   ├── eval.py \
 │   ├── train.py \
-│   ├── visualize_data.py \
+│   ├── visualise.py \
 │   └── preprocess.py \
 ├── **src** \
 │   ├── data \
