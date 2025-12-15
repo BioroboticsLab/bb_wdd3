@@ -21,9 +21,9 @@ The directory structure is as follows:
 ├── **notebooks** \
 ├── **scripts** (Starting points to run preprocessing, training, evaluation, and generate visualisations) \
 │   ├── eval.py \
-│   ├── train.py \ 
+│   ├── train.py \
 │   ├── visualize_data.py \
-│   └── sample_videos_and_annotations.py \
+│   └── preprocess.py \
 ├── **src** \
 │   ├── data \
 │   ├── evaluation \
@@ -86,7 +86,7 @@ Use the annotation tool (https://github.com/BioroboticsLab/bb_waggledance_annota
 Run the preprocess_annotations.py script to expand or format your annotation files properly:
 
 ```
-  preprocess_annotations --input_folder <path_to_raw_annotations> --output_folder <path_to_expanded_annotations>
+  preprocess --expand_only --annotation_csv <raw_annotations_file> --expanded_annotation_folder <output_folder>
 ```
 
 3. Run inference
