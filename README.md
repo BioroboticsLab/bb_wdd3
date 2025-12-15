@@ -16,8 +16,7 @@ The directory structure is as follows:
 │   └── eval_annotations \
 ├── **experiments** \
 │   ├── logs \
-│   ├── checkpoints \
-│   └── evaluation_results \
+│   └── checkpoints \
 ├── **notebooks** \
 ├── **scripts** (Starting points to run preprocessing, training, evaluation, and generate visualisations) \
 │   ├── eval.py \
@@ -86,7 +85,7 @@ Use the annotation tool (https://github.com/BioroboticsLab/bb_waggledance_annota
 Run the preprocess_annotations.py script to expand or format your annotation files properly:
 
 ```
-  preprocess --expand_only --annotation_csv <raw_annotations_file> --expanded_annotation_folder <output_folder>
+  wdd3_preprocess --expand_only --annotation_csv <raw_annotations_file> --expanded_annotation_folder <output_folder>
 ```
 
 3. Run inference
@@ -94,7 +93,7 @@ Run the preprocess_annotations.py script to expand or format your annotation fil
 After preprocessing, you can run inference on your evaluation videos using the trained model:
 
 ```
-  infer \
+  wdd3_infer \
     --model_path "<path_to_trained_model>/best_model.pth" \
     --video_folder "<path_to_eval_videos>" \
     --gt_folder "<path_to_expanded_annotations>" \
@@ -129,7 +128,7 @@ Ensure that your training videos and annotations are ready and properly preproce
 You can run the training script using the following command:
 
 ```
-  train \
+  wdd3_train \
     --data-dir <path_to_videos> \
     --annotations <path_to_annotations_csv> \
     --batch-size 32 \

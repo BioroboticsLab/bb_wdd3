@@ -1,0 +1,16 @@
+data/*
+!data/.gitkeep
+
+__pycache__/
+*.pyc
+
+experiments/
+logs/
+checkpoints/
+!experiments/.gitkeep
+
+visualizations/
+*.mp4
+*.csv
+
+.ipynb_checkpoints/
