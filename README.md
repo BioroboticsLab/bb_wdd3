@@ -90,6 +90,8 @@ Run the preprocess_annotations.py script to expand or format your annotation fil
 
 3. Run inference
 
+The model checkpoints are available at - [Checkpoints](https://drive.google.com/drive/folders/1W5pHavo7kbJIoF1RJDB8lv8GK2kTRN25?usp=sharing)
+
 After preprocessing, you can run inference on your evaluation videos using the trained model:
 
 ```
@@ -116,6 +118,8 @@ Explanation of key arguments:
 --consolidation-strategy: Strategy for consolidating detections across frames.
 
 You can also run ``` infer --help``` to get a more detailed version of the command line arguments and their description.
+
+The predictions are saved in the output folder along with the ground truth matched details if evaluation is selected. Videos visualised with ground truth and predictions are also saved.
 
 ### Training (Fine-tune) 
 

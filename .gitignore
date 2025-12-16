@@ -1,13 +1,22 @@
 data/*
+!data/
 !data/.gitkeep
+
+experiments/*
+!experiments/
+
+!experiments/logs/
+!experiments/checkpoints/
+
+experiments/logs/*
+experiments/checkpoints/*
+
+!experiments/logs/.gitkeep
+!experiments/checkpoints/.gitkeep
+
 
 __pycache__/
 *.pyc
-
-experiments/
-logs/
-checkpoints/
-!experiments/.gitkeep
 
 visualizations/
 *.mp4

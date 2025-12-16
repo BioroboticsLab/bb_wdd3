@@ -43,7 +43,7 @@ def parse_args():
                        help='Epoch number of the model')
     parser.add_argument('--video_folder', type=str, required=True,
                        help='Directory containing evaluation videos')
-    parser.add_argument('--gt_folder', type=str, required=True,
+    parser.add_argument('--gt_folder', type=str, required=False, default=None,
                        help='Directory containing ground truth annotations')
     parser.add_argument('--output_folder', type=str, required=True,
                        help='Directory to save evaluation results and predictions')
@@ -113,7 +113,7 @@ def evaluate_single_video(model, device, video_path, video_name, epoch,
     os.makedirs(epoch_folder, exist_ok=True)
     output_video_path = os.path.join(epoch_folder, video_name)
 
-    summary_csv = os.path.join(epoch_folder, "summary_metrics.csv")
+    summary_csv = os.path.join(epoch_folder, "summary_metrics.csv") if gt_folder else None
     
     print(f"Processing video: {video_name}")
     print(f"  Confidence threshold: {confidence}")
@@ -165,6 +165,19 @@ def evaluate_single_video(model, device, video_path, video_name, epoch,
     raw_df.to_csv(os.path.join(epoch_folder, f"{video_name}_preds_before.csv"),
         index=False
     )
+    
+    if gt_folder is None:
+        print(f"\nNo ground truth provided - skipping evaluation")
+        print(f"Total detections after post-processing: {len(preds_df)}")
+        
+        visualize_preds_and_gt(
+            video_path,
+            preds_csv=preds_df,
+            gt_csv=None,
+            output_path=output_video_path+"_visualised.mp4"
+        )
+        
+        return None
     
     # Step 3: Load ground truth and evaluate
     pattern = os.path.join(gt_folder, f"{video_name}*.csv")
@@ -357,11 +370,9 @@ def evaluate(model_path, epoch, video_folder, gt_folder, output_folder,
     return all_results
 
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
     
-    # Build evaluation config
-    # CRITICAL: These must match dataloader evaluation
     eval_config = {
         'pos_thresholds': args.pos_thresholds,
         'iou_threshold_range': tuple(args.iou_thresholds),
@@ -390,3 +401,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         resize=args.resize
     )
+
+
+if __name__ == '__main__':
+    main()
