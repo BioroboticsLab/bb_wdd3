@@ -1,25 +1,22 @@
+# Ignore everything in data/ except the folder itself
 data/*
-!data/
 !data/.gitkeep
 
-experiments/*
-!experiments/
-
-!experiments/logs/
-!experiments/checkpoints/
-
+# Ignore everything in experiments/ subfolders except the folders themselves
 experiments/logs/*
-experiments/checkpoints/*
-
 !experiments/logs/.gitkeep
+
+experiments/checkpoints/*
 !experiments/checkpoints/.gitkeep
 
-
+# Python
 __pycache__/
 *.pyc
 
+# Output files
 visualizations/
 *.mp4
 *.csv
 
+# Jupyter
 .ipynb_checkpoints/
