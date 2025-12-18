@@ -1,0 +1,64 @@
+# Data configuration
+data:
+  data_dir: '/home/prajna/complete_data/videos/' #'./data/resvideos'
+  annotations: /home/prajna/complete_data/annotations/fps_multires_full_data.csv #'./data/annotations/fps_multires_full_data.csv'
+  train_ratio: 0.75
+  subset_size: 1.0
+
+# Model configuration
+model:
+  pretrained: true
+
+# Training configuration
+training:
+  batch_size: 32
+  epochs: 200
+  lr: 0.0001
+  weight_decay: 0.0005
+  val_freq: 5
+  use_amp: true
+  warmup_ratio: 0.1 # onecycle warmup ratio
+
+# Augmentation configuration
+augmentation:
+  prob: 0.5
+  scale_range: [0.8, 1.2]
+
+# System configuration
+system:
+  seed: 42
+  num_workers: 8
+  device: 'cuda'
+
+# Logging configuration
+logging:
+  log_dir: './logs'
+  checkpoint_dir: './checkpoints'
+  experiment_name: 'single_split'
+
+# Evaluation configuration
+evaluation:
+  enabled: false
+  only_eval: false
+  confidence_threshold: 0.5
+  consolidation_strategy: 'cluster_consolidate_v2'
+  pos_thresholds: [20]
+  iou_thresholds: [0.5]
+  angular_thresholds: [15]
+
+# Resume configuration
+resume:
+  checkpoint_path: null
+  load_scheduler: false
+
+# Loss weights (optional)
+loss_weights:
+  lambda_obj: null
+  lambda_noobj: null
+  lambda_pos: null
+  lambda_dir: null
+  lambda_temporal: null
+
+# Early stopping (optional)
+early_stopping:
+  patience: null

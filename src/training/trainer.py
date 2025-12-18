@@ -65,7 +65,7 @@ class WaggleTrainer:
         
         # AMP scaler
         self.scaler = torch.amp.GradScaler() if use_amp else None
-    
+        
     def train_epoch(self, train_loader: DataLoader, epoch: int) -> Dict[str, float]:
         """
         Train for one epoch.

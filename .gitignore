@@ -20,3 +20,30 @@ visualizations/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+*.egg-info/
+*.eggs/
+*.ruff_cache/
+
+# Checkpoints folder
+ckpt/
+
+# Data folder
+data/
+
+# TensorBoard logs
+events.out.tfevents.*
+eval_logs/
+runs/
+logs/
+
+# Ignore all JPGs in tests
+src/tests/**/*.png
+src/tests/**/*.jpg
+src/tests/**/*.jpeg
