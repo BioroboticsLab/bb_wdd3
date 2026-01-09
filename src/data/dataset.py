@@ -2,9 +2,26 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 from torchvision.transforms import ToTensor
-from .video_loader import load_video_frames
-from src.utils import get_video_category
+from video_loader import load_video_frames
 import os
+from utils.video_utils import get_video_category
+
+class TemporalWaggleCollator:
+    """
+        Collate function to load the dataset into data loaders
+    """
+    def __call__(self, batch):
+        videos = [sample['video'] for sample in batch]
+        targets = [sample['targets'] for sample in batch]
+        labels = [sample['label'] for sample in batch]
+        metadata = [sample['metadata'] for sample in batch]
+
+        return {
+            "video": torch.stack(videos),
+            "targets": torch.stack(targets),
+            "label": torch.tensor(labels),
+            "metadata": metadata
+        }
 
 class VideoYoloDataset(Dataset):    
     """
@@ -88,17 +105,18 @@ class VideoYoloDataset(Dataset):
         label = row['waggle'] 
 
         video_path = os.path.join(self.video_dir, video_name)         
-
         start_frame, end_frame = row["start_frame"], row["end_frame"]
-        frames = load_video_frames(video_path, start_frame, end_frame)
-
+        
+        # Load frames
+        #print('video_path:', video_path)
+        frames = load_video_frames(video_path, start_frame, end_frame, use_cache=False)
+        #print('Passes')
         if not frames:
             raise ValueError(f"No frames found for video {video_name}")
 
         gt_x, gt_y = row["x1"], row["y1"]
-
-        # Determine original dimensions
         first_frame = frames[0]
+        
         if isinstance(first_frame, torch.Tensor):
             original_h, original_w = first_frame.shape[-2:]
         else:
@@ -106,44 +124,34 @@ class VideoYoloDataset(Dataset):
 
         crop_h, crop_w = self.height, self.width
 
-        # Deterministic random crop based on sample index
-        # Same idx = same crop always (across all epochs and train/val)
+        # Deterministic random crop
         rng = np.random.RandomState(seed=idx)
-        
         margin_x = int(crop_w * 0.2)
         margin_y = int(crop_h * 0.2)
-        
         max_offset_x = (crop_w // 2) - margin_x
         max_offset_y = (crop_h // 2) - margin_y
-        
         offset_x = rng.randint(-max_offset_x, max_offset_x + 1)
         offset_y = rng.randint(-max_offset_y, max_offset_y + 1)
 
-        # Desired crop top-left with random offset
         x_min_ideal = int(gt_x - crop_w / 2) + offset_x
         y_min_ideal = int(gt_y - crop_h / 2) + offset_y
-
-        # Clamp to frame boundaries
         x_min = max(0, min(original_w - crop_w, x_min_ideal))
         y_min = max(0, min(original_h - crop_h, y_min_ideal))
-
         x_max = x_min + crop_w
         y_max = y_min + crop_h
 
-        # Crop all frames
-        cropped_frames = [f[y_min:y_max, x_min:x_max] for f in frames]
+        # Crop and convert to tensors IN ONE STEP to avoid keeping numpy arrays
+        frames = [self.to_tensor(f[y_min:y_max, x_min:x_max]) for f in frames]
+        
+        # Apply transform if needed
+        if self.transform:
+            frames = [self.transform(f) for f in frames]
 
         # GT in cropped region
         x = gt_x - x_min
         y = gt_y - y_min
-        frames = cropped_frames
 
-        # Convert to tensors if needed
-        frames = [self.to_tensor(f) if not torch.is_tensor(f) else f for f in frames]
-        if self.transform:
-            frames = [self.transform(f) for f in frames]
-
-        # ---- Apply augmentations (only during training) ----
+        # Apply augmentations
         aug_info = None
         if self.augment:
             target_dict = {
@@ -155,16 +163,19 @@ class VideoYoloDataset(Dataset):
             frames, target_dict, aug_info = self.augment(frames, target_dict)
             x, y = target_dict["x"], target_dict["y"]
             dir_x, dir_y = target_dict["dir_x"], target_dict["dir_y"]
-            H, W = self.height, self.width
         else:
             dir_x, dir_y = row.get('direction_x', 1.0), row.get('direction_y', 0.0)
-            H, W = self.height, self.width
 
-        # ---- Frame sampling ----
+        H, W = self.height, self.width
+
+        # Frame sampling
         sampled_frames = self._sample_frames(frames, self.clip_len)
-        frames_tensor = torch.stack(sampled_frames).permute(1, 0, 2, 3)  # (C, T, H, W)
+        frames_tensor = torch.stack(sampled_frames).permute(1, 0, 2, 3)
+        
+        # Clear intermediate variables
+        del frames, sampled_frames
 
-        # ---- Target tensor ----
+        # Target tensor
         target_tensor = torch.zeros(
             self.grid_size, 
             self.grid_size, 
@@ -175,7 +186,6 @@ class VideoYoloDataset(Dataset):
 
         if label == 1:
             x_norm, y_norm = x / W, y / H
-
             ws_in = row['waggle_start_in_window']
             we_in = row['waggle_end_in_window']
             start_norm, end_norm = -1, -1
@@ -206,17 +216,16 @@ class VideoYoloDataset(Dataset):
             target_tensor[grid_y, grid_x, 0, 4] = dir_y
             target_tensor[grid_y, grid_x, 0, 5] = start_norm
             target_tensor[grid_y, grid_x, 0, 6] = end_norm
-
         
         if "fps" in video_name:
-            idx = video_name.find("fps")
-            fps = video_name[idx-2:idx]
+            idx_fps = video_name.find("fps")
+            fps = video_name[idx_fps-2:idx_fps]
         else:
             category = get_video_category(video_name)
-            if category=='0':
-                fps=15
+            if category == '0':
+                fps = 15
             else:
-                fps=60
+                fps = 60
         
         return {
             "video": frames_tensor,

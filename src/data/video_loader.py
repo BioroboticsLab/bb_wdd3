@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from typing import List, Optional
-
+cv2.setNumThreads(4)
 
 class VideoFrameCache:
     """
@@ -160,7 +160,6 @@ class VideoFrameCache:
 # Global instance for easy access
 _global_video_cache = VideoFrameCache(cache_size=10)
 
-
 def load_video_frames(
     video_path: str, 
     start_frame: Optional[int] = None, 
@@ -170,41 +169,51 @@ def load_video_frames(
 ) -> List[np.ndarray]:
     """
     Load video frames efficiently with optional caching.
-    
-    This is a convenience function that uses the global VideoFrameCache
-    for efficient frame loading.
-    
-    Args:
-        video_path: Path to video file
-        start_frame: Starting frame index (optional, inclusive)
-        end_frame: Ending frame index (optional, exclusive)
-        convert_rgb: Whether to convert BGR to RGB
-        use_cache: Whether to use the global cache
-    
-    Returns:
-        List of frames as numpy arrays
-
     """
     if use_cache:
-        cache = _global_video_cache
+        if start_frame is not None and end_frame is not None:
+            return _global_video_cache.load_frame_range(video_path, start_frame, end_frame, convert_rgb)
+        
+        frames = _global_video_cache.load_full_video(video_path, convert_rgb)
+        if start_frame is not None:
+            frames = frames[start_frame:]
+        if end_frame is not None:
+            frames = frames[:end_frame]
+        return frames
     else:
-        cache = VideoFrameCache(cache_size=1)
-    
-    # Load specific frame range
-    if start_frame is not None and end_frame is not None:
-        return cache.load_frame_range(video_path, start_frame, end_frame, convert_rgb)
-    
-    # Load all frames
-    frames = cache.load_full_video(video_path, convert_rgb)
-    
-    # Apply slicing if only one bound is specified
-    if start_frame is not None:
-        frames = frames[start_frame:]
-    if end_frame is not None:
-        frames = frames[:end_frame]
-    
-    return frames
-
+        # Direct load without cache
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise FileNotFoundError(f"Cannot open video: {video_path}")
+        
+        try:
+            # Seek to start frame if specified
+            if start_frame is not None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                actual_start = start_frame
+            else:
+                actual_start = 0
+            
+            # Determine how many frames to read
+            if end_frame is not None:
+                num_frames_to_read = end_frame - actual_start
+            else:
+                # If no end_frame, read until video ends
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                num_frames_to_read = total_frames - actual_start
+            
+            frames = []
+            for _ in range(num_frames_to_read):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if convert_rgb:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(frame)
+            
+            return frames
+        finally:
+            cap.release()
 
 def get_video_info(video_path: str) -> dict:
     """
