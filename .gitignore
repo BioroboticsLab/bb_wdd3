@@ -1,49 +1,56 @@
-# Ignore everything in data/ except the folder itself
+# Data & Outputs
 data/*
 !data/.gitkeep
 
-# Ignore everything in experiments/ subfolders except the folders themselves
-experiments/logs/*
-!experiments/logs/.gitkeep
+# Keep outputs directory structure, ignore files
+outputs/**/*
+!outputs/**/
+!outputs/**/.gitkeep
 
-experiments/checkpoints/*
-!experiments/checkpoints/.gitkeep
+# Large Media Files
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Models & Checkpoints
+ckpt/**/*
+!ckpt/
+!ckpt/.gitkeep
+**/models/
+**/checkpoints/
+*.ckpt
+*.pth
+*.pt
+
+# Logs & Tracking
+logs/
+runs/
+tb_logs/
+tensorboard/
+eval_logs/
+*.log
+events.out.tfevents.*
 
 # Python
 __pycache__/
-*.pyc
-
-# Output files
-visualizations/
-*.mp4
-*.csv
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.pytest_cache/
 *.egg-info/
 *.eggs/
 *.ruff_cache/
+venv/
+.venv/
 
-# Checkpoints folder
-ckpt/
+# Jupyter
+.ipynb_checkpoints/
 
-# Data folder
-data/
+# Tests (generated assets)
+tests/**/*.png
+tests/**/*.jpg
+tests/**/*.jpeg
 
-# TensorBoard logs
-events.out.tfevents.*
-eval_logs/
-runs/
-logs/
-
-# Ignore all JPGs in tests
-src/tests/**/*.png
-src/tests/**/*.jpg
-src/tests/**/*.jpeg
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
