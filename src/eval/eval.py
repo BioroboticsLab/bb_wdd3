@@ -15,6 +15,7 @@ from utils.video_utils import process_video_with_detections, visualize_preds_and
 from utils.data_utils import detections_to_df
 from utils.metrics import match_detections_to_gt, get_metrics
 from tqdm import tqdm
+import wandb
 
 def eval_single_video(model, device, video_path, video_name, epoch, gt_folder,
                          output_folder="eval_results", confidence=0.5,
@@ -210,7 +211,7 @@ def evaluate(model_path, epoch, video_folder="/home/prajna/multiscale_wdd/data/v
     
     return all_results
 
-def eval(model, device, yolocriterion, val_loader, epoch, writer):
+def eval(model, device, yolocriterion, val_loader, epoch):
     model.eval()
     total_loss = 0.0
     total_obj_loss = 0.0
@@ -219,8 +220,8 @@ def eval(model, device, yolocriterion, val_loader, epoch, writer):
     total_direction_loss = 0.0
     total_temporal_loss = 0.0
     num_batches = 0
-        
-    progress_bar = tqdm(val_loader, desc=f'Validation Epoch {epoch+1}', leave=False)
+    
+    progress_bar = tqdm(val_loader, desc=f'Validation Epoch {epoch+1}', leave=True)
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(progress_bar):
@@ -243,9 +244,13 @@ def eval(model, device, yolocriterion, val_loader, epoch, writer):
             progress_bar.set_postfix({
                 'Val Loss': f'{total_loss / num_batches:.4f}',
                 'Obj': f'{total_obj_loss / num_batches:.4f}',
-                'NoObj': f'{total_no_obj_loss / num_batches:.4f}'
+                'NoObj': f'{total_no_obj_loss / num_batches:.4f}',
+                'Pos': f'{total_position_loss / num_batches:.4f}',
+                'Dir': f'{total_direction_loss / num_batches:.4f}',
+                'Temp': f'{total_temporal_loss / num_batches:.4f}',
             })
     
+    # Calculate averages
     avg_val_loss = total_loss / num_batches
     avg_obj_loss = total_obj_loss / num_batches
     avg_no_obj_loss = total_no_obj_loss / num_batches
@@ -253,19 +258,15 @@ def eval(model, device, yolocriterion, val_loader, epoch, writer):
     avg_direction_loss = total_direction_loss / num_batches
     avg_temporal_loss = total_temporal_loss / num_batches
     
-    writer.add_scalar('Loss/Validation/Total', avg_val_loss, epoch)
-    writer.add_scalar('Loss/Validation/Object', avg_obj_loss, epoch)
-    writer.add_scalar('Loss/Validation/No_Object', avg_no_obj_loss, epoch)
-    writer.add_scalar('Loss/Validation/Position', avg_position_loss, epoch)
-    writer.add_scalar('Loss/Validation/Direction', avg_direction_loss, epoch)
-    writer.add_scalar('Loss/Validation/Temporal', avg_temporal_loss, epoch)
-    
-    print(f"\nValidation Results - Epoch {epoch+1}:")
-    print(f"Total Loss: {avg_val_loss:.4f}")
-    print(f"Object Loss: {avg_obj_loss:.4f}")
-    print(f"No Object Loss: {avg_no_obj_loss:.4f}")
-    print(f"Position Loss: {avg_position_loss:.4f}")
-    print(f"Direction Loss: {avg_direction_loss:.4f}")
-    print(f"Temporal Loss: {avg_temporal_loss:.4f}")
+    # Log to wandb (once per epoch, after all batches)
+    wandb.log({
+        'epoch': epoch,
+        'val/total_loss': avg_val_loss,
+        'val/object_loss': avg_obj_loss,
+        'val/no_object_loss': avg_no_obj_loss,
+        'val/position_loss': avg_position_loss,
+        'val/direction_loss': avg_direction_loss,
+        'val/temporal_loss': avg_temporal_loss
+    })
     
     return avg_val_loss

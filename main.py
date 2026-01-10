@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 import pandas as pd
-from src.train.train import train, train_v2
+from src.train.train import train
 from src.eval.eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
@@ -19,7 +19,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn  as nn
 from utils.data_utils import fix_dataframe_with_video_lengths, load_config
 import datetime
-from torch.utils.tensorboard import SummaryWriter
+import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics
 from src.utils.nms import batch_postprocess_predictions
 from src.utils.vis_utils import reverse_transform, save_frames
@@ -184,9 +184,15 @@ def main(args):
                                        gamma=config["loss"]["varifocal_gamma"],
                                        quality_scale=config["loss"]["varifocal_quality_scale"])
     
-    current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_dir = os.path.join("logs", current_time)
-    writer = SummaryWriter(log_dir=log_dir)
+    # init wandb for logging
+    wandb.init(
+    project="waggle-detection",  # Change to your project name
+    config={
+        **config,  # Log your entire config
+        "seed": SEED,
+    },
+    name=f"run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+)
     scaler = torch.amp.GradScaler()
     
     best_val_loss = float('inf')
@@ -194,15 +200,12 @@ def main(args):
     for epoch in range(config['train']['epochs']):
         print(f'\nEpoch {epoch+1}/{config["train"]["epochs"]}')
         # Train one epoch
-        train_loss = train_v2(
-            model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler, writer
-        )
+        # Remove writer argument:
+        train_loss = train(
+            model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler)
         
         # Validate
-        val_loss = eval(model, device, yolocriteria, test_loader, epoch, writer)
-
-        print(f'Train loss: {train_loss}')
-        print(f'Test/Val loss: {val_loss}')
+        val_loss = eval(model, device, yolocriteria, test_loader, epoch)
 
         # Save best model
         # periodicly checkpoint lastest and best model
@@ -247,7 +250,7 @@ def main(args):
             print("After Post-Processing - Test Metrics:", test_metrics)
             '''
     print('Training complete.')
-    writer.close()
+    wandb.finish()
 
 def get_args():
     parser = argparse.ArgumentParser(description="Waggle detection training")
