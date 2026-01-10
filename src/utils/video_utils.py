@@ -3,7 +3,7 @@ import torch
 import gc
 import torchvision.transforms as T
 #from utils.nms import nms_spatiotemporal
-from utils.frames_utils import preprocess_frames
+from src.utils.frames_utils import preprocess_frames
 import os 
 import numpy as np 
 from PIL import Image

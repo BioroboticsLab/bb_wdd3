@@ -31,6 +31,7 @@ tensorboard/
 eval_logs/
 *.log
 events.out.tfevents.*
+wandb/
 
 # Python
 __pycache__/

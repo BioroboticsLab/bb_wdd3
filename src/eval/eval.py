@@ -2,7 +2,7 @@ import cv2
 import torch
 import numpy as np
 import gc
-from models.model import R2Plus1D_YOLO
+from src.models.model import R2Plus1D_YOLO
 import pandas as pd
 from typing import List, Dict, Tuple, Optional
 from scipy.optimize import linear_sum_assignment
@@ -10,10 +10,10 @@ import os
 import json
 from scipy.spatial.distance import euclidean
 # from utils.nms import nms_spatiotemporal
-from utils.frames_utils import sample_frames, preprocess_frames
-from utils.video_utils import process_video_with_detections, visualize_preds_and_gt
-from utils.data_utils import detections_to_df
-from utils.metrics import match_detections_to_gt, get_metrics
+from src.utils.frames_utils import sample_frames, preprocess_frames
+from src.utils.video_utils import process_video_with_detections, visualize_preds_and_gt
+from src.utils.data_utils import detections_to_df
+from src.utils.metrics import match_detections_to_gt, get_metrics
 from tqdm import tqdm
 import wandb
 

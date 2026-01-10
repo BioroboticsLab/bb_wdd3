@@ -4,7 +4,6 @@ import wandb
 import datetime
 import os
 import torch.nn as nn
-from eval.eval import evaluate
 
 def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoch, scaler):
     model.train()

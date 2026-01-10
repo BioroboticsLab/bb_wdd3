@@ -1,6 +1,6 @@
 import os 
 #from prepare_data import create_video_frames_df
-from utils.data_utils import create_video_frames_df
+from src.utils.data_utils import create_video_frames_df
 import random
 import numpy as np
 import torch
@@ -10,14 +10,14 @@ from src.train.train import train
 from src.eval.eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from dataset import VideoYoloDataset, TemporalWaggleCollator
+from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
 from src.loss.loss import WaggleDetectionLoss
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn  as nn
-from utils.data_utils import fix_dataframe_with_video_lengths, load_config
+from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config
 import datetime
 import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics
@@ -186,9 +186,9 @@ def main(args):
     
     # init wandb for logging
     wandb.init(
-    project="waggle-detection",  # Change to your project name
+    project="waggle-detection",  # Project name
     config={
-        **config,  # Log your entire config
+        **config,  # Log entire config
         "seed": SEED,
     },
     name=f"run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"

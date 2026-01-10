@@ -2,9 +2,9 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 from torchvision.transforms import ToTensor
-from video_loader import load_video_frames
+from src.data.video_loader import load_video_frames
 import os
-from utils.video_utils import get_video_category
+from src.utils.video_utils import get_video_category
 
 class TemporalWaggleCollator:
     """

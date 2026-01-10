@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torchvision.models.video import r2plus1d_18
 from torch.utils.checkpoint import checkpoint
 
-from models.temporal import Soft_Temporal_Pool
+from src.models.temporal import Soft_Temporal_Pool
 
 class R2Plus1D_YOLO(nn.Module):
     """
