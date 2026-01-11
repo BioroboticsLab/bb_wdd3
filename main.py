@@ -219,18 +219,27 @@ def main(args):
                                         iou_threshold_range=config['eval']['iou_thresholds'],
                                         angular_thresholds=config['eval']['angular_thresholds'])
         
-        # overwrite test preds with postprocessed ones
-        test_preds = batch_postprocess_predictions(test_preds, 
+        # post process test preds
+        post_test_preds = batch_postprocess_predictions(test_preds, 
                                                         spatial_threshold=config['post_process']['spatial_threshold'], 
                                                         temporal_threshold=config['post_process']['temporal_threshold'], 
                                                         confidence_threshold=config['post_process']['confidence_threshold'], 
                                                         strategy=config['post_process']['strategy'], 
                                                         mode=config['post_process']['mode'])
         
-        post_test_metrics = get_eval_metrics(test_preds, test_gts, 
+        post_test_metrics = get_eval_metrics(post_test_preds, test_gts, 
                                         pos_thresholds=config['eval']['pos_thresholds'],
                                         iou_threshold_range=config['eval']['iou_thresholds'],
                                         angular_thresholds=config['eval']['angular_thresholds'])
+
+        # Print unique clusters identifies
+        unique_clusters_test_gt = len({det['cluster_id'] for seq in test_preds for det in seq})
+
+        unique_clusters_test = len({det['cluster_id'] for seq in test_preds for det in seq})
+        unique_clusters_test_post = len({det['cluster_id'] for seq in post_test_preds for det in seq})
+        print('Number of clusterns - Ground Truth:', unique_clusters_test_gt)
+        print('Number of clusterns - Before Postprocessing:', unique_clusters_test)
+        print('Number of clusterns - After Postprocessing:', unique_clusters_test_post)
 
         print_evaluation_results(test_metrics, post_test_metrics)
 
