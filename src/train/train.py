@@ -16,7 +16,7 @@ def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoc
     total_temporal_loss = 0.0
     num_batches = 0
     
-    progress_bar = tqdm(train_loader, desc=f'Train Epoch {epoch+1}', leave=True, position=0)
+    progress_bar = tqdm(train_loader, desc=f'Train Epoch {epoch+1}', leave=True)
     
     for batch_idx, batch in enumerate(progress_bar):
         batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}

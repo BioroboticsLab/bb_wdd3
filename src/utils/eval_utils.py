@@ -17,7 +17,7 @@ def get_preds_gt(model, dataloader, device, return_frames=False, batch_idx_for_f
     all_frames = None
     
     with torch.no_grad():
-        progress_bar = tqdm(dataloader, desc='Getting Predictions', leave=False)
+        progress_bar = tqdm(dataloader, desc='Fetching ground truth values.', leave=False)
         
         for batch_idx, batch in enumerate(progress_bar):
             # move batch to device
