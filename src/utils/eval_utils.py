@@ -574,36 +574,41 @@ def get_eval_metrics(
 def print_evaluation_results(test_metrics, post_test_metrics):
     """Print comprehensive evaluation results before and after post-processing"""
     
-    print(f"Before Post-Processing:")
-    print(f"  Predictions: {test_metrics['counts']['predictions']}, Ground Truths: {test_metrics['counts']['ground_truths']}")
-    print(f"  Comprehensive Detection:")
-    print(f"    Precision: {test_metrics['comprehensive']['precision']:.3f}")
-    print(f"    Recall: {test_metrics['comprehensive']['recall']:.3f}") 
-    print(f"    F1: {test_metrics['comprehensive']['f1']:.3f}")
-    print(f"  Spatial Detection:")
-    print(f"    Precision: {test_metrics['spatial']['precision']:.3f}")
-    print(f"    Recall: {test_metrics['spatial']['recall']:.3f}")
-    print(f"    F1: {test_metrics['spatial']['f1']:.3f}")
-    print(f"    Mean Error: {test_metrics['spatial']['mean_error']:.1f}px")
-    print(f"  Temporal Detection:")
-    print(f"    Mean IoU: {test_metrics['temporal']['mean_iou']:.3f}")
-    print(f"  Directional Detection:")
-    print(f"    Accuracy: {test_metrics['directional']['accuracy']:.3f}")
-    print(f"    Mean Angular Error: {test_metrics['directional']['mean_error']:.1f}°")
-    print(f"#"*60)
-    print(f"After Post-Processing:")
-    print(f"  Predictions: {post_test_metrics['counts']['predictions']}, Ground Truths: {post_test_metrics['counts']['ground_truths']}")
-    print(f"  Comprehensive Detection:")
-    print(f"    Precision: {post_test_metrics['comprehensive']['precision']:.3f}")
-    print(f"    Recall: {post_test_metrics['comprehensive']['recall']:.3f}") 
-    print(f"    F1: {post_test_metrics['comprehensive']['f1']:.3f}")
-    print(f"  Spatial Detection:")
-    print(f"    Precision: {post_test_metrics['spatial']['precision']:.3f}")
-    print(f"    Recall: {post_test_metrics['spatial']['recall']:.3f}")
-    print(f"    F1: {post_test_metrics['spatial']['f1']:.3f}")
-    print(f"    Mean Error: {post_test_metrics['spatial']['mean_error']:.1f}px")
-    print(f"  Temporal Detection:")
-    print(f"    Mean IoU: {post_test_metrics['temporal']['mean_iou']:.3f}")
-    print(f"  Directional Detection:")
-    print(f"    Accuracy: {post_test_metrics['directional']['accuracy']:.3f}")
-    print(f"    Mean Angular Error: {post_test_metrics['directional']['mean_error']:.1f}°")
+    print("\n" + "="*80)
+    print("Evaluation Results".center(80))
+    print("="*80)
+    
+    # Header
+    print(f"{'Metric':<35} {'Before Post-Proc':<20} {'After Post-Proc':<20}")
+    print("-"*80)
+    
+    # Counts
+    print(f"{'Predictions':<35} {test_metrics['counts']['predictions']:<20} {post_test_metrics['counts']['predictions']:<20}")
+    print(f"{'Ground Truths':<35} {test_metrics['counts']['ground_truths']:<20} {post_test_metrics['counts']['ground_truths']:<20}")
+    print("-"*80)
+    
+    # Comprehensive Detection
+    print(f"{'Spatio-Temporal-Directional Detection':<35}")
+    print(f"{'  Precision':<35} {test_metrics['comprehensive']['precision']:<20.3f} {post_test_metrics['comprehensive']['precision']:<20.3f}")
+    print(f"{'  Recall':<35} {test_metrics['comprehensive']['recall']:<20.3f} {post_test_metrics['comprehensive']['recall']:<20.3f}")
+    print(f"{'  F1 Score':<35} {test_metrics['comprehensive']['f1']:<20.3f} {post_test_metrics['comprehensive']['f1']:<20.3f}")
+    print("-"*80)
+    
+    # Spatial Detection
+    print(f"{'Spatial Detection':<35}")
+    print(f"{'  Precision':<35} {test_metrics['spatial']['precision']:<20.3f} {post_test_metrics['spatial']['precision']:<20.3f}")
+    print(f"{'  Recall':<35} {test_metrics['spatial']['recall']:<20.3f} {post_test_metrics['spatial']['recall']:<20.3f}")
+    print(f"{'  F1 Score':<35} {test_metrics['spatial']['f1']:<20.3f} {post_test_metrics['spatial']['f1']:<20.3f}")
+    print(f"{'  Mean Error (px)':<35} {test_metrics['spatial']['mean_error']:<20.1f} {post_test_metrics['spatial']['mean_error']:<20.1f}")
+    print("-"*80)
+    
+    # Temporal Detection
+    print(f"{'Temporal Detection':<35}")
+    print(f"{'  Mean IoU':<35} {test_metrics['temporal']['mean_iou']:<20.3f} {post_test_metrics['temporal']['mean_iou']:<20.3f}")
+    print("-"*80)
+    
+    # Directional Detection
+    print(f"{'Directional Detection':<35}")
+    print(f"{'  Accuracy':<35} {test_metrics['directional']['accuracy']:<20.3f} {post_test_metrics['directional']['accuracy']:<20.3f}")
+    print(f"{'  Mean Angular Error (°)':<35} {test_metrics['directional']['mean_error']:<20.1f} {post_test_metrics['directional']['mean_error']:<20.1f}")
+    print("="*80 + "\n")

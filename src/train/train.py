@@ -16,7 +16,8 @@ def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoc
     total_temporal_loss = 0.0
     num_batches = 0
     
-    progress_bar = tqdm(train_loader, desc=f'Training Epoch {epoch+1}', leave=True)
+    progress_bar = tqdm(train_loader, desc=f'Train Epoch {epoch+1}', leave=True, position=0)
+    
     for batch_idx, batch in enumerate(progress_bar):
         batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
         inputs = batch["video"].to(device)
@@ -44,7 +45,7 @@ def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoc
         num_batches += 1
         
         progress_bar.set_postfix({
-            'Train Loss': f'{total_loss / num_batches:.4f}',
+            'Loss': f'{total_loss / num_batches:.4f}',
             'Obj': f'{total_obj_loss / num_batches:.4f}',
             'NoObj': f'{total_no_obj_loss / num_batches:.4f}',
             'Pos': f'{total_position_loss / num_batches:.4f}',

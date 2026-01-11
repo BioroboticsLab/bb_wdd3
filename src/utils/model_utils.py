@@ -1,5 +1,5 @@
 import torch 
-from models.model import R2Plus1D_YOLO
+from src.models.model import R2Plus1D_YOLO
 
 def load_pretrained_model(checkpoint_path, max_detections_per_cell=1, grid_size=28, 
                           device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")):

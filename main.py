@@ -20,11 +20,11 @@ import torch.nn  as nn
 from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config
 import datetime
 import wandb
-from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics
+from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results
 from src.utils.nms import batch_postprocess_predictions
 from src.utils.vis_utils import reverse_transform, save_frames
 import argparse
-
+from src.utils.model_utils import load_pretrained_model
 
 SEED = 42
 random.seed(SEED)
@@ -49,7 +49,7 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//16].reset_index(drop=True)
+    data = data.iloc[:len(data)//128].reset_index(drop=True)
     #data = data.iloc[:100].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
     
@@ -207,48 +207,57 @@ def main(args):
         # Validate
         val_loss = eval(model, device, yolocriteria, test_loader, epoch)
 
+         # fetch all raw logits
+        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _, test_frames = get_preds_gt(model, test_loader, device, return_frames=False)
+        # transform yolo gt annotations to image domain
+        test_gts = yolo_to_img_space_gt(test_gt_raw, all_starts=test_all_starts, all_ends=test_all_ends)
+        # transform raw logits to img space and filter by confidence
+        test_preds = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends, confidence_threshold=config['eval']['confidence_threshold'], window_size = 16, original_size=(224,224))
+        # get eval metrics
+        test_metrics = get_eval_metrics(test_preds, test_gts, 
+                                        pos_thresholds=config['eval']['pos_thresholds'],
+                                        iou_threshold_range=config['eval']['iou_thresholds'],
+                                        angular_thresholds=config['eval']['angular_thresholds'])
+        
+        # overwrite test preds with postprocessed ones
+        test_preds = batch_postprocess_predictions(test_preds, 
+                                                        spatial_threshold=config['post_process']['spatial_threshold'], 
+                                                        temporal_threshold=config['post_process']['temporal_threshold'], 
+                                                        confidence_threshold=config['post_process']['confidence_threshold'], 
+                                                        strategy=config['post_process']['strategy'], 
+                                                        mode=config['post_process']['mode'])
+        
+        post_test_metrics = get_eval_metrics(test_preds, test_gts, 
+                                        pos_thresholds=config['eval']['pos_thresholds'],
+                                        iou_threshold_range=config['eval']['iou_thresholds'],
+                                        angular_thresholds=config['eval']['angular_thresholds'])
+
+        print_evaluation_results(test_metrics, post_test_metrics)
+
         # Save best model
         # periodicly checkpoint lastest and best model
         # perodicly compute eval metrics and postprocessing to save compute
-        if epoch % config['train']['val_freq']  == 0 or epoch == config['train']['epochs'] - 1:
+        if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                if isinstance(model, torch.nn.DataParallel):
-                    torch.save(model.module.state_dict(), f'./ckpt/best_model_{epoch}.pth')
+                if config['train'].get('save_model', True):  # Default to True if not specified
+                    if isinstance(model, torch.nn.DataParallel):
+                        torch.save(model.module.state_dict(), f'./ckpt/best_model_{epoch}.pth')
+                    else:
+                        torch.save(model.state_dict(), f'./ckpt/best_model_{epoch}.pth')
+                    print(f"New best model saved with val_loss: {val_loss:.4f}")
                 else:
-                    torch.save(model.state_dict(), f'./ckpt/best_model_{epoch}.pth')
-                print(f"New best model saved with val_loss: {val_loss:.4f}")
+                    print(f"New best val_loss: {val_loss:.4f} (model saving disabled)")
             
-            if isinstance(model, torch.nn.DataParallel):
-                torch.save(model.module.state_dict(), f'./ckpt/lastest_{epoch}.pth')
+            if config['train'].get('save_model', True):  # Default to True if not specified
+                if isinstance(model, torch.nn.DataParallel):
+                    torch.save(model.module.state_dict(), f'./ckpt/latest_{epoch}.pth')
+                else:
+                    torch.save(model.state_dict(), f'./ckpt/latest_{epoch}.pth')
+                print(f'Saved and evaluated model at Epoch {epoch}/{config["train"]["epochs"]}')
             else:
-                torch.save(model.state_dict(), f'./ckpt/latest_{epoch}.pth')
-            print(f'Saved and evaluated model at Epoch {epoch}/{config["train"]["epochs"]}')
+                print(f'Evaluated model at Epoch {epoch}/{config["train"]["epochs"]} (model saving disabled)')
             
-            '''
-            # fetch all raw logits
-            train_preds_raw, train_gt_raw, train_all_starts, train_all_ends, _ = get_preds_gt(model, train_loader, device,) 
-            test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _, test_frames = get_preds_gt(model, test_loader, device, return_frames=True)
-            # transform yolo gt annotations to image domain
-            train_gts = yolo_to_img_space_gt(train_gt_raw, all_starts=train_all_starts, all_ends=train_all_ends)
-            test_gts = yolo_to_img_space_gt(test_gt_raw, all_starts=test_all_starts, all_ends=test_all_ends)
-            # transform raw logits to img space and filter by confidence
-            train_preds  = yolo_to_img_space(train_preds_raw, all_starts=train_all_starts, all_ends=train_all_ends, confidence_threshold=0.8) 
-            test_preds = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends, confidence_threshold=0.8)
-            # get eval metrics
-            train_metrics = get_eval_metrics(train_preds, train_gts)
-            test_metrics = get_eval_metrics(test_preds, test_gts)
-            print("Before Post-Processing - Train Metrics:", train_metrics)
-            print("Before Post-Processing - Test Metrics:", test_metrics)
-            # overwrite train and test preds with postprocessed ones
-            train_preds = batch_postprocess_predictions(train_preds)
-            test_preds = batch_postprocess_predictions(test_preds)
-            # metrics after postprocessing
-            train_metrics = get_eval_metrics(train_preds, train_gts)
-            test_metrics = get_eval_metrics(test_preds, test_gts)
-            print("After Post-Processing - Train Metrics:", train_metrics)
-            print("After Post-Processing - Test Metrics:", test_metrics)
-            '''
     print('Training complete.')
     wandb.finish()
 

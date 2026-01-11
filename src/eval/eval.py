@@ -221,7 +221,7 @@ def eval(model, device, yolocriterion, val_loader, epoch):
     total_temporal_loss = 0.0
     num_batches = 0
     
-    progress_bar = tqdm(val_loader, desc=f'Validation Epoch {epoch+1}', leave=True)
+    progress_bar = tqdm(val_loader, desc=f'Val Epoch {epoch+1}', leave=True)
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(progress_bar):
@@ -242,7 +242,7 @@ def eval(model, device, yolocriterion, val_loader, epoch):
             num_batches += 1
             
             progress_bar.set_postfix({
-                'Val Loss': f'{total_loss / num_batches:.4f}',
+                'Loss': f'{total_loss / num_batches:.4f}',
                 'Obj': f'{total_obj_loss / num_batches:.4f}',
                 'NoObj': f'{total_no_obj_loss / num_batches:.4f}',
                 'Pos': f'{total_position_loss / num_batches:.4f}',
