@@ -1,18 +1,18 @@
 import os 
-from prepare_data import create_video_frames_df
+from src.utils.data_utils import create_video_frames_df
 import random
 import numpy as np
 import torch
 import torchvision.transforms as T
 import pandas as pd
-from src.train.train import train, train_v2
+from src.train.train import train, train
 from src.eval.eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from src.dataset import VideoYoloDataset, TemporalWaggleCollator
-from models.model import R2Plus1D_YOLO
+from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
+from src.models.model import R2Plus1D_YOLO
 from src.loss.loss import WaggleDetectionLoss
-from src.augmentation import WaggleAugmentations
+from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 import torch.nn  as nn
 from src.utils.data_utils import fix_dataframe_with_video_lengths, find_overlapping_rows, preds_to_df, save_preds_to_csv, load_config
@@ -25,6 +25,7 @@ from src.utils.nms import batch_postprocess_predictions
 from src.utils.video_utils import frames_to_video
 from src.utils.draw_utils import  draw_waggle, draw_waggle_batch, draw_waggle_batch_union
 from src.utils.model_utils import load_pretrained_model
+import wandb
 
 SEED = 42
 random.seed(SEED)
@@ -47,7 +48,7 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//8].reset_index(drop=True)
+    data = data.iloc[:len(data)//32].reset_index(drop=True)
     #data = data.iloc[:100].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
 
@@ -162,10 +163,12 @@ def main(args):
                                        use_varifocal=config["loss"]["use_varifocal"],
                                        gamma=config["loss"]["varifocal_gamma"],
                                        quality_scale=config["loss"]["varifocal_quality_scale"])
+    
+    wandb.init(mode='disabled')
 
     for epoch in range(num_epochs):
         #train_loss =  eval(model, device, yolocriteria, train_loader, epoch, writer)
-        test_loss = eval(model, device, yolocriteria, test_loader, epoch, writer)
+        test_loss = eval(model, device, yolocriteria, test_loader, epoch)
         # Its not possible to fit all training or test frames onto cpu for visualisations
         # batch_idx_for_frames is set to 0 indicating that it will index into the first batch of the entire data loader and store the frames in there
         # if batch_size is set to 16, that means we have 16*window_size frames in our case 16 * 16, each individual batch represents a single waggle dance event of 16 frames

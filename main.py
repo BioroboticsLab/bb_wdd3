@@ -1,5 +1,4 @@
 import os 
-#from prepare_data import create_video_frames_df
 from src.utils.data_utils import create_video_frames_df
 import random
 import numpy as np
@@ -17,7 +16,7 @@ from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn  as nn
-from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config
+from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv
 import datetime
 import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results
@@ -49,7 +48,7 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//128].reset_index(drop=True)
+    data = data.iloc[:len(data)//16].reset_index(drop=True)
     #data = data.iloc[:100].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
     
@@ -76,7 +75,7 @@ def main(args):
     train_augmentation = WaggleAugmentations(
         width=224, height=224, 
         prob_flip_h=0.5, prob_flip_v=0.0, 
-        prob_rotate=0.3, rotate_range=(-45, 45), 
+        prob_rotate=0.3, rotate_range=(-25, 25), 
         prob_scale=1.0, scale_range=(0.9, 1.1),
         prob_translate=0.3, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
@@ -180,7 +179,7 @@ def main(args):
                                        lambda_noobj=config["loss"]["lambda_noobj"], 
                                        lambda_direction=config["loss"]["lambda_direction"], 
                                        lambda_temporal=config["loss"]["lambda_temporal"],
-                                       use_varifocal=config["loss"]["use_varifocal"],
+                                       use_varifocal=config['loss'].get('use_varifocal', False),
                                        gamma=config["loss"]["varifocal_gamma"],
                                        quality_scale=config["loss"]["varifocal_quality_scale"])
     
@@ -207,7 +206,8 @@ def main(args):
         # Validate
         val_loss = eval(model, device, yolocriteria, test_loader, epoch)
 
-         # fetch all raw logits
+        """
+        # fetch all raw logits
         test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _, test_frames = get_preds_gt(model, test_loader, device, return_frames=False)
         # transform yolo gt annotations to image domain
         test_gts = yolo_to_img_space_gt(test_gt_raw, all_starts=test_all_starts, all_ends=test_all_ends)
@@ -232,6 +232,8 @@ def main(args):
                                         iou_threshold_range=config['eval']['iou_thresholds'],
                                         angular_thresholds=config['eval']['angular_thresholds'])
 
+        save_preds_to_csv(post_test_preds, f'postprocessed_predictions_epoch_{epoch}.csv', 'postprocessed', './outputs/preds_csv')
+
         # Print unique clusters identifies
         unique_clusters_test_gt = len({det['cluster_id'] for seq in test_preds for det in seq})
 
@@ -242,7 +244,7 @@ def main(args):
         print('Number of clusterns - After Postprocessing:', unique_clusters_test_post)
 
         print_evaluation_results(test_metrics, post_test_metrics)
-
+        """
         # Save best model
         # periodicly checkpoint lastest and best model
         # perodicly compute eval metrics and postprocessing to save compute

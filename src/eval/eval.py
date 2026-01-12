@@ -221,7 +221,7 @@ def eval(model, device, yolocriterion, val_loader, epoch):
     total_temporal_loss = 0.0
     num_batches = 0
     
-    progress_bar = tqdm(val_loader, desc=f'Val Epoch {epoch+1}', leave=True)
+    progress_bar = tqdm(val_loader, desc=f'Val Epoch {epoch+1}', leave=True, position=int(epoch))
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(progress_bar):

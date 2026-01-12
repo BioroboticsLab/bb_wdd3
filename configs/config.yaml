@@ -7,7 +7,7 @@ data:
 
 # Model configuration
 model:
-  pretrained: true
+  pretrained: True
 
 # Training configuration
 train:
@@ -19,7 +19,7 @@ train:
   use_amp: true
   warmup_ratio: 0.1 # onecycle warmup ratio
   num_workers: 8
-  save_model: false
+  save_model: True
 
 val:
     batch_size: 32
@@ -27,7 +27,7 @@ val:
 post_process:
   spatial_threshold: 40
   temporal_threshold: 7
-  confidence_threshold: 0.99
+  confidence_threshold: 0.95
   strategy: 'cluster_consolidate'
   mode: 'median'
 
@@ -38,7 +38,7 @@ loss:
   lambda_noobj: 2.0
   lambda_direction: 7.0
   lambda_temporal: 7.0
-  use_varifocal: True  # use varifocal loss to link confidence with localization quality
+  use_varifocal: False  # use varifocal loss to link confidence with localization quality
   varifocal_gamma: 2.0  # focusing parameter for hard examples (higher = more focus)
   varifocal_quality_scale: 0.10  # quality decay scale: predictions ~22px off get 37% quality weight
   
@@ -52,27 +52,11 @@ system:
 logging:
   log_dir: './logs'
   checkpoint_dir: './checkpoints'
-  experiment_name: 'single_split'
 
 # Evaluation configuration
 eval:
-  enabled: false
-  only_eval: false
   confidence_threshold: 0.99
   consolidation_strategy: 'cluster_consolidate'
   pos_thresholds: [20]
   iou_thresholds: [0.5]
   angular_thresholds: [15]
-
-# Resume configuration
-resume:
-  checkpoint_path: null
-  load_scheduler: false
-
-# Loss weights (optional)
-loss_weights:
-  lambda_obj: null
-  lambda_noobj: null
-  lambda_pos: null
-  lambda_dir: null
-  lambda_temporal: null

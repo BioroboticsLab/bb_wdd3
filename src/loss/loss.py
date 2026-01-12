@@ -19,7 +19,6 @@ class WaggleDetectionLoss(nn.Module):
         self.use_varifocal = use_varifocal
         self.gamma = gamma
         self.quality_scale = quality_scale
-    
     def compute_localization_quality(self, pred_pos, target_pos, obj_mask):
         """Compute quality score based on localization accuracy"""
         if obj_mask.sum() == 0:
