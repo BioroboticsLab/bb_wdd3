@@ -48,7 +48,7 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//32].reset_index(drop=True)
+    data = data.iloc[:len(data)//8].reset_index(drop=True)
     #data = data.iloc[:100].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
 
@@ -68,7 +68,7 @@ def main(args):
     train_augmentation = WaggleAugmentations(
         width=224, height=224, 
         prob_flip_h=0.5, prob_flip_v=0.0, 
-        prob_rotate=0.3, rotate_range=(-45, 45), 
+        prob_rotate=0.3, rotate_range=(-25, 25), 
         prob_scale=1.0, scale_range=(0.9, 1.1),
         prob_translate=0.3, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
@@ -145,7 +145,7 @@ def main(args):
 
     test_loader = DataLoader(
         test_dataset,
-        batch_size=config['val']['batch_size'],
+        batch_size=config['eval']['batch_size'],
         collate_fn=collator, 
         shuffle=False, 
         num_workers=config['train']['num_workers'],
@@ -182,7 +182,9 @@ def main(args):
         
         # Transform yolo coordinates onto image domain for both gt and predicted values
         test_gts = yolo_to_img_space_gt(test_gt_raw, all_starts=test_all_starts, all_ends=test_all_ends, window_size = 16, original_size=(224,224))
-        test_preds  = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends, confidence_threshold=config['eval']['confidence_threshold'], window_size = 16, original_size=(224,224))
+        test_preds  = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends, 
+                                        confidence_threshold=config['eval']['confidence_threshold'], 
+                                        window_size = 16, original_size=(224,224))
 
         # Draw gt and predictions onto frames and saves as video
         # Note: This shows each 16-frame window independently, so frames repeat at window intersections
@@ -197,13 +199,13 @@ def main(args):
         # This creates a continuous timeline without repeating frames
         # We use [:16] because test_frames only contains the first 16 sequences (batch #0),
         # while test_preds/test_gts contain predictions for all 964 sequences in the test set
-        draw_waggle_batch_union(
-            all_frames=test_frames,
-            all_detections=test_preds[:16],  # Only first 16 sequences (matches our saved frames)
-            all_ground_truths=test_gts[:16], # Only first 16 sequences  
-            all_start_frame_idxs=test_all_starts[:16],  # Only first 16 start indices
-            output_dir='./outputs/vids'
-        )
+        #draw_waggle_batch_union(
+        #    all_frames=test_frames,
+        #    all_detections=test_preds[:16],  # Only first 16 sequences (matches our saved frames)
+        #    all_ground_truths=test_gts[:16], # Only first 16 sequences  
+        #    all_start_frame_idxs=test_all_starts[:16],  # Only first 16 start indices
+        #    output_dir='./outputs/vids'
+        #)
 
         # Post Process all predictions
         # You can try different strategies if you want but, only cluster_consolidate is important for our purpose. 

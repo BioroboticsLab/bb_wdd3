@@ -11,6 +11,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
+from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
 from src.loss.loss import WaggleDetectionLoss
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
@@ -74,8 +75,8 @@ def main(args):
     # Create augmentation
     train_augmentation = WaggleAugmentations(
         width=224, height=224, 
-        prob_flip_h=0.5, prob_flip_v=0.0, 
-        prob_rotate=0.3, rotate_range=(-25, 25), 
+        prob_flip_h=0.5, prob_flip_v=0.0,
+        prob_rotate=0.3, rotate_range=(-15, 15), 
         prob_scale=1.0, scale_range=(0.9, 1.1),
         prob_translate=0.3, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
@@ -155,7 +156,8 @@ def main(args):
 
     print('Len train loader:', len(train_loader))
 
-    model = R2Plus1D_YOLO(max_detections_per_cell=1, grid_size=28)
+    #model = R2Plus1D_YOLO(max_detections_per_cell=1, grid_size=28)
+    model = R2Plus1D_YOLO_MultiHead(max_detections_per_cell=1, grid_size=28)
 
     os.makedirs('./ckpt', exist_ok=True)
 
@@ -172,7 +174,8 @@ def main(args):
         max_lr=config['train']['lr'],
         steps_per_epoch=len(train_loader),
         epochs=config['train']['epochs'],
-        anneal_strategy='cos'
+        anneal_strategy='cos',
+        pct_start=config['train']['warmup_ratio']
     )
     yolocriteria = WaggleDetectionLoss(lambda_obj=config["loss"]["lambda_obj"], 
                                        lambda_coord=config["loss"]["lambda_coord"], 
@@ -253,18 +256,18 @@ def main(args):
                 best_val_loss = val_loss
                 if config['train'].get('save_model', True):  # Default to True if not specified
                     if isinstance(model, torch.nn.DataParallel):
-                        torch.save(model.module.state_dict(), f'./ckpt/best_model_{epoch}.pth')
+                        torch.save(model.module.state_dict(), './ckpt/best_model.pth')
                     else:
-                        torch.save(model.state_dict(), f'./ckpt/best_model_{epoch}.pth')
+                        torch.save(model.state_dict(), './ckpt/best_model.pth')
                     print(f"New best model saved with val_loss: {val_loss:.4f}")
                 else:
                     print(f"New best val_loss: {val_loss:.4f} (model saving disabled)")
             
             if config['train'].get('save_model', True):  # Default to True if not specified
                 if isinstance(model, torch.nn.DataParallel):
-                    torch.save(model.module.state_dict(), f'./ckpt/latest_{epoch}.pth')
+                    torch.save(model.module.state_dict(), './ckpt/latest.pth')
                 else:
-                    torch.save(model.state_dict(), f'./ckpt/latest_{epoch}.pth')
+                    torch.save(model.state_dict(), './ckpt/latest.pth')
                 print(f'Saved and evaluated model at Epoch {epoch}/{config["train"]["epochs"]}')
             else:
                 print(f'Evaluated model at Epoch {epoch}/{config["train"]["epochs"]} (model saving disabled)')

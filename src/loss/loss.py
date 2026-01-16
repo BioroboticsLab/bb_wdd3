@@ -2,10 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 class WaggleDetectionLoss(nn.Module):
     def __init__(self, lambda_obj=2.0, lambda_coord=7.5, lambda_noobj=2.0, 
                  lambda_direction=7.0, lambda_temporal=7.0, use_varifocal=False,
@@ -19,6 +15,7 @@ class WaggleDetectionLoss(nn.Module):
         self.use_varifocal = use_varifocal
         self.gamma = gamma
         self.quality_scale = quality_scale
+        
     def compute_localization_quality(self, pred_pos, target_pos, obj_mask):
         """Compute quality score based on localization accuracy"""
         if obj_mask.sum() == 0:

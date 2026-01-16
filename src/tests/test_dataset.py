@@ -296,12 +296,16 @@ def main(args):
     num_samples_to_visualize = 1
     for i in range(min(num_samples_to_visualize, len(train_dataset))):
         sample = train_dataset[i]
-        save_sample_with_waggle_visualization(sample, i, output_dir="tests/test_dataloader_vis/train", denormalize=True)
+        save_sample_with_waggle_visualization(sample, 
+                                              i, 
+                                              output_dir="tests/test_dataloader_vis/train", denormalize=True)
     
     # Visualize first few samples from test dataset
     for i in range(min(num_samples_to_visualize, len(test_dataset))):
         sample = test_dataset[i]
-        save_sample_with_waggle_visualization(sample, i, output_dir="tests/test_dataloader_vis/test", denormalize=False)
+        save_sample_with_waggle_visualization(sample, i, 
+                                              output_dir="tests/test_dataloader_vis/test", 
+                                              denormalize=False)
     
     # Original code continues...
     sample = train_dataset[0]

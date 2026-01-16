@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 from torchvision import transforms as T
-from augmentation import WaggleAugmentations
-from dataset import VideoYoloDataset
+from src.data.augmentation import WaggleAugmentations
+from src.data.dataset import VideoYoloDataset
 
 def test_window_augmentations(augmentation_config=None, test_name="test"):
     """
@@ -226,16 +226,16 @@ if __name__ == "__main__":
 
     augs = WaggleAugmentations(
         width=224, height=224, 
-        prob_flip_h=0.5, prob_flip_v=0.0, 
-        prob_rotate=0.3, rotate_range=(-45, 45), 
-        prob_scale=1.0, scale_range=(0.9, 1.1),
-        prob_translate=0.3, translate_range=0.1,
+        prob_flip_h=0.0, prob_flip_v=0.0, 
+        prob_rotate=1.0, rotate_range=(-45, 45), 
+        prob_scale=0.0, scale_range=(0.9, 1.1),
+        prob_translate=0.0, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
-        prob_brightness=1.0, brightness_range=0.4, 
+        prob_brightness=0.0, brightness_range=0.4, 
         prob_contrast=1.0, contrast_range=0.4,
         prob_gamma=0.0, gamma_range=(0.8, 1.2),
-        prob_blur=0.1, blur_range=(0.5, 2.0),
-        prob_clahe=0.1, clahe_clip_limit=2.0, clahe_tile_grid_size=(8, 8),
+        prob_blur=0.0, blur_range=(0.5, 2.0),
+        prob_clahe=0.0, clahe_clip_limit=2.0, clahe_tile_grid_size=(8, 8),
         prob_color_shuffle=0.0,
         prob_posterize=0.0, posterize_bits=(4, 7),
         prob_greyscale=0.0,
@@ -246,5 +246,5 @@ if __name__ == "__main__":
 
     test_window_augmentations(
         augmentation_config=augs,
-        test_name="aug_all"
+        test_name="aug_rotate"
     )
