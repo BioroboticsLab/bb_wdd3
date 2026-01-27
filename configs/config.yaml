@@ -60,4 +60,4 @@ eval:
   consolidation_strategy: 'cluster_consolidate'
   pos_thresholds: [20]
   iou_thresholds: [0.5]
-  angular_thresholds: [15]
+  angular_thresholds: [40]

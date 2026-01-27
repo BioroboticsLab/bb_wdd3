@@ -82,7 +82,7 @@ class WaggleDetectionLoss(nn.Module):
         pos_loss = F.mse_loss(pred_pos[obj_mask], target_pos[obj_mask], reduction='sum')
         pos_loss = pos_loss / obj_mask.sum() if obj_mask.sum() > 0 else torch.tensor(0.0, device=predictions.device)
         
-        # Direction and temporal loss (MOVED UP)
+        # Direction and temporal loss
         if obj_mask.sum() > 0:
             pred_dir_obj = pred_dir[obj_mask]
             target_dir_obj = target_dir[obj_mask]

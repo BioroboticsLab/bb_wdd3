@@ -6,13 +6,17 @@ import torch
 import torchvision.transforms as T
 import pandas as pd
 from src.train.train import train
+#from src.train.train_grad_diagnostic import train
 from src.eval.eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
-from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
+from src.models.model_multiheads_deep_ssp import R2Plus1D_YOLO_MultiHead
 from src.loss.loss import WaggleDetectionLoss
+from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 from torch.optim.lr_scheduler import ReduceLROnPlateau

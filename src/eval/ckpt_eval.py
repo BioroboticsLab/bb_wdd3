@@ -11,7 +11,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
+#from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
+from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
+
 from src.loss.loss import WaggleDetectionLoss
+from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 import torch.nn  as nn
@@ -155,7 +159,7 @@ def main(args):
 
 
     model = load_pretrained_model(args.ckpt_path, device)
-    yolocriteria = WaggleDetectionLoss(lambda_obj=config["loss"]["lambda_obj"], 
+    yolocriteria = WaggleDetectionLoss_New(lambda_obj=config["loss"]["lambda_obj"], 
                                        lambda_coord=config["loss"]["lambda_coord"], 
                                        lambda_noobj=config["loss"]["lambda_noobj"], 
                                        lambda_direction=config["loss"]["lambda_direction"], 
@@ -222,6 +226,15 @@ def main(args):
         save_preds_to_csv(test_preds, f'raw_predictions_epoch_{epoch}.csv', 'raw', './outputs/preds_csv')
         save_preds_to_csv(post_test_preds, f'postprocessed_predictions_epoch_{epoch}.csv', 'postprocessed', './outputs/preds_csv')
 
+        # visualise and store postprocessed results
+        draw_waggle_batch(
+            all_frames=test_frames,
+            all_detections=post_test_preds, 
+            all_ground_truths=test_gts,
+            all_start_frame_idxs=test_all_starts,
+            output_dir='./outputs/vids'
+        )
+
         # Print unique clusters identifies
         unique_clusters_all = len({det['cluster_id'] for seq in post_test_preds for det in seq})
         unique_clusters_frames = len({det['cluster_id'] for seq in post_test_preds[:16] for det in seq})
@@ -230,14 +243,14 @@ def main(args):
         print('Number of clusterns - Frames used for visualisation:', unique_clusters_frames)
 
         # Visualise post processed results
-        draw_waggle_batch_union(
-            all_frames=test_frames,
-            all_detections=post_test_preds[:16], 
-            all_ground_truths=test_gts[:16],
-            all_start_frame_idxs=test_all_starts,
-            file_name='dbscan',
-            output_dir='./outputs/vids'
-        )
+        #draw_waggle_batch_union(
+        #    all_frames=test_frames,
+        #    all_detections=post_test_preds[:16], 
+        #    all_ground_truths=test_gts[:16],
+        #    all_start_frame_idxs=test_all_starts,
+        #    file_name='dbscan',
+        #    output_dir='./outputs/vids'
+        #)
 
         # Compute eval metrics
         test_metrics = get_eval_metrics(test_preds, test_gts, 
