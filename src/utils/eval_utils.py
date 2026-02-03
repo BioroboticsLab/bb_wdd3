@@ -201,9 +201,16 @@ def yolo_to_img_space_gt(
     
     return all_detections
 
-def calculate_position_metrics_comprehensive(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 30]):
+def calculate_position_metrics_comprehensive(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 30], iou_threshold=0.5):
     """
     Calculate position metrics with comprehensive thresholds.
+    Matches on position + temporal IoU, prevents duplicate pred matching.
+
+    Args:
+        preds: List of prediction batches
+        gts: List of ground truth batches
+        pos_thresholds: List of spatial thresholds
+        iou_threshold: Minimum temporal IoU to consider a match valid
     """
     # handle single threshold input
     if isinstance(pos_thresholds, (int, float)):
@@ -218,23 +225,45 @@ def calculate_position_metrics_comprehensive(preds, gts, pos_thresholds=[5, 10, 
         matched_pairs = []
         
         for batch_preds, batch_gts in zip(preds, gts):
+            matched_pred_indices = set()  # track which preds are already used
+            
             # for each GT, find closest prediction within threshold
             for gt in batch_gts:
                 min_dist = float('inf')
                 best_pred = None
+                best_pred_idx = None  
                 
-                for pred in batch_preds:
+                for pred_idx, pred in enumerate(batch_preds):  
+                    # skip already matched predictions
+                    if pred_idx in matched_pred_indices:
+                        continue
+
                     gt_pos = np.array(gt['position'])
                     pred_pos = np.array(pred['position'])
                     distance = np.linalg.norm(gt_pos - pred_pos)
                     
-                    if distance < min_dist and distance <= threshold:
+                    if distance > threshold:
+                        continue
+
+                    # also check temporal IoU
+                    gt_start, gt_end = gt['temporal_offsets']
+                    pred_start, pred_end = pred['temporal_offsets']
+                    intersection = max(0, min(gt_end, pred_end) - max(gt_start, pred_start))
+                    union = max(gt_end, pred_end) - min(gt_start, pred_start)
+                    temp_iou = intersection / union if union > 0 else 0
+                    
+                    if temp_iou < iou_threshold:
+                        continue
+                    
+                    if distance < min_dist:
                         min_dist = distance
                         best_pred = pred
+                        best_pred_idx = pred_idx 
                 
                 if best_pred is not None:
                     all_distances.append(min_dist)
                     matched_pairs.append((gt, best_pred))
+                    matched_pred_indices.add(best_pred_idx)  # mark pred as used
         
         total_predictions = sum(len(batch_preds) for batch_preds in preds)
         total_gts = sum(len(batch_gts) for batch_gts in gts)
@@ -480,6 +509,8 @@ def get_eval_metrics(
 ):
     """
     Run complete evaluation with hierarchical metrics structure.
+    Directional and temporal metrics are averaged across all pos_thresholds,
+    similar to how mAP 0.5:0.95 averages across IoU thresholds.
     
     Args:
         preds: List of prediction batches
@@ -512,29 +543,21 @@ def get_eval_metrics(
         angular_thresholds = [10, 15, 20]
     
     # Normalize inputs - handle flexible input formats
-    # Convert single pos_threshold to list
     if isinstance(pos_thresholds, (int, float)):
         pos_thresholds = [pos_thresholds]
-    
-    # Handle single iou_threshold_range value
     if isinstance(iou_threshold_range, (int, float)):
         iou_threshold_range = (iou_threshold_range, iou_threshold_range)
     elif len(iou_threshold_range) == 1:
         iou_threshold_range = (iou_threshold_range[0], iou_threshold_range[0])
-    
-    # Convert single angular_threshold to list
     if isinstance(angular_thresholds, (int, float)):
         angular_thresholds = [angular_thresholds]
     
-    # Get matched pairs for detailed metrics
+    # Get matched pairs at each pos_threshold
     position_metrics, all_matched_pairs = calculate_position_metrics_comprehensive(
-        preds, gts, pos_thresholds
+        preds, gts, pos_thresholds, iou_threshold=iou_threshold_range[0]
     )
     
-    # Use matched pairs from the first threshold for direction/temporal metrics
-    primary_matched_pairs = all_matched_pairs.get(pos_thresholds[0], [])
-    
-    # Calculate all metrics
+    # Comprehensive detection metrics (already averages across all thresholds)
     comprehensive_metrics = calculate_detection_metrics(
         preds, gts, 
         pos_thresholds,
@@ -542,17 +565,43 @@ def get_eval_metrics(
         angular_thresholds
     )
     
-    directional_metrics = calculate_direction_metrics_comprehensive(
-        primary_matched_pairs, 
-        angular_thresholds
-    )
+    # Directional and temporal metrics: average across all pos_thresholds
+    # (same idea as mAP 0.5:0.95 averaging across IoU thresholds)
+    dir_accuracies = []
+    dir_errors = []
+    dir_cosines = []
+    temp_ious = []
+    temp_start_errors = []
+    temp_end_errors = []
     
-    temporal_metrics = calculate_temporal_metrics(
-        primary_matched_pairs,
-        iou_threshold_range
-    )
+    for t in pos_thresholds:
+        pairs_at_t = all_matched_pairs.get(t, [])
+        if not pairs_at_t:
+            continue
+        
+        dir_m = calculate_direction_metrics_comprehensive(pairs_at_t, angular_thresholds)
+        dir_accuracies.append(dir_m['accuracy'])
+        dir_errors.append(dir_m['mean_error'])
+        dir_cosines.append(dir_m['mean_cosine_similarity'])
+        
+        temp_m = calculate_temporal_metrics(pairs_at_t, iou_threshold_range)
+        temp_ious.append(temp_m['mean_iou'])
+        temp_start_errors.append(temp_m['mean_start_error'])
+        temp_end_errors.append(temp_m['mean_end_error'])
     
-    # Combine into hierarchical structure for clean prints and outputs
+    directional_metrics = {
+        'accuracy': np.mean(dir_accuracies) if dir_accuracies else 0.0,
+        'mean_error': np.mean(dir_errors) if dir_errors else float('inf'),
+        'mean_cosine_similarity': np.mean(dir_cosines) if dir_cosines else 0.0
+    }
+    
+    temporal_metrics = {
+        'mean_iou': np.mean(temp_ious) if temp_ious else 0.0,
+        'mean_start_error': np.mean(temp_start_errors) if temp_start_errors else float('inf'),
+        'mean_end_error': np.mean(temp_end_errors) if temp_end_errors else float('inf')
+    }
+    
+    # Combine into hierarchical structure
     metrics = {
         'comprehensive': comprehensive_metrics,
         'spatial': position_metrics,

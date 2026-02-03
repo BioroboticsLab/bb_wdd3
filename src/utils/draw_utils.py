@@ -67,7 +67,7 @@ def draw_waggle(frames, detections, ground_truths, start_frame_idx, output_dir, 
                 
                 # Add "GT" text
                 cv2.putText(frame, "GT", (x + 12, y - 12), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
         # Draw predictions (green filled)
         if local_frame_idx in preds_by_frame:
@@ -101,7 +101,7 @@ def draw_waggle(frames, detections, ground_truths, start_frame_idx, output_dir, 
         # Add frame info text
         info_text = f"GT: {num_gt} | Pred: {num_pred}"
         cv2.putText(frame, info_text, (10, 30), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         # Save frame
         global_frame_idx = start_frame_idx + local_frame_idx
@@ -217,7 +217,7 @@ def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_f
                     color = (0, 0, 255)  # Red in BGR
                     
                     # Draw filled circle (same size as predictions)
-                    cv2.circle(frame, (x, y), 6, color, -1)  # Radius 6, filled (-1)
+                    cv2.circle(frame, (x, y), 6, color, 2)  # Radius 6, filled (-1) or thickness i.e., 2
                     
                     # Draw arrow (same thickness as predictions)
                     arrow_length = 30
@@ -227,7 +227,7 @@ def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_f
                     
                     # Add "GT" text
                     cv2.putText(frame, "GT", (x + 12, y - 12), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
             # Draw predictions (green filled)
             if local_frame_idx in preds_by_frame:
@@ -241,7 +241,7 @@ def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_f
                     color = (0, 255, 0)  # Green in BGR
                     
                     # Draw filled circle (same size as GT)
-                    cv2.circle(frame, (x, y), 6, color, -1)  # Radius 6, filled (-1)
+                    cv2.circle(frame, (x, y), 6, color, 2)  # Radius 6, filled (-1)
                     
                     # Draw arrow (same thickness as GT)
                     arrow_length = 25
@@ -261,13 +261,13 @@ def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_f
             # Add frame info text
             info_text = f"GT: {num_gt} | Pred: {num_pred}"
             cv2.putText(frame, info_text, (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
             # Add global frame info
             global_frame_idx = start_frame_idx + local_frame_idx
             frame_text = f"Global Frame: {global_frame_idx}"
             cv2.putText(frame, frame_text, (10, 60), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
             # Write frame directly to video
             out.write(frame)
@@ -402,7 +402,7 @@ def draw_waggle_batch_union(all_frames, all_detections, all_ground_truths, all_s
                 # Add "GT" text
                 batch_info = f"GT"
                 cv2.putText(frame, batch_info, (x + 12, y - 12), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
         # Draw ALL predictions from ALL batches for this global frame
         if global_idx in global_predictions:
@@ -437,7 +437,7 @@ def draw_waggle_batch_union(all_frames, all_detections, all_ground_truths, all_s
         # Add frame info text
         info_text = f"Frame {global_idx} | GT: {num_gt} | Pred: {num_pred}"
         cv2.putText(frame, info_text, (10, 30), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         # Write frame to video
         out.write(frame)

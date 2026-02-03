@@ -100,7 +100,11 @@ class VideoYoloDataset(Dataset):
             return reps[:target_length]
 
     def __getitem__(self, idx):
-        row = self.data.iloc[idx]
+        row = self.data.iloc[idx]    
+        #(f"\nSample {idx}:")
+        #print(f"  Window: {row['start_frame']} to {row['end_frame']}")
+        #print(f"  Waggle start in window: {row['waggle_start_in_window']}")
+        #print(f"  Waggle end in window: {row['waggle_end_in_window']}")
         video_name = row['video_name']
         label = row['waggle'] 
 
@@ -188,6 +192,7 @@ class VideoYoloDataset(Dataset):
             x_norm, y_norm = x / W, y / H
             ws_in = row['waggle_start_in_window']
             we_in = row['waggle_end_in_window']
+            
             start_norm, end_norm = -1, -1
 
             if ws_in != -1 and we_in != -1:

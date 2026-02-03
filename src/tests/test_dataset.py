@@ -1,31 +1,25 @@
 import os 
 #from prepare_data import create_video_frames_df
-from utils.data_utils import create_video_frames_df
+from src.utils.data_utils import create_video_frames_df
 import random
 import numpy as np
 import torch
 import torchvision.transforms as T
 import pandas as pd
-from train import train, train_v2
-from eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from dataset import VideoYoloDataset, TemporalWaggleCollator
-from models.model import R2Plus1D_YOLO
-from loss import WaggleDetectionLoss
-from augmentation import WaggleAugmentations
-from aug_vis import demo_visualization
+from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
+from src.data.augmentation import WaggleAugmentations
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn  as nn
-from utils.data_utils import fix_dataframe_with_video_lengths
+from src.utils.data_utils import fix_dataframe_with_video_lengths
 import datetime
 from torch.utils.tensorboard import SummaryWriter
-from utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics
-from utils.nms import batch_postprocess_predictions
-from utils.vis_utils import reverse_transform, save_frames
+from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics
+from src.utils.nms import batch_postprocess_predictions
+from src.utils.vis_utils import reverse_transform, save_frames
 import argparse
 import matplotlib.pyplot as plt
-
 
 SEED = 42
 random.seed(SEED)
@@ -78,15 +72,15 @@ def save_sample_with_waggle_visualization(sample, sample_idx, output_dir="test_d
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225]
         )
-
-    # only denorm if denorm is True. Only used for train so no denorm when test data
     else:
         frames_denorm = frames
     
-    # Extract bee position and direction FROM TARGET TENSOR
+    # Extract bee position and direction from target tensor
     grid_size = 28
     bee_pos = None
     bee_dir = None
+    waggle_start_frame = -1
+    waggle_end_frame = -1
     
     # Find where object exists in target tensor
     obj_mask = targets[:, :, 0, 0] == 1.0
@@ -103,13 +97,18 @@ def save_sample_with_waggle_visualization(sample, sample_idx, output_dir="test_d
         bee_x = (grid_x + cell_x) * (224 / grid_size)
         bee_y = (grid_y + cell_y) * (224 / grid_size)
         bee_pos = (bee_x, bee_y)
-        bee_dir = (dir_x, dir_y)  # Direction vector (normalized)
+        bee_dir = (dir_x, dir_y)  # Direction vector normalized
         
-        # Also get waggle timing info
+        # Get waggle timing info
         start_norm = targets[grid_y, grid_x, 0, 5].item()
         end_norm = targets[grid_y, grid_x, 0, 6].item()
+        
+        # Convert normalized times to frame indices
+        num_frames = frames_denorm.shape[1]
         if start_norm != -1 and end_norm != -1:
-            print(f"  Waggle timing: frames {int(start_norm * 16)} to {int(end_norm * 16)}")
+            waggle_start_frame = int(start_norm * (num_frames - 1))
+            waggle_end_frame = round(end_norm * (num_frames - 1))
+            print(f"  Waggle timing: frames {waggle_start_frame} to {waggle_end_frame} (out of {num_frames} frames)")
     
     # Save each frame with waggle visualization
     num_frames = frames_denorm.shape[1]
@@ -129,21 +128,41 @@ def save_sample_with_waggle_visualization(sample, sample_idx, output_dir="test_d
         fig, ax = plt.subplots(1, 1, figsize=(6, 6))
         ax.imshow(frame_np)
         
-        # Draw waggle position and direction on every frame
+        # Draw waggle position and direction only on waggle frames
         if bee_pos is not None:
-            # Draw position circle
-            circle = plt.Circle(bee_pos, radius=5, color='red', fill=True, alpha=0.7)
-            ax.add_patch(circle)
+            # Check if this frame is within waggle duration
+            is_waggle_frame = (waggle_start_frame <= frame_idx <= waggle_end_frame)
             
-            # Draw direction arrow (scale for visibility)
-            if bee_dir is not None:
-                arrow_length = 30
-                ax.arrow(bee_pos[0], bee_pos[1], 
-                        bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
-                        head_width=5, head_length=5, fc='yellow', ec='yellow', alpha=0.8)
+            if is_waggle_frame:
+                # Waggle frame draw annotation
+                circle = plt.Circle(bee_pos, radius=5, color='red', fill=True, alpha=0.7)
+                ax.add_patch(circle)
+                
+                # Draw direction arrow
+                if bee_dir is not None:
+                    arrow_length = 30
+                    ax.arrow(bee_pos[0], bee_pos[1], 
+                            bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
+                            head_width=5, head_length=5, fc='yellow', ec='yellow', alpha=0.8)
+                
+                # Add text annotation with position, direction, and norm
+                dir_norm = np.sqrt(bee_dir[0]**2 + bee_dir[1]**2)
+                text_str = f"Pos: ({bee_pos[0]:.1f}, {bee_pos[1]:.1f})\n"
+                text_str += f"Dir: ({bee_dir[0]:.3f}, {bee_dir[1]:.3f})\n"
+                text_str += f"||Dir||: {dir_norm:.4f}"
+                ax.text(10, 20, text_str, 
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                       fontsize=9, color='black', verticalalignment='top')
+                
+                frame_status = "waggle"
+            else:
+                # Non-waggle frame draw NOTHING
+                frame_status = "no waggle"
+        else:
+            frame_status = "no detection"
         
-        # Set title
-        title = f"Sample {sample_idx}, Frame {frame_idx}\n{video_name}"
+        # Set title with frame status
+        title = f"Sample {sample_idx}, Frame {frame_idx} ({frame_status})\n{video_name}"
         ax.set_title(title, fontsize=10)
         ax.axis('off')
         
@@ -154,13 +173,15 @@ def save_sample_with_waggle_visualization(sample, sample_idx, output_dir="test_d
         plt.close()
     
     # Also save a grid of all frames
-    create_frame_grid(frames_denorm, bee_pos, bee_dir, video_name, sample_output_dir)
+    create_frame_grid(frames_denorm, bee_pos, bee_dir, video_name, sample_output_dir, 
+                      waggle_start_frame, waggle_end_frame)
     
     print(f"  Saved visualization to: {sample_output_dir}/")
     
     return sample_output_dir
 
-def create_frame_grid(video_tensor, bee_pos, bee_dir, video_name, output_dir):
+def create_frame_grid(video_tensor, bee_pos, bee_dir, video_name, output_dir, 
+                      waggle_start_frame=-1, waggle_end_frame=-1):
     """Create a grid of all frames with waggle visualization."""
     num_frames = video_tensor.shape[1]
     cols = 4
@@ -179,18 +200,38 @@ def create_frame_grid(video_tensor, bee_pos, bee_dir, video_name, output_dir):
         
         ax.imshow(frame_np)
         
-        # Draw waggle on every frame in the grid too
+        # Draw waggle only on frames where it occurs
         if bee_pos is not None:
-            circle = plt.Circle(bee_pos, radius=5, color='red', fill=True, alpha=0.7)
-            ax.add_patch(circle)
+            is_waggle_frame = (waggle_start_frame <= i <= waggle_end_frame)
             
-            if bee_dir is not None:
-                arrow_length = 30
-                ax.arrow(bee_pos[0], bee_pos[1], 
-                        bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
-                        head_width=5, head_length=5, fc='yellow', ec='yellow', alpha=0.8)
+            if is_waggle_frame:
+                # Waggle frame red circle + arrow
+                circle = plt.Circle(bee_pos, radius=5, color='red', fill=True, alpha=0.7)
+                ax.add_patch(circle)
+                
+                if bee_dir is not None:
+                    arrow_length = 30
+                    ax.arrow(bee_pos[0], bee_pos[1], 
+                            bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
+                            head_width=5, head_length=5, fc='yellow', ec='yellow', alpha=0.8)
+                
+                # Add text annotation with position, direction, and norm
+                dir_norm = np.sqrt(bee_dir[0]**2 + bee_dir[1]**2)
+                text_str = f"Pos: ({bee_pos[0]:.1f}, {bee_pos[1]:.1f})\n"
+                text_str += f"Dir: ({bee_dir[0]:.2f}, {bee_dir[1]:.2f})\n"
+                text_str += f"||Dir||: {dir_norm:.3f}"
+                ax.text(5, 15, text_str, 
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                       fontsize=7, color='black', verticalalignment='top')
+                
+                frame_label = f"Frame {i} (Waggle)"
+            else:
+                # Non-waggle frame - draw NOTHING
+                frame_label = f"Frame {i}"
+        else:
+            frame_label = f"Frame {i}"
         
-        ax.set_title(f"Frame {i}", fontsize=9)
+        ax.set_title(frame_label, fontsize=9)
         ax.axis('off')
     
     # Hide unused subplots
@@ -198,7 +239,13 @@ def create_frame_grid(video_tensor, bee_pos, bee_dir, video_name, output_dir):
         axes[i].axis('off')
     
     # Add video info to title
-    plt.suptitle(f"Sample Visualization: {video_name}\nAll Frames with Waggle", fontsize=14)
+    title = f"Sample Visualization: {video_name}\n"
+    if waggle_start_frame != -1 and waggle_end_frame != -1:
+        title += f"Waggle: frames {waggle_start_frame} to {waggle_end_frame}"
+    else:
+        title += "No waggle"
+    
+    plt.suptitle(title, fontsize=14)
     
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     
@@ -234,7 +281,7 @@ def main(args):
     train_augmentation = WaggleAugmentations(
         width=224, height=224, 
         prob_flip_h=0.5, prob_flip_v=0.0, 
-        prob_rotate=0.3, rotate_range=(-45, 45), 
+        prob_rotate=1.0, rotate_range=(-45, 45), 
         prob_scale=1.0, scale_range=(0.9, 1.1),
         prob_translate=0.3, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
@@ -276,7 +323,7 @@ def main(args):
     )
     
     test_dataset = VideoYoloDataset(
-        test_df,
+        train_df,
         args.data_dir,
         transforms,
         width=224,
@@ -293,7 +340,7 @@ def main(args):
     print(f'Train data len: {len(train_dataset)}')
     
     # Change if you want to visalise more than 1 sample from the dataset
-    num_samples_to_visualize = 1
+    num_samples_to_visualize = 10
     for i in range(min(num_samples_to_visualize, len(train_dataset))):
         sample = train_dataset[i]
         save_sample_with_waggle_visualization(sample, 
@@ -307,7 +354,6 @@ def main(args):
                                               output_dir="tests/test_dataloader_vis/test", 
                                               denormalize=False)
     
-    # Original code continues...
     sample = train_dataset[0]
     frames = sample["video"]
     print("\nFrames shape:", frames.shape)  # (C, T, H, W)

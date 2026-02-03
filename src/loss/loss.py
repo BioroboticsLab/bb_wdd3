@@ -86,6 +86,24 @@ class WaggleDetectionLoss(nn.Module):
         if obj_mask.sum() > 0:
             pred_dir_obj = pred_dir[obj_mask]
             target_dir_obj = target_dir[obj_mask]
+            
+            # Check if direction vectors are normalized
+            with torch.no_grad():
+                pred_dir_norms = torch.norm(pred_dir_obj, dim=-1)
+                target_dir_norms = torch.norm(target_dir_obj, dim=-1)
+                
+                # Check if any norms deviate significantly from 1.0
+                pred_not_normed = torch.abs(pred_dir_norms - 1.0) > 0.1
+                target_not_normed = torch.abs(target_dir_norms - 1.0) > 0.1
+                
+                if pred_not_normed.any():
+                    print(f"WARNING: {pred_not_normed.sum().item()} predicted direction vectors are not normalized!")
+                    print(f"  Min norm: {pred_dir_norms.min().item():.4f}, Max norm: {pred_dir_norms.max().item():.4f}, Mean: {pred_dir_norms.mean().item():.4f}")
+                
+                if target_not_normed.any():
+                    print(f"WARNING: {target_not_normed.sum().item()} target direction vectors are not normalized!")
+                    print(f"  Min norm: {target_dir_norms.min().item():.4f}, Max norm: {target_dir_norms.max().item():.4f}, Mean: {target_dir_norms.mean().item():.4f}")
+            
             cosine_sim = F.cosine_similarity(pred_dir_obj, target_dir_obj, dim=-1)
             dir_loss = (1 - cosine_sim).mean()
             

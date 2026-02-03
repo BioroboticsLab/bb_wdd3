@@ -105,6 +105,24 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
     if not preds:
         return []
 
+    # Check direction vector norms BEFORE clustering
+    #print("\n=== Direction Vector Normalization Check (After Clustering) ===")
+    direction_norms_before = []
+    for p in preds:
+        dx, dy = p['direction']
+        norm = np.sqrt(dx**2 + dy**2)
+        direction_norms_before.append(norm)
+    
+    direction_norms_before = np.array(direction_norms_before)
+    not_normed_before = np.abs(direction_norms_before - 1.0) > 0.1
+    
+    #print(f"Total predictions: {len(preds)}")
+    #print(f"Direction norms - Min: {direction_norms_before.min():.4f}, Max: {direction_norms_before.max():.4f}, Mean: {direction_norms_before.mean():.4f}")
+    if not_normed_before.any():
+        print(f"WARNING: {not_normed_before.sum()} direction vectors deviate >0.1 from norm=1.0")
+    #else:
+    #    print(" All direction vectors are properly normalized")
+
     # Prepare features for clustering: spatial + temporal
     features = []
     for pred in preds:
@@ -151,7 +169,9 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         
         # Compute direction using selected aggregation
         directions = np.array([p['direction'] for p in cluster_points])
-        aggregated_direction = tuple(agg_func(directions, axis=0))
+        #aggregated_direction = tuple(agg_func(directions, axis=0))
+        mean_dir = np.mean(directions, axis=0)
+        aggregated_direction = tuple(mean_dir / np.linalg.norm(mean_dir))  # norm = 1.0
         
         # Compute merged temporal range (always min/max)
         start_times = [p['temporal_offsets'][0] for p in cluster_points]
@@ -173,6 +193,26 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
             'aggregation_mode': mode
         }
         consolidated.append(consolidated_detection)
+    
+    # Check direction vector norms AfterER clustering
+    print("\n=== Direction Vector Normalization Check (After Clustering) ===")
+    direction_norms_after = []
+    for p in consolidated:
+        dx, dy = p['direction']
+        norm = np.sqrt(dx**2 + dy**2)
+        direction_norms_after.append(norm)
+    
+    direction_norms_after = np.array(direction_norms_after)
+    not_normed_after = np.abs(direction_norms_after - 1.0) > 0.1
+    
+    print(f"Total consolidated predictions: {len(consolidated)}")
+    #print(f"Direction norms - Min: {direction_norms_after.min():.4f}, Max: {direction_norms_after.max():.4f}, Mean: {direction_norms_after.mean():.4f}")
+    if not_normed_after.any():
+        print(f"WARNING: {not_normed_after.sum()} direction vectors deviate > 0.1 from norm=1.0")
+    #    print(f"  This suggests that {mode} aggregation is not appropriate for direction vectors!")
+    else:
+        print("All direction vectors are properly normalized")
+    #print("=" * 70 + "\n")
     
     return consolidated
 

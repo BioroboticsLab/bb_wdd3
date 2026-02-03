@@ -223,8 +223,8 @@ def main(args):
                                                         mode=config['post_process']['mode'])
 
         # Can postprocess entire predictions no need for limit to 16 sequences, its only needed when we visualise
-        save_preds_to_csv(test_preds, f'raw_predictions_epoch_{epoch}.csv', 'raw', './outputs/preds_csv')
-        save_preds_to_csv(post_test_preds, f'postprocessed_predictions_epoch_{epoch}.csv', 'postprocessed', './outputs/preds_csv')
+        #save_preds_to_csv(test_preds, f'raw_predictions_epoch_{epoch}.csv', 'raw', './outputs/preds_csv')
+        #save_preds_to_csv(post_test_preds, f'postprocessed_predictions_epoch_{epoch}.csv', 'postprocessed', './outputs/preds_csv')
 
         # visualise and store postprocessed results
         draw_waggle_batch(

@@ -7,6 +7,39 @@ from torchvision import transforms as T
 from src.data.augmentation import WaggleAugmentations
 from src.data.dataset import VideoYoloDataset
 
+def perpendicular(v):
+    """Return a perpendicular vector (rotated +90°)."""
+    return (-v[1], v[0])
+
+def extend_to_border(origin, direction, width, height):
+    """
+    Extend a ray from origin in direction until it hits the image border.
+    Returns the endpoint (x, y).
+    """
+    x0, y0 = origin
+    dx, dy = direction
+
+    eps = 1e-6
+    dx = dx if abs(dx) > eps else eps
+    dy = dy if abs(dy) > eps else eps
+
+    t_vals = []
+
+    # Left / right borders
+    t_vals.append((0 - x0) / dx)
+    t_vals.append((width - x0) / dx)
+
+    # Top / bottom borders
+    t_vals.append((0 - y0) / dy)
+    t_vals.append((height - y0) / dy)
+
+    # Keep only forward intersections
+    t_vals = [t for t in t_vals if t > 0]
+
+    t_min = min(t_vals)
+    return x0 + dx * t_min, y0 + dy * t_min
+
+
 def test_window_augmentations(augmentation_config=None, test_name="test"):
     """
     Test augmentations on a single window.
@@ -120,11 +153,75 @@ def test_window_augmentations(augmentation_config=None, test_name="test"):
             
             # Draw direction arrow (scale for visibility)
             if bee_dir is not None:
+                img_w, img_h = 224, 224
                 arrow_length = 30
-                ax.arrow(bee_pos[0], bee_pos[1], 
-                        bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
-                        head_width=5, head_length=5, fc='yellow', ec='yellow', alpha=0.8)
-        
+
+                #arrow_length = 30
+                #ax.arrow(bee_pos[0], bee_pos[1], 
+                #        bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
+                #        head_width=5, head_length=5, fc='yellow', ec='yellow', alpha=0.8)
+                # Main direction (yellow)
+                #ax.arrow(
+                #    bee_pos[0], bee_pos[1],
+                #    bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
+                #    head_width=5, head_length=5,
+                #    fc='yellow', ec='yellow', alpha=0.9
+                #)
+
+                # Perpendicular direction (cyan)
+                #perp = perpendicular(bee_dir)
+                #ax.arrow(
+                #    bee_pos[0], bee_pos[1],
+                #    perp[0] * arrow_length, perp[1] * arrow_length,
+                #    head_width=5, head_length=5,
+                #    fc='cyan', ec='cyan', alpha=0.7
+                #)
+                # === Direction vectors ===
+                dx, dy = bee_dir
+                perp_dx, perp_dy = -dy, dx
+
+                # Normalize perpendicular just to be safe
+                norm = np.sqrt(perp_dx**2 + perp_dy**2)
+                perp_dx /= norm
+                perp_dy /= norm
+
+                # ---- Short direction arrow (local) ----
+                ax.arrow(
+                    bee_pos[0], bee_pos[1],
+                    dx * arrow_length, dy * arrow_length,
+                    head_width=5, head_length=5,
+                    fc='yellow', ec='yellow', alpha=0.9
+                )
+
+                # ---- Dotted direction ray to image border ----
+                end_dir = extend_to_border(
+                    bee_pos, (dx, dy), img_w, img_h
+                )
+
+                ax.plot(
+                    [bee_pos[0], end_dir[0]],
+                    [bee_pos[1], end_dir[1]],
+                    linestyle='--',
+                    linewidth=2,
+                    color='yellow',
+                    alpha=0.6
+                )
+
+                # ---- Perpendicular ray to image border ----
+                end_perp = extend_to_border(
+                    bee_pos, (perp_dx, perp_dy), img_w, img_h
+                )
+
+                ax.plot(
+                    [bee_pos[0], end_perp[0]],
+                    [bee_pos[1], end_perp[1]],
+                    linestyle='-',
+                    linewidth=2,
+                    color='cyan',
+                    alpha=0.8
+                )
+
+
         # Set title
         if augmentation_config:
             aug_title = ", ".join(aug_info[:2]) if aug_info else "No augmentation"
@@ -157,6 +254,9 @@ def create_frame_grid(video_tensor, bee_pos, bee_dir, aug_info, output_dir):
     fig, axes = plt.subplots(rows, cols, figsize=(15, rows * 3.5))
     axes = axes.flatten()
     
+    img_w, img_h = 224, 224
+    arrow_length = 30
+    
     for i in range(num_frames):
         ax = axes[i]
         frame = video_tensor[:, i, :, :]
@@ -173,10 +273,47 @@ def create_frame_grid(video_tensor, bee_pos, bee_dir, aug_info, output_dir):
             ax.add_patch(circle)
             
             if bee_dir is not None:
-                arrow_length = 30
-                ax.arrow(bee_pos[0], bee_pos[1], 
-                        bee_dir[0] * arrow_length, bee_dir[1] * arrow_length,
-                        head_width=5, head_length=5, fc='yellow', ec='yellow', alpha=0.8)
+                dx, dy = bee_dir
+                perp_dx, perp_dy = -dy, dx
+                
+                # Normalize perpendicular
+                norm = np.sqrt(perp_dx**2 + perp_dy**2)
+                perp_dx /= norm
+                perp_dy /= norm
+                
+                # Short direction arrow (local)
+                ax.arrow(
+                    bee_pos[0], bee_pos[1],
+                    dx * arrow_length, dy * arrow_length,
+                    head_width=5, head_length=5,
+                    fc='yellow', ec='yellow', alpha=0.9
+                )
+                
+                # Dotted direction ray to image border
+                end_dir = extend_to_border(
+                    bee_pos, (dx, dy), img_w, img_h
+                )
+                ax.plot(
+                    [bee_pos[0], end_dir[0]],
+                    [bee_pos[1], end_dir[1]],
+                    linestyle='--',
+                    linewidth=2,
+                    color='yellow',
+                    alpha=0.6
+                )
+                
+                # Perpendicular ray to image border
+                end_perp = extend_to_border(
+                    bee_pos, (perp_dx, perp_dy), img_w, img_h
+                )
+                ax.plot(
+                    [bee_pos[0], end_perp[0]],
+                    [bee_pos[1], end_perp[1]],
+                    linestyle='-',
+                    linewidth=2,
+                    color='cyan',
+                    alpha=0.8
+                )
         
         ax.set_title(f"Frame {i}", fontsize=9)
         ax.axis('off')
@@ -227,12 +364,12 @@ if __name__ == "__main__":
     augs = WaggleAugmentations(
         width=224, height=224, 
         prob_flip_h=0.0, prob_flip_v=0.0, 
-        prob_rotate=1.0, rotate_range=(-45, 45), 
+        prob_rotate=1.0, rotate_range=(-90, 90), 
         prob_scale=0.0, scale_range=(0.9, 1.1),
         prob_translate=0.0, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
         prob_brightness=0.0, brightness_range=0.4, 
-        prob_contrast=1.0, contrast_range=0.4,
+        prob_contrast=0.0, contrast_range=0.4,
         prob_gamma=0.0, gamma_range=(0.8, 1.2),
         prob_blur=0.0, blur_range=(0.5, 2.0),
         prob_clahe=0.0, clahe_clip_limit=2.0, clahe_tile_grid_size=(8, 8),
