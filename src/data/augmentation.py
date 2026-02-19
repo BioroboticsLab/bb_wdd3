@@ -6,7 +6,7 @@ import torchvision.transforms.functional as F
 import torch.nn.functional as F_torch
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import cv2
-cv2.setNumThreads(4)
+cv2.setNumThreads(1)
 
 class WaggleAugmentations:
     """

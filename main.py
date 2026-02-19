@@ -14,7 +14,10 @@ from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
 #from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
-from src.models.model_multiheads_deep_ssp import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
+from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multiheads_deep_ssp import R2Plus1D_YOLO_MultiHead
 from src.loss.loss import WaggleDetectionLoss
 #from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations
@@ -190,6 +193,28 @@ def main(args):
                                        gamma=config["loss"]["varifocal_gamma"],
                                        quality_scale=config["loss"]["varifocal_quality_scale"])
     
+    scaler = torch.amp.GradScaler()
+
+    # Resume from checkpoint if provided
+    start_epoch = 0
+    best_val_loss = float('inf')
+
+    if args.resume and os.path.exists(args.resume):
+        print(f"Resuming from checkpoint: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device)
+        if isinstance(model, torch.nn.DataParallel):
+            model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_val_loss = checkpoint['best_val_loss']
+        print(f"Resumed at epoch {start_epoch}, best_val_loss so far: {best_val_loss:.4f}")
+    elif args.resume:
+        print(f"Warning: checkpoint path '{args.resume}' not found, starting from scratch.")
+
     # init wandb for logging
     wandb.init(
     project="waggle-detection",  # Project name
@@ -197,16 +222,13 @@ def main(args):
         **config,  # Log entire config
         "seed": SEED,
     },
-    name=f"run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    name=f"run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}",
+    resume="allow" if args.resume else None
 )
-    scaler = torch.amp.GradScaler()
     
-    best_val_loss = float('inf')
-    
-    for epoch in range(config['train']['epochs']):
+    for epoch in range(start_epoch, config['train']['epochs']):
         print(f'\nEpoch {epoch+1}/{config["train"]["epochs"]}')
         # Train one epoch
-        # Remove writer argument:
         train_loss = train(
             model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler)
         
@@ -252,26 +274,33 @@ def main(args):
 
         print_evaluation_results(test_metrics, post_test_metrics)
         """
-        # Save best model
-        # periodicly checkpoint lastest and best model
-        # perodicly compute eval metrics and postprocessing to save compute
         if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                if config['train'].get('save_model', True):  # Default to True if not specified
-                    if isinstance(model, torch.nn.DataParallel):
-                        torch.save(model.module.state_dict(), './ckpt/best_model.pth')
-                    else:
-                        torch.save(model.state_dict(), './ckpt/best_model.pth')
+                if config['train'].get('save_model', True):
+                    # Save best model
+                    torch.save({
+                        'epoch': epoch,
+                        'model_state_dict': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict(),
+                        'scaler_state_dict': scaler.state_dict(),
+                        'best_val_loss': best_val_loss,
+                    }, './ckpt/best_model.pth')
                     print(f"New best model saved with val_loss: {val_loss:.4f}")
                 else:
                     print(f"New best val_loss: {val_loss:.4f} (model saving disabled)")
             
-            if config['train'].get('save_model', True):  # Default to True if not specified
-                if isinstance(model, torch.nn.DataParallel):
-                    torch.save(model.module.state_dict(), './ckpt/latest.pth')
-                else:
-                    torch.save(model.state_dict(), './ckpt/latest.pth')
+            if config['train'].get('save_model', True):
+                # Save latest checkpoint
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'scaler_state_dict': scaler.state_dict(),
+                    'best_val_loss': best_val_loss,
+                }, './ckpt/latest.pth')
                 print(f'Saved and evaluated model at Epoch {epoch}/{config["train"]["epochs"]}')
             else:
                 print(f'Evaluated model at Epoch {epoch}/{config["train"]["epochs"]} (model saving disabled)')
@@ -283,15 +312,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Waggle detection training")
 
     parser.add_argument("--config_path", type=str, default='./configs/config.yaml', help="Path to the config file.")
-
-    #parser.add_argument("--data_dir", type=str, default='./data/videos/', help="Path to directory containing video files")
-    #parser.add_argument("--csv_path", type=str, default="./data/annotations/fps_multires_full_data.csv", help="Path to annotations csv")
-
-    #parser.add_argument("--batch_size", type=int, default=16)
-
-    #parser.add_argument("--n_epochs", type=int, default=100)
-
-    #parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from (e.g. ./ckpt/latest.pth).")
 
     return parser.parse_args()
 

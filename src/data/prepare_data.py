@@ -1,6 +1,8 @@
 import pandas as pd
 import os
 import cv2
+cv2.setNumThreads(1)
+
 
 def prepare_dataset(csv_path, clip_len=32, pos=False):
     df = pd.read_csv(csv_path)

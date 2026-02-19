@@ -88,7 +88,96 @@ def cluster_and_select_max(predictions, min_confidence=0.8, spatial_threshold=30
         kept.append(best)
     return kept
 
-def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, temporal_threshold=10, min_confidence=0.8, mode='median'):
+
+def remove_outliers_density(predictions, min_neighbors=2, spatial_radius=50, temporal_radius=15):
+    """
+    Remove predictions that don't have enough neighbors in space-time.
+    Simpler and more interpretable than Isolation Forest.
+    
+    Args:
+        predictions: List of prediction dicts
+        min_neighbors: Minimum number of neighbors to be considered inlier
+        spatial_radius: Spatial neighborhood radius (pixels)
+        temporal_radius: Temporal neighborhood radius (frames)
+    """
+    if len(predictions) < min_neighbors + 1:
+        return predictions
+    
+    features = []
+    for pred in predictions:
+        x, y = pred['position']
+        frame_mid = (pred['temporal_offsets'][0] + pred['temporal_offsets'][1]) / 2
+        features.append([x, y, frame_mid])
+    
+    features = np.array(features)
+    
+    # Scale temporal to match spatial units
+    temporal_scale = spatial_radius / temporal_radius
+    scaled_features = features.copy()
+    scaled_features[:, 2] *= temporal_scale
+    
+    # Count neighbors for each prediction
+    inliers = []
+    outlier_count = 0
+    
+    for i, pred in enumerate(predictions):
+        # Calculate distances to all other points
+        distances = np.sqrt(np.sum((scaled_features - scaled_features[i])**2, axis=1))
+        
+        # Count neighbors within radius (excluding self)
+        num_neighbors = np.sum((distances > 0) & (distances <= spatial_radius))
+        
+        if num_neighbors >= min_neighbors:
+            inliers.append(pred)
+        else:
+            outlier_count += 1
+    
+    if outlier_count > 0:
+        print(f"Removed {outlier_count} sparse outliers ({outlier_count/len(predictions)*100:.1f}%)")
+    
+    return inliers
+
+
+def remove_outliers_isolation_forest(predictions, contamination=0.1):
+    """
+    Remove spatial-temporal outliers using Isolation Forest.
+    
+    Args:
+        predictions: List of prediction dicts
+        contamination: Expected proportion of outliers (0.05-0.2 typical)
+    """
+    from sklearn.ensemble import IsolationForest
+    
+    if len(predictions) < 5:  # Too few to detect outliers meaningfully
+        return predictions
+    
+    # Extract spatial-temporal features
+    features = []
+    for pred in predictions:
+        x, y = pred['position']
+        frame_mid = (pred['temporal_offsets'][0] + pred['temporal_offsets'][1]) / 2
+        features.append([x, y, frame_mid])
+    
+    features = np.array(features)
+    
+    # Fit Isolation Forest
+    clf = IsolationForest(contamination=contamination, random_state=42)
+    outlier_labels = clf.fit_predict(features)  # 1 = inlier, -1 = outlier
+    
+    # Keep only inliers
+    inliers = [pred for pred, label in zip(predictions, outlier_labels) if label == 1]
+    
+    removed = len(predictions) - len(inliers)
+    if removed > 0:
+        print(f"Removed {removed} outliers ({removed/len(predictions)*100:.1f}%)")
+    
+    return inliers
+
+
+def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, temporal_threshold=10, 
+                                   min_confidence=0.8, mode='median',
+                                   remove_outliers=True, outlier_method='density',
+                                   outlier_min_neighbors=2):
     """
     Cluster waggle detections and consolidate into single detections with:
     - mean/median position, mean/median direction, merged temporal range
@@ -99,14 +188,33 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         temporal_threshold: DBSCAN temporal clustering threshold (frames)  
         min_confidence: Minimum confidence threshold
         mode: 'mean' or 'median' for aggregation method
+        remove_outliers: Whether to remove outliers before clustering
+        outlier_method: 'density' or 'isolation_forest'
+        outlier_min_neighbors: Minimum neighbors for density-based outlier removal
     """
     # Filter by confidence first
     preds = [p for p in predictions if p['confidence'] >= min_confidence]
     if not preds:
         return []
+    
+    # Remove outliers before clustering
+    if remove_outliers and len(preds) >= 5:
+        if outlier_method == 'density':
+            preds = remove_outliers_density(
+                preds, 
+                min_neighbors=outlier_min_neighbors,
+                spatial_radius=spatial_threshold * 1.5,  # Slightly larger than cluster radius
+                temporal_radius=temporal_threshold * 1.5
+            )
+        elif outlier_method == 'isolation_forest':
+            preds = remove_outliers_isolation_forest(preds, contamination=0.4)
+        else:
+            raise ValueError(f"Unknown outlier_method: {outlier_method}. Use 'density' or 'isolation_forest'")
+        
+        if not preds:
+            return []
 
     # Check direction vector norms BEFORE clustering
-    #print("\n=== Direction Vector Normalization Check (After Clustering) ===")
     direction_norms_before = []
     for p in preds:
         dx, dy = p['direction']
@@ -116,12 +224,8 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
     direction_norms_before = np.array(direction_norms_before)
     not_normed_before = np.abs(direction_norms_before - 1.0) > 0.1
     
-    #print(f"Total predictions: {len(preds)}")
-    #print(f"Direction norms - Min: {direction_norms_before.min():.4f}, Max: {direction_norms_before.max():.4f}, Mean: {direction_norms_before.mean():.4f}")
     if not_normed_before.any():
         print(f"WARNING: {not_normed_before.sum()} direction vectors deviate >0.1 from norm=1.0")
-    #else:
-    #    print(" All direction vectors are properly normalized")
 
     # Prepare features for clustering: spatial + temporal
     features = []
@@ -167,9 +271,8 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         positions = np.array([p['position'] for p in cluster_points])
         aggregated_position = tuple(agg_func(positions, axis=0))
         
-        # Compute direction using selected aggregation
+        # Compute direction using mean and normalize
         directions = np.array([p['direction'] for p in cluster_points])
-        #aggregated_direction = tuple(agg_func(directions, axis=0))
         mean_dir = np.mean(directions, axis=0)
         aggregated_direction = tuple(mean_dir / np.linalg.norm(mean_dir))  # norm = 1.0
         
@@ -194,8 +297,8 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         }
         consolidated.append(consolidated_detection)
     
-    # Check direction vector norms AfterER clustering
-    print("\n=== Direction Vector Normalization Check (After Clustering) ===")
+    # Check direction vector norms after clustering
+    # print("\n=== Direction Vector Normalization Check (After Clustering) ===")
     direction_norms_after = []
     for p in consolidated:
         dx, dy = p['direction']
@@ -205,23 +308,34 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
     direction_norms_after = np.array(direction_norms_after)
     not_normed_after = np.abs(direction_norms_after - 1.0) > 0.1
     
-    print(f"Total consolidated predictions: {len(consolidated)}")
-    #print(f"Direction norms - Min: {direction_norms_after.min():.4f}, Max: {direction_norms_after.max():.4f}, Mean: {direction_norms_after.mean():.4f}")
+    #print(f"Total consolidated predictions: {len(consolidated)}")
     if not_normed_after.any():
         print(f"WARNING: {not_normed_after.sum()} direction vectors deviate > 0.1 from norm=1.0")
-    #    print(f"  This suggests that {mode} aggregation is not appropriate for direction vectors!")
-    else:
-        print("All direction vectors are properly normalized")
+    #else:
+    #    print("✓ All direction vectors are properly normalized")
     #print("=" * 70 + "\n")
     
     return consolidated
 
 def postprocess_predictions(predictions, strategy='cluster_consolidate',
                           spatial_threshold=30.0, temporal_threshold=10,
-                          confidence_threshold=0.8, mode='mean'):
+                          confidence_threshold=0.8, mode='mean',
+                          remove_outliers=True, outlier_method='density',
+                          outlier_min_neighbors=2):
     """
     Run post-processing using the specified strategy:
-    'nms' | 'max' | 'weighted' | 'cluster' | 'cluster_consolidate' | cluster_consolidate_v2
+    'nms' | 'max' | 'weighted' | 'cluster' | 'cluster_consolidate' | 'line_nms'
+    
+    Args:
+        predictions: List of prediction dicts
+        strategy: Post-processing strategy to use
+        spatial_threshold: Spatial distance threshold (pixels)
+        temporal_threshold: Temporal distance threshold (frames)
+        confidence_threshold: Minimum confidence to keep
+        mode: 'mean' or 'median' for cluster consolidation
+        remove_outliers: Whether to remove outliers (only for cluster_consolidate)
+        outlier_method: 'density' or 'isolation_forest'
+        outlier_min_neighbors: Min neighbors for density-based outlier removal
     """ 
     if strategy == 'cluster_consolidate':
         preds = cluster_and_consolidate_waggles(
@@ -229,7 +343,10 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
             spatial_threshold=spatial_threshold,
             temporal_threshold=temporal_threshold,
             min_confidence=confidence_threshold, 
-            mode=mode
+            mode=mode,
+            remove_outliers=remove_outliers,
+            outlier_method=outlier_method,
+            outlier_min_neighbors=outlier_min_neighbors
         )
     elif strategy == 'nms':
         preds = point_nms(predictions, confidence_threshold, spatial_threshold)
@@ -245,7 +362,10 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
             spatial_threshold=spatial_threshold,
             temporal_threshold=temporal_threshold,
             min_confidence=confidence_threshold, 
-            mode=mode
+            mode=mode,
+            remove_outliers=remove_outliers,
+            outlier_method=outlier_method,
+            outlier_min_neighbors=outlier_min_neighbors
         )
         groups = line_nms_group(predictions, temporal_gap_thresh=temporal_threshold)
         preds = line_nms_collapse(predictions, groups)
@@ -259,7 +379,10 @@ def batch_postprocess_predictions(batch_predictions,
                                   spatial_threshold=30.0,
                                   temporal_threshold=10,
                                   confidence_threshold=0.9,
-                                  strategy='nms', mode='mean'):
+                                  strategy='nms', mode='mean',
+                                  remove_outliers=True,
+                                  outlier_method='density',
+                                  outlier_min_neighbors=2):
     """Apply post-processing to a batch of prediction lists"""
     processed_batch = []
     for sample_predictions in batch_predictions:
@@ -272,7 +395,10 @@ def batch_postprocess_predictions(batch_predictions,
             spatial_threshold=spatial_threshold,
             temporal_threshold=temporal_threshold,
             confidence_threshold=confidence_threshold,
-            mode=mode
+            mode=mode,
+            remove_outliers=remove_outliers,
+            outlier_method=outlier_method,
+            outlier_min_neighbors=outlier_min_neighbors
         )
         processed_batch.append(processed['filtered_predictions'])
     return processed_batch
@@ -391,3 +517,22 @@ def line_nms_collapse(detections, groups):
         merged.append(merged_detection)
 
     return merged
+
+
+# Helper functions for line_nms (you may already have these)
+def cos_sim(v1, v2):
+    """Cosine similarity between two vectors"""
+    return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-8)
+
+
+def alignment_score(d1, d2, p1, p2):
+    """
+    How well does the vector from p1 to p2 align with direction d1?
+    Returns cosine similarity.
+    """
+    vec = p2 - p1
+    vec_norm = np.linalg.norm(vec)
+    if vec_norm < 1e-6:
+        return 0.0
+    vec = vec / vec_norm
+    return np.dot(d1, vec)

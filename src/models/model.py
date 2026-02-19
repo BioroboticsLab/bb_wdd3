@@ -13,9 +13,6 @@ class R2Plus1D_YOLO(nn.Module):
     - Lighter feature projection
     - Gradient checkpointing support
     - GroupNorm instead of BatchNorm (more stable)
-    
-    This is an optional upgrade. Your existing model will still work,
-    but this version is faster and uses less memory.
     """
     
     def __init__(

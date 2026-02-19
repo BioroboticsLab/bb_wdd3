@@ -182,7 +182,7 @@ def main(args):
         test_frames = reverse_transform_batch(test_frames, original_size=(224,224))
 
         # visualize fetched test frames as a video if you want
-        frames_to_video(test_frames, output_name= 'data_loader_batches_0')
+        #frames_to_video(test_frames, output_name= 'data_loader_batches_0')
         
         # Transform yolo coordinates onto image domain for both gt and predicted values
         test_gts = yolo_to_img_space_gt(test_gt_raw, all_starts=test_all_starts, all_ends=test_all_ends, window_size = 16, original_size=(224,224))
@@ -192,13 +192,13 @@ def main(args):
 
         # Draw gt and predictions onto frames and saves as video
         # Note: This shows each 16-frame window independently, so frames repeat at window intersections
-        draw_waggle_batch(
-            all_frames=test_frames,
-            all_detections=test_preds, 
-            all_ground_truths=test_gts,
-            all_start_frame_idxs=test_all_starts,
-            output_dir='./outputs/vids'
-        )
+        #draw_waggle_batch(
+        #    all_frames=test_frames,
+        #    all_detections=test_preds, 
+        #    all_ground_truths=test_gts,
+        #    all_start_frame_idxs=test_all_starts,
+        #    output_dir='./outputs/vids'
+        #)
 
         # This creates a continuous timeline without repeating frames
         # We use [:16] because test_frames only contains the first 16 sequences (batch #0),
@@ -220,20 +220,22 @@ def main(args):
                                                         temporal_threshold=config['post_process']['temporal_threshold'], 
                                                         confidence_threshold=config['post_process']['confidence_threshold'], 
                                                         strategy=config['post_process']['strategy'], 
-                                                        mode=config['post_process']['mode'])
+                                                        mode=config['post_process']['mode'],
+                                                        remove_outliers=True,
+                                                        outlier_method='isolation_forest')
 
         # Can postprocess entire predictions no need for limit to 16 sequences, its only needed when we visualise
         #save_preds_to_csv(test_preds, f'raw_predictions_epoch_{epoch}.csv', 'raw', './outputs/preds_csv')
         #save_preds_to_csv(post_test_preds, f'postprocessed_predictions_epoch_{epoch}.csv', 'postprocessed', './outputs/preds_csv')
 
         # visualise and store postprocessed results
-        draw_waggle_batch(
-            all_frames=test_frames,
-            all_detections=post_test_preds, 
-            all_ground_truths=test_gts,
-            all_start_frame_idxs=test_all_starts,
-            output_dir='./outputs/vids'
-        )
+        #draw_waggle_batch(
+        #    all_frames=test_frames,
+        #    all_detections=post_test_preds, 
+        #    all_ground_truths=test_gts,
+        #    all_start_frame_idxs=test_all_starts,
+        #    output_dir='./outputs/vids'
+        #)
 
         # Print unique clusters identifies
         unique_clusters_all = len({det['cluster_id'] for seq in post_test_preds for det in seq})

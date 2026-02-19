@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from typing import List, Optional
-cv2.setNumThreads(4)
+cv2.setNumThreads(1)
 
 class VideoFrameCache:
     """
