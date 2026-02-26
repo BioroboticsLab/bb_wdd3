@@ -27,7 +27,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
         dropout_rate: float = 0.3,
         use_gradient_checkpointing: bool = True,
         transformer_layers: int = 4,
-        transformer_heads: int = 4 #8
+        transformer_heads: int = 8
     ):
         super().__init__()
         self.grid_size = grid_size

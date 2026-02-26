@@ -17,7 +17,7 @@ train:
   weight_decay: 0.0005
   val_freq: 1
   use_amp: true
-  warmup_ratio: 0.1 # onecycle warmup ratio
+  warmup_ratio: 0.03 # 3 epochs if we train fo 200 epochs
   num_workers: 4
   save_model: True
 

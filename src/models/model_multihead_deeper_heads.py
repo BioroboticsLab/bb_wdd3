@@ -23,7 +23,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
         grid_size: int = 28,
         pretrained: bool = True,
         max_detections_per_cell: int = 1,
-        dropout_rate: float = 0.3,
+        dropout_rate: float = 0.1,
         use_gradient_checkpointing: bool = True
     ):
         super().__init__()
@@ -47,7 +47,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
             nn.Conv2d(256, 256, kernel_size=1, bias=False),
             nn.GroupNorm(16, 256),
             nn.ReLU(inplace=True),
-            nn.Dropout2d(dropout_rate * 0.5)
+            nn.Dropout2d(dropout_rate)
         )
         
         # Shared feature processing - 256 channels throughout

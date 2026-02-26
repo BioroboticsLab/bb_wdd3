@@ -18,6 +18,7 @@ ckpt/**/*
 !ckpt/
 !ckpt/.gitkeep
 **/models/
+!src/models/
 **/checkpoints/
 *.ckpt
 *.pth

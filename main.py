@@ -13,11 +13,12 @@ from torch.utils.data import DataLoader, random_split
 from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
 #from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
+from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multiheads_deep_ssp import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads_transformer_dirvit import R2Plus1D_YOLO_MultiHead
+
 from src.loss.loss import WaggleDetectionLoss
 #from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations

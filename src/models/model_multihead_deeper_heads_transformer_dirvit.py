@@ -121,13 +121,13 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
         grid_size: int = 28,
         pretrained: bool = True,
         max_detections_per_cell: int = 1,
-        dropout_rate: float = 0.3,
+        dropout_rate: float = 0.1,
         use_gradient_checkpointing: bool = True,
         transformer_layers: int = 4,
-        transformer_heads: int = 8,
+        transformer_heads: int = 4,
         # Direction head spatial ViT params
-        spatial_window_size: int = 8,
-        spatial_vit_layers: int = 2,
+        spatial_window_size: int = 7,
+        spatial_vit_layers: int = 4,
         spatial_vit_heads: int = 4,
     ):
         super().__init__()

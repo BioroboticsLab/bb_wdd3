@@ -12,7 +12,8 @@ from torch.utils.data import DataLoader, random_split
 from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
 #from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
+from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
 
 from src.loss.loss import WaggleDetectionLoss
 from src.loss.loss_new import WaggleDetectionLoss_New
@@ -52,7 +53,7 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//8].reset_index(drop=True)
+    data = data.iloc[:len(data)//16].reset_index(drop=True)
     #data = data.iloc[:100].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
 
@@ -159,7 +160,7 @@ def main(args):
 
 
     model = load_pretrained_model(args.ckpt_path, device)
-    yolocriteria = WaggleDetectionLoss_New(lambda_obj=config["loss"]["lambda_obj"], 
+    yolocriteria = WaggleDetectionLoss(lambda_obj=config["loss"]["lambda_obj"], 
                                        lambda_coord=config["loss"]["lambda_coord"], 
                                        lambda_noobj=config["loss"]["lambda_noobj"], 
                                        lambda_direction=config["loss"]["lambda_direction"], 
