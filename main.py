@@ -13,12 +13,12 @@ from torch.utils.data import DataLoader, random_split
 from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.models.model import R2Plus1D_YOLO
 #from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer_dirvit import R2Plus1D_YOLO_MultiHead
-
+# from src.models.model_multihead_deeper_heads_transformer_dirvit import R2Plus1D_YOLO_MultiHead
+from src.models.model_multihead_deeper_heads_transformer_cross_attention import R2Plus1D_YOLO_MultiHead
 from src.loss.loss import WaggleDetectionLoss
 #from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations
@@ -32,7 +32,8 @@ from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_sp
 from src.utils.nms import batch_postprocess_predictions
 from src.utils.vis_utils import reverse_transform, save_frames
 import argparse
-from src.utils.model_utils import load_pretrained_model
+from src.utils.model_utils import load_pretrained_model, EMA
+
 
 SEED = 42
 random.seed(SEED)

@@ -32,12 +32,12 @@ class VideoYoloDataset(Dataset):
             1. Video loading for a variable frame-range [start_frame, end_frame]
             2. Adaptive crop selection based on the expected bee size in pixels
             3. Random placement of the bee within the crop area (to add positional diversity)
-            4. Resizing of the crop to a fixed resolution (width × height)
+            4. Resizing of the crop to a fixed resolution (width x height)
             5. Optional augmentations (flip, rotate, scale, etc.) that correctly update:
                     - (x, y) bee coordinates
                     - (dir_x, dir_y) body orientation vector
             6. Frame sampling/padding to produce a fixed-length temporal clip
-            7. YOLO-style target encoding on a (grid_size × grid_size) grid, including:
+            7. YOLO-style target encoding on a (grid_size x grid_size) grid, including:
                     - objectness
                     - relative cell-coordinates (cell_x, cell_y)
                     - normalized direction vector (dir_x, dir_y)
@@ -56,11 +56,11 @@ class VideoYoloDataset(Dataset):
         transform : callable, optional
             Optional transformation applied to each frame (e.g., normalization).
         width, height : int
-            Output spatial resolution of every crop (default = 224×224).
+            Output spatial resolution of every crop (default = 224 x 224).
         clip_len : int
             Number of frames returned per sample (frames are sampled or repeated).
         grid_size : int
-            Size of YOLO detection grid (g × g).
+            Size of YOLO detection grid (g x g).
         max_detections_per_cell : int
             Limit of objects per grid cell (usually 1 for this task).
         num_classes : int
