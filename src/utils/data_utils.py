@@ -44,7 +44,7 @@ def fix_dataframe_with_video_lengths(df, video_frame_counts):
         if video_name not in video_frame_counts:
             continue
         
-        total_frames = video_frame_counts[video_name]  # Now it's just an int!
+        total_frames = video_frame_counts[video_name]  # Use int
         end_frame = min(int(row['end_frame']), total_frames)
         start_frame = int(row['start_frame'])
         
