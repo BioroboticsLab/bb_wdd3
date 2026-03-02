@@ -128,9 +128,10 @@ class VideoYoloDataset(Dataset):
             else:
                 # Deterministic jitter for testing 
                 # (!!!!!!!--->) swap for np.random.randint to make stochastic (<----!!!!!!!)
-                rng = np.random.RandomState(seed=idx)
-                win_start = int(rng.randint(earliest_win_start, latest_win_start + 1))
-
+                #rng =  np.random.randint # to make deterministic use np.random.RandomState(seed=idx)
+                #win_start = int(rng.randint(earliest_win_start, latest_win_start + 1))
+                win_start = int(np.random.randint(earliest_win_start, latest_win_start + 1))
+                
             win_end = win_start + self.clip_len
             waggle_start_in_window = waggle_start
             waggle_end_in_window = waggle_end

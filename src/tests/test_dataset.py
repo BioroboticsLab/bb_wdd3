@@ -8,7 +8,8 @@ import torchvision.transforms as T
 import pandas as pd
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
+# from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
+from src.data.dataset_tempaug import VideoYoloDataset, TemporalWaggleCollator
 from src.data.augmentation import WaggleAugmentations
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn  as nn
@@ -106,8 +107,11 @@ def save_sample_with_waggle_visualization(sample, sample_idx, output_dir="test_d
         # Convert normalized times to frame indices
         num_frames = frames_denorm.shape[1]
         if start_norm != -1 and end_norm != -1:
-            waggle_start_frame = int(start_norm * (num_frames - 1))
-            waggle_end_frame = round(end_norm * (num_frames - 1))
+            #waggle_start_frame = int(start_norm * (num_frames - 1))
+            #waggle_end_frame = round(end_norm * (num_frames - 1))
+            num_frames = frames_denorm.shape[1]  # = 16
+            waggle_start_frame = int(start_norm * num_frames)   
+            waggle_end_frame = int(end_norm * num_frames)    
             print(f"  Waggle timing: frames {waggle_start_frame} to {waggle_end_frame} (out of {num_frames} frames)")
     
     # Save each frame with waggle visualization
@@ -280,16 +284,16 @@ def main(args):
     # Create augmentation
     train_augmentation = WaggleAugmentations(
         width=224, height=224, 
-        prob_flip_h=0.5, prob_flip_v=0.0, 
-        prob_rotate=1.0, rotate_range=(-45, 45), 
-        prob_scale=1.0, scale_range=(0.9, 1.1),
-        prob_translate=0.3, translate_range=0.1,
+        prob_flip_h=0.0, prob_flip_v=0.0, 
+        prob_rotate=0.0, rotate_range=(-45, 45), 
+        prob_scale=0.0, scale_range=(0.9, 1.1),
+        prob_translate=0.0, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
-        prob_brightness=1.0, brightness_range=0.4, 
-        prob_contrast=1.0, contrast_range=0.4,
+        prob_brightness=0.0, brightness_range=0.4, 
+        prob_contrast=0.0, contrast_range=0.4,
         prob_gamma=0.0, gamma_range=(0.8, 1.2),
-        prob_blur=0.1, blur_range=(0.5, 2.0),
-        prob_clahe=0.1, clahe_clip_limit=2.0, clahe_tile_grid_size=(8, 8),
+        prob_blur=0.0, blur_range=(0.5, 2.0),
+        prob_clahe=0.0, clahe_clip_limit=2.0, clahe_tile_grid_size=(8, 8),
         prob_color_shuffle=0.0,
         prob_posterize=0.0, posterize_bits=(4, 7),
         prob_greyscale=0.0,
