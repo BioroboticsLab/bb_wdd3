@@ -144,7 +144,7 @@ class VideoYoloDataset(Dataset):
         x_max = x_min + crop_w
         y_max = y_min + crop_h
 
-        # Crop and convert to tensors IN ONE STEP to avoid keeping numpy arrays
+        # Crop and convert to tensors in one step avoids keeping np arrays
         frames = [self.to_tensor(f[y_min:y_max, x_min:x_max]) for f in frames]
         
         # Apply transform if needed

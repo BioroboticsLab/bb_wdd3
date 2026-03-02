@@ -59,11 +59,11 @@ def main(args):
 
     # Temp diagnostic for duration of waggle dance, how long, when in window
     # start early late or middle ? Can we do temporal aug ?
-    data['duration'] = data['end_frame'] - data['start_frame']
-    data['start_norm'] = (data['waggle_start_in_window'] - data['start_frame']) / data['duration']
-    data['end_norm'] = (data['waggle_end_in_window'] - data['start_frame']) / data['duration']
-    print(data[data['waggle']==1][['start_norm','end_norm']].describe())
-    import sys; sys.exit()  # stop after diagonstic
+    #data['duration'] = data['end_frame'] - data['start_frame']
+    #data['start_norm'] = (data['waggle_start_in_window'] - data['start_frame']) / data['duration']
+    #data['end_norm'] = (data['waggle_end_in_window'] - data['start_frame']) / data['duration']
+    #print(data[data['waggle']==1][['start_norm','end_norm']].describe())
+    #import sys; sys.exit()  # stop after diagonstic
 
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
