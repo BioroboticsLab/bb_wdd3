@@ -211,7 +211,7 @@ def evaluate(model_path, epoch, video_folder="/home/prajna/multiscale_wdd/data/v
     
     return all_results
 
-def eval(model, device, yolocriterion, val_loader, epoch):
+def eval(model, device, yolocriterion, val_loader, epoch, ema):
     model.eval()
     total_loss = 0.0
     total_obj_loss = 0.0
@@ -220,6 +220,9 @@ def eval(model, device, yolocriterion, val_loader, epoch):
     total_direction_loss = 0.0
     total_temporal_loss = 0.0
     num_batches = 0
+
+    # Apply EMA parameters for testing
+    ema.apply_shadow()
     
     progress_bar = tqdm(val_loader, desc=f'Val Epoch {epoch+1}', leave=True, position=int(epoch))
     

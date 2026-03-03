@@ -10,8 +10,9 @@ from src.train.train import train
 from src.eval.eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
-from src.models.model import R2Plus1D_YOLO
+from src.data.dataset import TemporalWaggleCollator #, VideoYoloDataset
+from src.data.dataset_tempaug import VideoYoloDataset
+#from src.models.model import R2Plus1D_YOLO
 #from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
@@ -94,7 +95,7 @@ def main(args):
     train_augmentation = WaggleAugmentations(
         width=224, height=224, 
         prob_flip_h=0.5, prob_flip_v=0.0,
-        prob_rotate=0.3, rotate_range=(-15, 15), 
+        prob_rotate=0.3, rotate_range=(-180, 180), #rotate_range=(-15, 15), 
         prob_scale=1.0, scale_range=(0.9, 1.1),
         prob_translate=0.3, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
@@ -187,6 +188,8 @@ def main(args):
 
     optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.0005, betas=(0.937, 0.999))
     
+    ema = EMA(model, decay=0.9999, device=device)
+
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=config['train']['lr'],
@@ -241,10 +244,10 @@ def main(args):
         print(f'\nEpoch {epoch+1}/{config["train"]["epochs"]}')
         # Train one epoch
         train_loss = train(
-            model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler)
+            model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler, ema)
         
         # Validate
-        val_loss = eval(model, device, yolocriteria, test_loader, epoch)
+        val_loss = eval(model, device, yolocriteria, test_loader, epoch, ema)
 
         """
         # fetch all raw logits
@@ -285,6 +288,10 @@ def main(args):
 
         print_evaluation_results(test_metrics, post_test_metrics)
         """
+
+        # Restore original parameters after metrics
+        ema.restore()
+
         if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -296,6 +303,7 @@ def main(args):
                         'optimizer_state_dict': optimizer.state_dict(),
                         'scheduler_state_dict': scheduler.state_dict(),
                         'scaler_state_dict': scaler.state_dict(),
+                        'ema_state_dict': ema.state_dict(),
                         'best_val_loss': best_val_loss,
                     }, './ckpt/best_model.pth')
                     print(f"New best model saved with val_loss: {val_loss:.4f}")
@@ -310,6 +318,7 @@ def main(args):
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
                     'scaler_state_dict': scaler.state_dict(),
+                    'ema_state_dict': ema.state_dict(),
                     'best_val_loss': best_val_loss,
                 }, './ckpt/latest.pth')
                 print(f'Saved and evaluated model at Epoch {epoch}/{config["train"]["epochs"]}')

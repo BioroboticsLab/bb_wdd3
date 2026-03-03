@@ -5,7 +5,7 @@ import datetime
 import os
 import torch.nn as nn
 
-def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoch, scaler):
+def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoch, scaler, ema):
     model.train()
     #torch.cuda.empty_cache()
     total_loss = 0.0
@@ -31,6 +31,8 @@ def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoc
         
         scaler.scale(total_loss_batch).backward()
         scaler.step(optimizer)
+        ema.update(model)
+
         scaler.update()
         
         # Scheduler step per batch for OneCycleLR

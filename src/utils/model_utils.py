@@ -3,14 +3,14 @@ import torch.nn as nn
 import math
 from copy import deepcopy
 from src.models.model import R2Plus1D_YOLO
-
 #from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_standard import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
+from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_transformer_dirvit import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads_transformer_cross_attention import R2Plus1D_YOLO_MultiHead
 
 
 def load_pretrained_model(checkpoint_path, max_detections_per_cell=1, grid_size=28, 
