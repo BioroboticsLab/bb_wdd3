@@ -5,9 +5,49 @@ data:
   train_ratio: 0.75
   subset_size: 1.0
 
+# Training augmentations configuration
+augmentations:
+  width: 224
+  height: 224
+  prob_flip_h: 0.5
+  prob_flip_v: 0.0
+  prob_rotate: 0.3
+  rotate_range: [-15, 15]
+  prob_scale: 1.0
+  scale_range: [0.9, 1.1]
+  prob_translate: 0.3
+  translate_range: 0.1
+  prob_hsv: 0.0
+  hsv_hue: 0.1
+  hsv_saturation: 0.9
+  hsv_value: 0.9
+  prob_brightness: 1.0
+  brightness_range: 0.4
+  prob_contrast: 1.0
+  contrast_range: 0.4
+  prob_gamma: 0.0
+  gamma_range: [0.8, 1.2]
+  prob_blur: 0.1
+  blur_range: [0.5, 2.0]
+  prob_clahe: 0.1
+  clahe_clip_limit: 2.0
+  clahe_tile_grid_size: [8, 8]
+  prob_color_shuffle: 0.0
+  prob_posterize: 0.0
+  posterize_bits: [4, 7]
+  prob_greyscale: 0.0
+  normalize: true
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
 # Model configuration
 model:
   pretrained: True
+  self_attention: False
+  cross_attention: False
+  transformer_heads: 4
+  transformer_layers: 4
+  dropout: 0.3
 
 # Training configuration
 train:
