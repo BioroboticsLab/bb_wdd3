@@ -95,7 +95,7 @@ def main(args):
     train_augmentation = WaggleAugmentations(
         width=224, height=224, 
         prob_flip_h=0.5, prob_flip_v=0.0,
-        prob_rotate=0.3, rotate_range=(-180, 180), #rotate_range=(-15, 15), 
+        prob_rotate=0.3, rotate_range=(-15, 15), #rotate_range=(-15, 15), 
         prob_scale=1.0, scale_range=(0.9, 1.1),
         prob_translate=0.3, translate_range=0.1,
         prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
@@ -225,6 +225,11 @@ def main(args):
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_val_loss = checkpoint['best_val_loss']
+
+        if 'ema_state_dict' in checkpoint:
+            ema.load_state_dict(checkpoint['ema_state_dict'])
+            print(f"Loaded EMA state (updates: {ema.updates})")
+
         print(f"Resumed at epoch {start_epoch}, best_val_loss so far: {best_val_loss:.4f}")
     elif args.resume:
         print(f"Warning: checkpoint path '{args.resume}' not found, starting from scratch.")

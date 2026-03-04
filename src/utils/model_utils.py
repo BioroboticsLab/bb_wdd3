@@ -8,9 +8,9 @@ from src.models.model import R2Plus1D_YOLO
 #from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
+#from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads_transformer_dirvit import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer_cross_attention import R2Plus1D_YOLO_MultiHead
+from src.models.model_multihead_deeper_heads_transformer_cross_attention import R2Plus1D_YOLO_MultiHead
 
 
 def load_pretrained_model(checkpoint_path, max_detections_per_cell=1, grid_size=28, 
@@ -25,14 +25,14 @@ def load_pretrained_model(checkpoint_path, max_detections_per_cell=1, grid_size=
     if 'model_state_dict' in checkpoint:
         # Comprehensive checkpoint format
         model.load_state_dict(checkpoint['model_state_dict'])
-        print("Loaded model from comprehensive checkpoint")
+        print("Loaded model from checkpoint")
     else:
         # Simple model state dict
         model.load_state_dict(checkpoint)
         print("Loaded model from state dict")
     
     model = model.to(device)
-    return model
+    return model, checkpoint 
 
 
 def de_parallel(model):

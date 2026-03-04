@@ -29,7 +29,7 @@ from src.utils.vis_utils import reverse_transform_batch, save_frames
 from src.utils.nms import batch_postprocess_predictions
 from src.utils.video_utils import frames_to_video
 from src.utils.draw_utils import  draw_waggle, draw_waggle_batch, draw_waggle_batch_union
-from src.utils.model_utils import load_pretrained_model
+from src.utils.model_utils import load_pretrained_model, EMA
 import wandb
 
 SEED = 42
@@ -56,12 +56,6 @@ def main(args):
     data = data.iloc[:len(data)//16].reset_index(drop=True)
     #data = data.iloc[:100].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
-
-    transforms = T.Compose([
-        T.ToPILImage(),
-        T.Resize((224, 224)),
-        T.ToTensor(),
-        ])
     
     test_transform = T.Compose([
         T.ToPILImage(),
@@ -69,26 +63,6 @@ def main(args):
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], 
                     std=[0.229, 0.224, 0.225])])
-    
-    train_augmentation = WaggleAugmentations(
-        width=224, height=224, 
-        prob_flip_h=0.5, prob_flip_v=0.0, 
-        prob_rotate=0.3, rotate_range=(-25, 25), 
-        prob_scale=1.0, scale_range=(0.9, 1.1),
-        prob_translate=0.3, translate_range=0.1,
-        prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
-        prob_brightness=1.0, brightness_range=0.4, 
-        prob_contrast=1.0, contrast_range=0.4,
-        prob_gamma=0.0, gamma_range=(0.8, 1.2),
-        prob_blur=0.1, blur_range=(0.5, 2.0),
-        prob_clahe=0.1, clahe_clip_limit=2.0, clahe_tile_grid_size=(8, 8),
-        prob_color_shuffle=0.0,
-        prob_posterize=0.0, posterize_bits=(4, 7),
-        prob_greyscale=0.0,
-        normalize=True,
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
-        debug=False)
 
     total_len = len(data)
     train_len = int(0.8 * total_len)
@@ -101,26 +75,6 @@ def main(args):
     # sort by video name and start frames to recover chronological/sequential order
     train_df = train_df.sort_values(['video_name', 'start_frame']).reset_index(drop=True)
     test_df = test_df.sort_values(['video_name', 'start_frame']).reset_index(drop=True)
-
-
-    # filter out non-overlapping windows
-    #test_df = find_overlapping_rows(test_df)
-    #print('Find Overlapping')
-    
-
-    train_dataset = VideoYoloDataset(
-        train_df,
-        config['data']['data_dir'],
-        transforms,
-        width=224,
-        height=224,
-        clip_len=16,
-        grid_size=28,
-        max_detections_per_cell=1,
-        num_classes=1,
-        augment=train_augmentation,
-        is_training=True
-    )
 
     test_dataset = VideoYoloDataset(
         test_df,
@@ -137,17 +91,6 @@ def main(args):
         
     collator = TemporalWaggleCollator()
 
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=config['train']['batch_size'],
-        collate_fn=collator, 
-        shuffle=True,
-        num_workers=config['train']['num_workers'],
-        persistent_workers=(config['train']['num_workers'] > 0),
-        pin_memory=True,  
-        drop_last=True   
-    )
-
     test_loader = DataLoader(
         test_dataset,
         batch_size=config['eval']['batch_size'],
@@ -159,7 +102,13 @@ def main(args):
     )
 
 
-    model = load_pretrained_model(args.ckpt_path, device)
+    model, checkpoint = load_pretrained_model(args.ckpt_path, device)
+    ema = EMA(model, decay=0.9999, device=device)
+
+    # for ema
+    if 'ema_state_dict' in checkpoint:
+        ema.load_state_dict(checkpoint['ema_state_dict'])
+
     yolocriteria = WaggleDetectionLoss(lambda_obj=config["loss"]["lambda_obj"], 
                                        lambda_coord=config["loss"]["lambda_coord"], 
                                        lambda_noobj=config["loss"]["lambda_noobj"], 
@@ -171,9 +120,12 @@ def main(args):
     
     wandb.init(mode='disabled')
 
+    # swap in ema weights
+    ema.apply_shadow() 
+
     for epoch in range(num_epochs):
         #train_loss =  eval(model, device, yolocriteria, train_loader, epoch, writer)
-        test_loss = eval(model, device, yolocriteria, test_loader, epoch)
+        test_loss = eval(model, device, yolocriteria, test_loader, epoch, ema)
         # Its not possible to fit all training or test frames onto cpu for visualisations
         # batch_idx_for_frames is set to 0 indicating that it will index into the first batch of the entire data loader and store the frames in there
         # if batch_size is set to 16, that means we have 16*window_size frames in our case 16 * 16, each individual batch represents a single waggle dance event of 16 frames
