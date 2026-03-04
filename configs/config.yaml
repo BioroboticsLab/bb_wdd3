@@ -70,6 +70,7 @@ post_process:
   confidence_threshold: 0.99
   strategy: 'cluster_consolidate'
   mode: 'median'
+  outlier_detection: False
 
 # Loss parameters
 loss:
