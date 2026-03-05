@@ -68,7 +68,7 @@ train:
   warmup_ratio: 0.03 # 3 epochs if we train fo 200 epochs
   num_workers: 4
   save_model: True
-  betas: [0.937, 0.999]:
+  betas: [0.937, 0.999]
 
 val:
     batch_size: 32

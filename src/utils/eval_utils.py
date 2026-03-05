@@ -367,21 +367,40 @@ def calculate_temporal_metrics(matched_pairs, iou_threshold_range=(0.25, 0.75)):
         return {
             'mean_iou': 0.0,
             'mean_start_error': float('inf'),
-            'mean_end_error': float('inf')
+            'mean_end_error': float('inf'),
+            'me_start': float('inf'), # signed: negative means too early, positive means too late
+            'me_end': float('inf'),
+            'mse_start': float('inf'),
+            'mse_end': float('inf'),
         }
     
     start_errors = []
     end_errors = []
+    start_errors_signed = []
+    end_errors_signed = []
+    duration_accuracies = []
     temporal_iou_scores = []
     
     for gt, pred in matched_pairs:
         gt_start, gt_end = gt['temporal_offsets']
         pred_start, pred_end = pred['temporal_offsets']
         
-        # start/end frame errors
+        # start/end frame errors (abs start and end error)
         start_errors.append(abs(gt_start - pred_start))
         end_errors.append(abs(gt_end - pred_end))
-        
+
+        # start/end frame signed errors: negative means predicted too early
+        s_err = pred_start - gt_start
+        e_err = pred_end - gt_end
+        start_errors_signed.append(s_err)
+        end_errors_signed.append(e_err)
+
+        # duration accuracy
+        pred_dur = pred_end - pred_start
+        gt_dur = gt_end - gt_start
+        dur_acc = 1 - abs(pred_dur - gt_dur) / max(pred_dur, gt_dur) if max(pred_dur, gt_dur) > 0 else 1.0
+        duration_accuracies.append(dur_acc)
+
         # temporal IoU
         intersection_start = max(gt_start, pred_start)
         intersection_end = min(gt_end, pred_end)
@@ -405,10 +424,18 @@ def calculate_temporal_metrics(matched_pairs, iou_threshold_range=(0.25, 0.75)):
         iou_at_threshold = np.mean(temporal_iou_scores >= threshold)
         iou_values.append(iou_at_threshold)
     
+    start_errors_signed = np.array(start_errors_signed)
+    end_errors_signed = np.array(end_errors_signed)
+    
     return {
         'mean_iou': np.mean(temporal_iou_scores),
         'mean_start_error': np.mean(start_errors),
-        'mean_end_error': np.mean(end_errors)
+        'mean_end_error': np.mean(end_errors),
+        'me_start': float(np.mean(start_errors_signed)),   # bias: <0 too early, >0 too late
+        'me_end': float(np.mean(end_errors_signed)),
+        'mse_start': float(np.mean(start_errors_signed**2)), 
+        'mse_end': float(np.mean(end_errors_signed**2)),
+        'duration_accuracy': float(np.mean(duration_accuracies)),  # 1.0 perfect, 0.0 worst
     }
 
 def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 30], 
@@ -573,6 +600,11 @@ def get_eval_metrics(
     temp_ious = []
     temp_start_errors = []
     temp_end_errors = []
+    temp_me_starts = []
+    temp_me_ends = []
+    temp_mse_starts = []
+    temp_mse_ends = []
+    temp_dur_accs = []
     
     for t in pos_thresholds:
         pairs_at_t = all_matched_pairs.get(t, [])
@@ -588,6 +620,12 @@ def get_eval_metrics(
         temp_ious.append(temp_m['mean_iou'])
         temp_start_errors.append(temp_m['mean_start_error'])
         temp_end_errors.append(temp_m['mean_end_error'])
+        temp_me_starts.append(temp_m['me_start'])
+        temp_me_ends.append(temp_m['me_end'])
+        temp_mse_starts.append(temp_m['mse_start'])
+        temp_mse_ends.append(temp_m['mse_end'])
+        temp_dur_accs.append(temp_m['duration_accuracy'])
+
     
     directional_metrics = {
         'accuracy': np.mean(dir_accuracies) if dir_accuracies else 0.0,
@@ -598,8 +636,13 @@ def get_eval_metrics(
     temporal_metrics = {
         'mean_iou': np.mean(temp_ious) if temp_ious else 0.0,
         'mean_start_error': np.mean(temp_start_errors) if temp_start_errors else float('inf'),
-        'mean_end_error': np.mean(temp_end_errors) if temp_end_errors else float('inf')
-    }
+        'mean_end_error': np.mean(temp_end_errors) if temp_end_errors else float('inf'),
+        'me_start': np.mean(temp_me_starts) if temp_me_starts else float('inf'),
+        'me_end': np.mean(temp_me_ends) if temp_me_ends else float('inf'),
+        'mse_start': np.mean(temp_mse_starts) if temp_mse_starts else float('inf'),
+        'mse_end': np.mean(temp_mse_ends) if temp_mse_ends else float('inf'),
+        'duration_accuracy':np.mean(temp_dur_accs) if temp_dur_accs else 0.0,
+        }
     
     # Combine into hierarchical structure
     metrics = {
@@ -654,6 +697,9 @@ def print_evaluation_results(test_metrics, post_test_metrics):
     # Temporal Detection
     print(f"{'Temporal Detection':<35}")
     print(f"{'  Mean IoU':<35} {test_metrics['temporal']['mean_iou']:<20.3f} {post_test_metrics['temporal']['mean_iou']:<20.3f}")
+    print(f"{'  Duration Accuracy':<35} {test_metrics['temporal']['duration_accuracy']:<20.3f} {post_test_metrics['temporal']['duration_accuracy']:<20.3f}")
+    print(f"{'  ME Start (frames)':<35} {test_metrics['temporal']['me_start']:<20.2f} {post_test_metrics['temporal']['me_start']:<20.2f}")
+    print(f"{'  ME End   (frames)':<35} {test_metrics['temporal']['me_end']:<20.2f} {post_test_metrics['temporal']['me_end']:<20.2f}")
     print("-"*80)
     
     # Directional Detection
