@@ -37,7 +37,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
 
     def __init__(
         self,
-        num_classes: int = 1,
+        n_classes: int = 1,
         grid_size: int = 28,
         pretrained: bool = True,
         max_detections_per_cell: int = 1,
@@ -56,7 +56,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
 
         super().__init__()
         self.grid_size = grid_size
-        self.num_classes = num_classes
+        self.n_classes = n_classes
         self.max_detections_per_cell = max_detections_per_cell
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.use_self_attention = self_attention

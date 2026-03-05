@@ -4,6 +4,10 @@ data:
   annotations: './data/annotations/fps_multires_full_data.csv'
   train_ratio: 0.75
   subset_size: 1.0
+  width: 224
+  height: 224
+  clip_len: 16
+
 
 # Training augmentations configuration
 augmentations:
@@ -48,6 +52,10 @@ model:
   transformer_heads: 4
   transformer_layers: 4
   dropout: 0.3
+  max_detections_per_cell: 1
+  grid_size: 28
+  n_classes: 1
+
 
 # Training configuration
 train:
@@ -60,6 +68,7 @@ train:
   warmup_ratio: 0.03 # 3 epochs if we train fo 200 epochs
   num_workers: 4
   save_model: True
+  betas: [0.937, 0.999]:
 
 val:
     batch_size: 32

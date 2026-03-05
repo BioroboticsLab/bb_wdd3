@@ -2,7 +2,7 @@ import cv2
 import torch
 import numpy as np
 import gc
-from src.models.model import R2Plus1D_YOLO
+from src.models.model_old import R2Plus1D_YOLO
 import pandas as pd
 from typing import List, Dict, Tuple, Optional
 from scipy.optimize import linear_sum_assignment

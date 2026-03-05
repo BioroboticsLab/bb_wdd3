@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 from copy import deepcopy
-from src.models.model import R2Plus1D_YOLO
+from src.models.model_old import R2Plus1D_YOLO
 #from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_standard import R2Plus1D_YOLO_MultiHead
 #from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead

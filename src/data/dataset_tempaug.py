@@ -66,7 +66,7 @@ class VideoYoloDataset(Dataset):
             Size of YOLO detection grid (g x g).
         max_detections_per_cell : int
             Limit of objects per grid cell (usually 1 for this task).
-        num_classes : int
+        n_classes : int
             Number of detection classes (default = 1 for bee).
         augment : callable, optional
             Augmentation module that modifies the clip and target dict.
@@ -74,7 +74,7 @@ class VideoYoloDataset(Dataset):
             If True, enables temporal jittering and spatial augmentations.
     """
     def __init__(self, dataframe, video_dir, transform=None, width=224, height=224, 
-                 clip_len=16, grid_size=25, max_detections_per_cell=1, num_classes=1,
+                 clip_len=16, grid_size=25, max_detections_per_cell=1, n_classes=1,
                  augment=None, is_training=True):
 
         self.data = dataframe
@@ -85,7 +85,7 @@ class VideoYoloDataset(Dataset):
         self.clip_len = clip_len
         self.grid_size = grid_size
         self.max_detections_per_cell = max_detections_per_cell
-        self.num_classes = num_classes
+        self.n_classes = n_classes
         self.augment = augment if is_training else None
         self.to_tensor = ToTensor()
         self.is_training = is_training

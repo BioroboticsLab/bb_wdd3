@@ -12,19 +12,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from src.data.dataset import TemporalWaggleCollator #, VideoYoloDataset
 from src.data.dataset_tempaug import VideoYoloDataset
-#from src.models.model import R2Plus1D_YOLO
-#from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
-# from src.models.model_multihead_deeper_heads_transformer_dirvit import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads_transformer_cross_attention import R2Plus1D_YOLO_MultiHead
+from src.models.model import R2Plus1D_YOLO_MultiHead
 from src.loss.loss import WaggleDetectionLoss
-#from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn  as nn
 from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv
 import datetime
@@ -58,14 +49,6 @@ def main(args):
 
     data = pd.read_csv(config['data']['annotations'])
 
-    # Temp diagnostic for duration of waggle dance, how long, when in window
-    # start early late or middle ? Can we do temporal aug ?
-    #data['duration'] = data['end_frame'] - data['start_frame']
-    #data['start_norm'] = (data['waggle_start_in_window'] - data['start_frame']) / data['duration']
-    #data['end_norm'] = (data['waggle_end_in_window'] - data['start_frame']) / data['duration']
-    #print(data[data['waggle']==1][['start_norm','end_norm']].describe())
-    #import sys; sys.exit()  # stop after diagonstic
-
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
     data = data.iloc[:len(data)//16].reset_index(drop=True)
@@ -93,24 +76,39 @@ def main(args):
     
     # Create augmentation
     train_augmentation = WaggleAugmentations(
-        width=224, height=224, 
-        prob_flip_h=0.5, prob_flip_v=0.0,
-        prob_rotate=0.3, rotate_range=(-15, 15), #rotate_range=(-15, 15), 
-        prob_scale=1.0, scale_range=(0.9, 1.1),
-        prob_translate=0.3, translate_range=0.1,
-        prob_hsv=0.0, hsv_hue=0.1, hsv_saturation=0.9, hsv_value=0.9,
-        prob_brightness=1.0, brightness_range=0.4, 
-        prob_contrast=1.0, contrast_range=0.4,
-        prob_gamma=0.0, gamma_range=(0.8, 1.2),
-        prob_blur=0.1, blur_range=(0.5, 2.0),
-        prob_clahe=0.1, clahe_clip_limit=2.0, clahe_tile_grid_size=(8, 8),
-        prob_color_shuffle=0.0,
-        prob_posterize=0.0, posterize_bits=(4, 7),
-        prob_greyscale=0.0,
-        normalize=True,
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
-        debug=False)
+        width=config['augmentations']['width'],
+        height=config['augmentations']['height'],
+        prob_flip_h=config['augmentations']['prob_flip_h'],
+        prob_flip_v=config['augmentations']['prob_flip_v'],
+        prob_rotate=config['augmentations']['prob_rotate'],
+        rotate_range=config['augmentations']['rotate_range'],
+        prob_scale=config['augmentations']['prob_scale'],
+        scale_range=config['augmentations']['scale_range'],
+        prob_translate=config['augmentations']['prob_translate'],
+        translate_range=config['augmentations']['translate_range'],
+        prob_hsv=config['augmentations']['prob_hsv'],
+        hsv_hue=config['augmentations']['hsv_hue'],
+        hsv_saturation=config['augmentations']['hsv_saturation'],
+        hsv_value=config['augmentations']['hsv_value'],
+        prob_brightness=config['augmentations']['prob_brightness'],
+        brightness_range=config['augmentations']['brightness_range'],
+        prob_contrast=config['augmentations']['prob_contrast'],
+        contrast_range=config['augmentations']['contrast_range'],
+        prob_gamma=config['augmentations']['prob_gamma'],
+        gamma_range=config['augmentations']['gamma_range'],
+        prob_blur=config['augmentations']['prob_blur'],
+        blur_range=config['augmentations']['blur_range'],
+        prob_clahe=config['augmentations']['prob_clahe'],
+        clahe_clip_limit=config['augmentations']['clahe_clip_limit'],
+        clahe_tile_grid_size=config['augmentations']['clahe_tile_grid_size'],
+        prob_color_shuffle=config['augmentations']['prob_color_shuffle'],
+        prob_posterize=config['augmentations']['prob_posterize'],
+        posterize_bits=config['augmentations']['posterize_bits'],
+        prob_greyscale=config['augmentations']['prob_greyscale'],
+        normalize=config['augmentations']['normalize'],
+        mean=config['augmentations']['mean'],
+        std=config['augmentations']['std'],
+        )
     
     total_len = len(data)
     train_len = int(0.8 * total_len)
@@ -127,12 +125,12 @@ def main(args):
         train_df,
         config['data']['data_dir'],
         transforms,
-        width=224,
-        height=224,
-        clip_len=16,
-        grid_size=28,
-        max_detections_per_cell=1,
-        num_classes=1,
+        width=config['data']['width'],
+        height=config['data']['height'],
+        clip_len=config['data']['clip_len'],
+        grid_size=config['model']['grid_size'],
+        max_detections_per_cell=config['model']['max_detections_per_cell'],
+        n_classes=config['model']['n_classes'],
         augment=train_augmentation,
         is_training=True
     )
@@ -141,12 +139,12 @@ def main(args):
         test_df,
         config['data']['data_dir'],
         test_transform,
-        width=224,
-        height=224,
-        clip_len=16,
-        grid_size=28,
-        max_detections_per_cell=1,
-        num_classes=1,
+        width=config['data']['width'],
+        height=config['data']['height'],
+        clip_len=config['data']['clip_len'],
+        grid_size=config['model']['grid_size'],
+        max_detections_per_cell=config['model']['max_detections_per_cell'],
+        n_classes=config['model']['n_classes'],
         augment=None,
         is_training=False 
     )
@@ -175,8 +173,15 @@ def main(args):
 
     print('Len train loader:', len(train_loader))
 
-    #model = R2Plus1D_YOLO(max_detections_per_cell=1, grid_size=28)
-    model = R2Plus1D_YOLO_MultiHead(max_detections_per_cell=1, grid_size=28)
+    model = R2Plus1D_YOLO_MultiHead(n_classes=config['model']['n_classes'],
+                                    max_detections_per_cell=config['model']['max_detections_per_cell'], 
+                                    grid_size=config['model']['grid_size'],
+                                    transformer_heads=config['model']['transformer_heads'],
+                                    transformer_layers=config['model']['transformer_layers']
+                                    self_attention=config['model']['self_attention'],
+                                    cross_attention=config['model']['cross_attention'],
+                                    dropout_rate=config['model']['dropout']   
+                                    )
 
     os.makedirs('./ckpt', exist_ok=True)
 
@@ -186,7 +191,10 @@ def main(args):
         model = nn.DataParallel(model)
         print("Using Distributed Data Parallel (DDP).")
 
-    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.0005, betas=(0.937, 0.999))
+    optimizer = optim.AdamW(model.parameters(), 
+                            lr=config['train']['lr'], 
+                            weight_decay=0.config['train']['weight_decay'], 
+                            betas=config['train']['betas'])
     
     ema = EMA(model, decay=0.9999, device=device)
 
