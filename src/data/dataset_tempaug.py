@@ -23,7 +23,7 @@ class TemporalWaggleCollator:
             "metadata": metadata
         }
 
-class VideoYoloDataset(Dataset):    
+class VideoYoloDatasetTemporalJitter(Dataset):    
     """
         A PyTorch Dataset for loading variable-resolution bee waggle dance videos and
         producing YOLO-style supervision for a temporal video model.

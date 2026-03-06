@@ -10,8 +10,8 @@ from src.train.train import train
 from src.eval.eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from src.data.dataset import TemporalWaggleCollator #, VideoYoloDataset
-from src.data.dataset_tempaug import VideoYoloDataset
+from src.data.dataset import TemporalWaggleCollator, VideoYoloDataset
+from src.data.dataset_tempaug import VideoYoloDatasetTemporalJitter
 from src.models.model import R2Plus1D_YOLO_MultiHead
 from src.loss.loss import WaggleDetectionLoss
 from src.data.augmentation import WaggleAugmentations
@@ -120,34 +120,65 @@ def main(args):
     train_df = data.iloc[train_indices].reset_index(drop=True)
     test_df = data.iloc[test_indices].reset_index(drop=True)
 
-    # Create datasets
-    train_dataset = VideoYoloDataset(
-        train_df,
-        config['data']['data_dir'],
-        transforms,
-        width=config['data']['width'],
-        height=config['data']['height'],
-        clip_len=config['data']['clip_len'],
-        grid_size=config['model']['grid_size'],
-        max_detections_per_cell=config['model']['max_detections_per_cell'],
-        n_classes=config['model']['n_classes'],
-        augment=train_augmentation,
-        is_training=True
-    )
+    if config['augmentations']['temporal_jitter'] is True:
+        # applies temporal jitter to entire dataset as done in action detection
+        train_dataset = VideoYoloDatasetTemporalJitter(
+            train_df,
+            config['data']['data_dir'],
+            transforms,
+            width=config['data']['width'],
+            height=config['data']['height'],
+            clip_len=config['data']['clip_len'],
+            grid_size=config['model']['grid_size'],
+            max_detections_per_cell=config['model']['max_detections_per_cell'],
+            n_classes=config['model']['n_classes'],
+            augment=train_augmentation,
+            is_training=True
+        )
     
-    test_dataset = VideoYoloDataset(
-        test_df,
-        config['data']['data_dir'],
-        test_transform,
-        width=config['data']['width'],
-        height=config['data']['height'],
-        clip_len=config['data']['clip_len'],
-        grid_size=config['model']['grid_size'],
-        max_detections_per_cell=config['model']['max_detections_per_cell'],
-        n_classes=config['model']['n_classes'],
-        augment=None,
-        is_training=False 
-    )
+        test_dataset = VideoYoloDatasetTemporalJitter(
+            test_df,
+            config['data']['data_dir'],
+            test_transform,
+            width=config['data']['width'],
+            height=config['data']['height'],
+            clip_len=config['data']['clip_len'],
+            grid_size=config['model']['grid_size'],
+            max_detections_per_cell=config['model']['max_detections_per_cell'],
+            n_classes=config['model']['n_classes'],
+            augment=None,
+            is_training=False 
+        )
+
+    else:
+        # Create dataset without temporal jitter
+        train_dataset = VideoYoloDataset(
+            train_df,
+            config['data']['data_dir'],
+            transforms,
+            width=config['data']['width'],
+            height=config['data']['height'],
+            clip_len=config['data']['clip_len'],
+            grid_size=config['model']['grid_size'],
+            max_detections_per_cell=config['model']['max_detections_per_cell'],
+            n_classes=config['model']['n_classes'],
+            augment=train_augmentation,
+            is_training=True
+        )
+        
+        test_dataset = VideoYoloDataset(
+            test_df,
+            config['data']['data_dir'],
+            test_transform,
+            width=config['data']['width'],
+            height=config['data']['height'],
+            clip_len=config['data']['clip_len'],
+            grid_size=config['model']['grid_size'],
+            max_detections_per_cell=config['model']['max_detections_per_cell'],
+            n_classes=config['model']['n_classes'],
+            augment=None,
+            is_training=False 
+        )
     
     collator = TemporalWaggleCollator()
 
@@ -177,7 +208,7 @@ def main(args):
                                     max_detections_per_cell=config['model']['max_detections_per_cell'], 
                                     grid_size=config['model']['grid_size'],
                                     transformer_heads=config['model']['transformer_heads'],
-                                    transformer_layers=config['model']['transformer_layers']
+                                    transformer_layers=config['model']['transformer_layers'],
                                     self_attention=config['model']['self_attention'],
                                     cross_attention=config['model']['cross_attention'],
                                     dropout_rate=config['model']['dropout']   
@@ -193,7 +224,7 @@ def main(args):
 
     optimizer = optim.AdamW(model.parameters(), 
                             lr=config['train']['lr'], 
-                            weight_decay=0.config['train']['weight_decay'], 
+                            weight_decay=config['train']['weight_decay'], 
                             betas=config['train']['betas'])
     
     ema = EMA(model, decay=0.9999, device=device)
