@@ -2,22 +2,23 @@ import torch
 import torch.nn as nn
 import math
 from copy import deepcopy
-from src.models.model_old import R2Plus1D_YOLO
-#from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_standard import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_tempstack_dirdial import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer_dir import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads_transformer_dirvit import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads_transformer_cross_attention import R2Plus1D_YOLO_MultiHead
+from src.models.model import R2Plus1D_YOLO_MultiHead
 
 
-def load_pretrained_model(checkpoint_path, max_detections_per_cell=1, grid_size=28, 
+def load_pretrained_model(checkpoint_path, config, 
                           device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")):
     """Load a pretrained model for training or evaluation"""
-    #model = R2Plus1D_YOLO(max_detections_per_cell=1, grid_size=grid_size)
-    model = R2Plus1D_YOLO_MultiHead(max_detections_per_cell=1, grid_size=grid_size)
+
+    model = R2Plus1D_YOLO_MultiHead(n_classes=config['model']['n_classes'],
+                                    max_detections_per_cell=config['model']['max_detections_per_cell'], 
+                                    grid_size=config['model']['grid_size'],
+                                    transformer_heads=config['model']['transformer_heads'],
+                                    transformer_layers=config['model']['transformer_layers'],
+                                    self_attention=config['model']['self_attention'],
+                                    cross_attention=config['model']['cross_attention'],
+                                    dropout_rate=config['model']['dropout']
+                                    )
+    
     print(f"Loading pretrained weights from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
     

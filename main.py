@@ -39,7 +39,6 @@ def main(args):
     config = load_config(args.config_path)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs!")
         use_multi_gpu = True
@@ -111,7 +110,7 @@ def main(args):
         )
     
     total_len = len(data)
-    train_len = int(0.8 * total_len)
+    train_len = int(config['data']['train_ratio'] * total_len)
     test_len = total_len - train_len
 
     train_indices = list(range(train_len))
@@ -148,7 +147,7 @@ def main(args):
             n_classes=config['model']['n_classes'],
             augment=None,
             is_training=False 
-        )
+            )
 
     else:
         # Create dataset without temporal jitter

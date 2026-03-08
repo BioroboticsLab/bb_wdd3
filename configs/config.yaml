@@ -2,7 +2,7 @@
 data:
   data_dir: './data/videos/'
   annotations: './data/annotations/fps_multires_full_data.csv'
-  train_ratio: 0.75
+  train_ratio: 0.8
   subset_size: 1.0
   width: 224
   height: 224
@@ -15,7 +15,7 @@ augmentations:
   height: 224
   prob_flip_h: 0.5
   prob_flip_v: 0.0
-  prob_rotate: 0.3
+  prob_rotate: 0.0
   rotate_range: [-15, 15]
   prob_scale: 1.0
   scale_range: [0.9, 1.1]
@@ -43,7 +43,7 @@ augmentations:
   normalize: true
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
-  temporal_jitter: True 
+  temporal_jitter: False 
 
 # Model configuration
 model:
@@ -52,7 +52,7 @@ model:
   cross_attention: True
   transformer_heads: 4
   transformer_layers: 4
-  dropout: 0.0
+  dropout: 0.3
   max_detections_per_cell: 1
   grid_size: 28
   n_classes: 1

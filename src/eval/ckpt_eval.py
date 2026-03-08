@@ -10,11 +10,8 @@ from src.eval.eval import eval
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
-from src.models.model_old import R2Plus1D_YOLO
-#from src.models.model_multihead import R2Plus1D_YOLO_MultiHead
-#from src.models.model_multihead_deeper_heads import R2Plus1D_YOLO_MultiHead
-from src.models.model_multihead_deeper_heads_transformer import R2Plus1D_YOLO_MultiHead
-
+from src.data.dataset_tempaug import VideoYoloDatasetTemporalJitter
+from src.models.model import R2Plus1D_YOLO_MultiHead
 from src.loss.loss import WaggleDetectionLoss
 from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations
@@ -46,6 +43,13 @@ def main(args):
     num_epochs = 1
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs!")
+        use_multi_gpu = True
+    else:
+        print("Using single GPU")
+        use_multi_gpu = False
+
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     log_dir = os.path.join("logs", current_time)
     writer = SummaryWriter(log_dir=log_dir)
@@ -61,11 +65,11 @@ def main(args):
         T.ToPILImage(),
         T.Resize((224, 224)),
         T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], 
-                    std=[0.229, 0.224, 0.225])])
+        T.Normalize(mean=config['augmentations']['mean'], 
+                    std=config['augmentations']['std'])])
 
     total_len = len(data)
-    train_len = int(0.8 * total_len)
+    train_len = int(config['data']['train_ratio'] * total_len)
 
     train_indices = list(range(train_len))
     test_indices = list(range(train_len, total_len))
@@ -78,15 +82,16 @@ def main(args):
 
     test_dataset = VideoYoloDataset(
         test_df,
-        config['data']['data_dir'], 
+        config['data']['data_dir'],
         test_transform,
-        width=224,
-        height=224,
-        clip_len=16,
-        grid_size=28,
-        max_detections_per_cell=1,
-        num_classes=1,
-        augment=False, 
+        width=config['data']['width'],
+        height=config['data']['height'],
+        clip_len=config['data']['clip_len'],
+        grid_size=config['model']['grid_size'],
+        max_detections_per_cell=config['model']['max_detections_per_cell'],
+        n_classes=config['model']['n_classes'],
+        augment=None,
+        is_training=False 
         )
         
     collator = TemporalWaggleCollator()
@@ -102,7 +107,7 @@ def main(args):
     )
 
 
-    model, checkpoint = load_pretrained_model(args.ckpt_path, device)
+    model, checkpoint = load_pretrained_model(args.ckpt_path, config, device)
     ema = EMA(model, decay=0.9999, device=device)
 
     # for ema
