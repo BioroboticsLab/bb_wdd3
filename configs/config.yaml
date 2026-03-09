@@ -16,8 +16,8 @@ augmentations:
   height: 224
   prob_flip_h: 0.5
   prob_flip_v: 0.0
-  prob_rotate: 0.3 # 0.3 
-  rotate_range: [-30, 30]
+  prob_rotate: 0.0 # 0.3 
+  rotate_range: [-15, 15]
   prob_scale: 1.0
   scale_range: [0.9, 1.1]
   prob_translate: 0.3
@@ -79,7 +79,7 @@ post_process:
   spatial_threshold: 30
   temporal_threshold: 8
   confidence_threshold: 0.99
-  strategy: 'cluster_consolidate'
+  strategy: 'cluster_consolidate' # support various stategies see 
   mode: 'median'
   outlier_detection: False
 

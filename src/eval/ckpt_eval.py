@@ -23,7 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results
 import argparse
 from src.utils.vis_utils import reverse_transform_batch, save_frames
-from src.utils.nms import batch_postprocess_predictions
+from src.utils.postprocess import batch_postprocess_predictions
 from src.utils.video_utils import frames_to_video
 from src.utils.draw_utils import  draw_waggle, draw_waggle_batch, draw_waggle_batch_union
 from src.utils.model_utils import load_pretrained_model, EMA
@@ -57,8 +57,7 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//16].reset_index(drop=True)
-    #data = data.iloc[:100].reset_index(drop=True)
+    data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)    #data = data.iloc[:100].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
     
     test_transform = T.Compose([
@@ -179,7 +178,7 @@ def main(args):
                                                         confidence_threshold=config['post_process']['confidence_threshold'], 
                                                         strategy=config['post_process']['strategy'], 
                                                         mode=config['post_process']['mode'],
-                                                        remove_outliers=True,
+                                                        remove_outliers=config['post_process']['outlier_detection'],
                                                         outlier_method='isolation_forest')
 
         # Can postprocess entire predictions no need for limit to 16 sequences, its only needed when we visualise
@@ -196,11 +195,11 @@ def main(args):
         #)
 
         # Print unique clusters identifies
-        unique_clusters_all = len({det['cluster_id'] for seq in post_test_preds for det in seq})
-        unique_clusters_frames = len({det['cluster_id'] for seq in post_test_preds[:16] for det in seq})
+        #unique_clusters_all = len({det['cluster_id'] for seq in post_test_preds for det in seq})
+        #unique_clusters_frames = len({det['cluster_id'] for seq in post_test_preds[:16] for det in seq})
 
-        print('Number of clusterns - Entire data loader:', unique_clusters_all)
-        print('Number of clusterns - Frames used for visualisation:', unique_clusters_frames)
+        #print('Number of clusterns - Entire data loader:', unique_clusters_all)
+        #print('Number of clusterns - Frames used for visualisation:', unique_clusters_frames)
 
         # Visualise post processed results
         #draw_waggle_batch_union(
