@@ -7,6 +7,7 @@ data:
   width: 224
   height: 224
   clip_len: 16
+  data_fraction_divisor: 16   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
 
 
 # Training augmentations configuration
@@ -15,8 +16,8 @@ augmentations:
   height: 224
   prob_flip_h: 0.5
   prob_flip_v: 0.0
-  prob_rotate: 0.0
-  rotate_range: [-15, 15]
+  prob_rotate: 0.3 # 0.3 
+  rotate_range: [-30, 30]
   prob_scale: 1.0
   scale_range: [0.9, 1.1]
   prob_translate: 0.3
@@ -112,3 +113,4 @@ eval:
   pos_thresholds: [20]
   iou_thresholds: [0.5]
   angular_thresholds: [15]
+  

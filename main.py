@@ -49,9 +49,8 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
 
     print(f"Original dataset length: {len(data)}")
-    # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//16].reset_index(drop=True)
-    #data = data.iloc[:100].reset_index(drop=True)
+    # check config data fraction dividor if train on subset of data is desired
+    data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
     print(f"After subsetting dataset: {len(data)} samples")
     
     video_frames_dict = create_video_frames_df(data["video_name"].unique())
