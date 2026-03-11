@@ -7,7 +7,7 @@ data:
   width: 224
   height: 224
   clip_len: 16
-  data_fraction_divisor: 16   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
+  data_fraction_divisor: 1   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
 
 
 # Training augmentations configuration
@@ -16,7 +16,7 @@ augmentations:
   height: 224
   prob_flip_h: 0.5
   prob_flip_v: 0.0
-  prob_rotate: 0.0 # 0.3 
+  prob_rotate: 0.3 
   rotate_range: [-15, 15]
   prob_scale: 1.0
   scale_range: [0.9, 1.1]
@@ -85,11 +85,11 @@ post_process:
 
 # Loss parameters
 loss:
-  lambda_obj: 0.7 #2.0
+  lambda_obj: 0.7
   lambda_coord: 7.5
-  lambda_noobj: 0.7 #2.0
+  lambda_noobj: 0.7
   lambda_direction: 7.5
-  lambda_temporal: 7.5 #7.0
+  lambda_temporal: 7.5 
   use_varifocal: False  # use varifocal loss to link confidence with localization quality
   varifocal_gamma: 2.0  # focusing parameter for hard examples (higher = more focus)
   varifocal_quality_scale: .25  # quality decay scale (higher = more lenient penality for predictions furhter from center)

@@ -242,23 +242,21 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
     scaled_features = []
     for feature in features:
         x, y, frame_mid = feature
-        # Scale temporal dimension: convert frames to "pixel-equivalent" units
+        # Scale temporal dimension: convert frames to pixel-equivalent units
         # temporal_threshold frames should be equivalent to spatial_threshold pixels
         temporal_scale = spatial_threshold / temporal_threshold
         scaled_features.append([x, y, frame_mid * temporal_scale])
     
     scaled_features = np.array(scaled_features)
-    print('Scalef featues shape:', scaled_features.shape)
+    # print('Scalef featues shape:', scaled_features.shape)
     # Use spatial_threshold for the scaled features in dbscan, hdbscan does this byitself
     if clustering_method == 'dbscan':
         clustering = DBSCAN(eps=spatial_threshold, min_samples=1).fit(scaled_features)
     elif clustering_method == 'hdbscan':
         if len(scaled_features) < 2:
-            print('Using DBSCAN')
             clustering = DBSCAN(eps=spatial_threshold, min_samples=1).fit(scaled_features)
         else:
-            clustering = HDBSCAN(min_cluster_size=hdbscan_min_cluster_size, cluster_selection_epsilon=spatial_threshold).fit(scaled_features)
-            print('Using HDBSCAN')
+            clustering = HDBSCAN(min_cluster_size=hdbscan_min_cluster_size).fit(scaled_features)
 
     else:
         raise ValueError(f"Unknown clustering_method: {clustering_method}. Use 'dbscan' or 'hdbscan'")
@@ -406,7 +404,7 @@ def batch_postprocess_predictions(batch_predictions,
                                   remove_outliers=True,
                                   outlier_method='density',
                                   outlier_min_neighbors=2,
-                                  clustering_method='hdbscan',
+                                  clustering_method='dbscan',
                                   hdbscan_min_cluster_size=2):
     """Apply post-processing to a batch of prediction lists"""
     processed_batch = []

@@ -55,10 +55,9 @@ def main(args):
     writer = SummaryWriter(log_dir=log_dir)
 
     data = pd.read_csv(config['data']['annotations'])
-    print(f"Original dataset length: {len(data)}")
     # 1/8 of original data for fine-tuning
     data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)    #data = data.iloc[:100].reset_index(drop=True)
-    print(f"After subsetting dataset: {len(data)} samples")
+
     
     test_transform = T.Compose([
         T.ToPILImage(),

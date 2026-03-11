@@ -48,15 +48,11 @@ def main(args):
 
     data = pd.read_csv(config['data']['annotations'])
 
-    print(f"Original dataset length: {len(data)}")
+    full_data_size = len(data)
     # check config data fraction dividor if train on subset of data is desired
     data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
-    print(f"After subsetting dataset: {len(data)} samples")
+    print(f"Using: {len(data)} / {full_data_size} samples.")
     
-    video_frames_dict = create_video_frames_df(data["video_name"].unique())
-
-    data = fix_dataframe_with_video_lengths(data, video_frames_dict)
-
     data = data.sample(frac=1).reset_index(drop=True)
 
     transforms = T.Compose([

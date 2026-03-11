@@ -17,7 +17,7 @@ from src.utils.data_utils import fix_dataframe_with_video_lengths
 import datetime
 from torch.utils.tensorboard import SummaryWriter
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics
-from src.utils.nms import batch_postprocess_predictions
+from src.utils.postprocess import batch_postprocess_predictions
 from src.utils.vis_utils import reverse_transform, save_frames
 import argparse
 import matplotlib.pyplot as plt
