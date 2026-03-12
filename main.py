@@ -22,7 +22,7 @@ import datetime
 import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results
 from src.utils.postprocess import batch_postprocess_predictions
-from src.utils.vis_utils import reverse_transform, save_frames
+from src.utils.vis_utils import reverse_transform_batch, save_frames
 import argparse
 from src.utils.model_utils import load_pretrained_model, EMA
 from collections import Counter
@@ -67,13 +67,15 @@ def main(args):
 
     transforms = T.Compose([
         T.ToPILImage(),
-        T.Resize((224, 224)),
+        T.Resize((config['augmentations']['width'], 
+                  config['augmentations']['height'])),
         T.ToTensor(),
     ])
 
     test_transform = T.Compose([
         T.ToPILImage(),
-        T.Resize((224, 224)),
+        T.Resize((config['augmentations']['width'], 
+                  config['augmentations']['height'])),
         T.ToTensor(),
         T.Normalize(mean=config['augmentations']['mean'], 
                     std=config['augmentations']['std'])])
@@ -300,45 +302,49 @@ def main(args):
         # Validate
         val_loss = eval(model, device, yolocriteria, test_loader, epoch, ema)
 
-        """
-        # fetch all raw logits
-        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _, test_frames = get_preds_gt(model, test_loader, device, return_frames=False)
-        # transform yolo gt annotations to image domain
-        test_gts = yolo_to_img_space_gt(test_gt_raw, all_starts=test_all_starts, all_ends=test_all_ends)
-        # transform raw logits to img space and filter by confidence
-        test_preds = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends, confidence_threshold=config['eval']['confidence_threshold'], window_size = 16, original_size=(224,224))
-        # get eval metrics
-        test_metrics = get_eval_metrics(test_preds, test_gts, 
-                                        pos_thresholds=config['eval']['pos_thresholds'],
-                                        iou_threshold_range=config['eval']['iou_thresholds'],
-                                        angular_thresholds=config['eval']['angular_thresholds'])
+        # fetch gt and preds
+        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader)
+        # denorms imgs
+        test_frames = reverse_transform_batch(test_frames, original_size=(config['data']['width'],
+                                                                          config['data']['height']))
+        # Transform yolo coordinates onto image domain for both gt and predicted values
+        test_gts = yolo_to_img_space_gt(test_gt_raw, 
+                                        all_starts=test_all_starts, 
+                                        all_ends=test_all_ends,
+                                        window_size = config['data']['window_size'],
+                                        original_size=(config['data']['width'],
+                                                       config['data']['height']))
         
-        # post process test preds
+        test_preds  = yolo_to_img_space(test_preds_raw, 
+                                        all_starts=test_all_starts, 
+                                        all_ends=test_all_ends, 
+                                        confidence_threshold=config['eval']['confidence_threshold'], 
+                                        window_size = config['data']['window_size'],
+                                        original_size=(config['data']['width'],
+                                                       config['data']['height']))
+        
+        # Post Process all predictions
         post_test_preds = batch_postprocess_predictions(test_preds, 
                                                         spatial_threshold=config['post_process']['spatial_threshold'], 
                                                         temporal_threshold=config['post_process']['temporal_threshold'], 
                                                         confidence_threshold=config['post_process']['confidence_threshold'], 
                                                         strategy=config['post_process']['strategy'], 
-                                                        mode=config['post_process']['mode'])
+                                                        mode=config['post_process']['mode'],
+                                                        remove_outliers=config['post_process']['outlier_detection'],
+                                                        outlier_method='isolation_forest')
+        
+        test_metrics = get_eval_metrics(test_preds, test_gts, 
+                                        pos_thresholds=config['eval']['pos_thresholds'],
+                                        iou_threshold_range=config['eval']['iou_thresholds'],
+                                        angular_thresholds=config['eval']['angular_thresholds'])
         
         post_test_metrics = get_eval_metrics(post_test_preds, test_gts, 
                                         pos_thresholds=config['eval']['pos_thresholds'],
                                         iou_threshold_range=config['eval']['iou_thresholds'],
                                         angular_thresholds=config['eval']['angular_thresholds'])
-
-        save_preds_to_csv(post_test_preds, f'postprocessed_predictions_epoch_{epoch}.csv', 'postprocessed', './outputs/preds_csv')
-
-        # Print unique clusters identifies
-        unique_clusters_test_gt = len({det['cluster_id'] for seq in test_preds for det in seq})
-
-        unique_clusters_test = len({det['cluster_id'] for seq in test_preds for det in seq})
-        unique_clusters_test_post = len({det['cluster_id'] for seq in post_test_preds for det in seq})
-        print('Number of clusterns - Ground Truth:', unique_clusters_test_gt)
-        print('Number of clusterns - Before Postprocessing:', unique_clusters_test)
-        print('Number of clusterns - After Postprocessing:', unique_clusters_test_post)
-
+        
         print_evaluation_results(test_metrics, post_test_metrics)
-        """
+
 
         # Restore original parameters after metrics
         ema.restore()

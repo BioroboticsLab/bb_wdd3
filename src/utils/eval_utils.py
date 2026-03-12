@@ -61,7 +61,7 @@ def get_preds_gt(model, dataloader, device, return_frames=False, batch_idx_for_f
     if return_frames and all_frames is not None:
         return all_outputs, all_targets, all_starts, all_ends, all_video_names, all_frames, all_original_res
     else:
-        return all_outputs, all_targets, all_starts, all_ends, all_video_names, all_original_res
+        return all_outputs, all_targets, all_starts, all_ends, all_video_names, None, all_original_res
 
 def transform_yolo_to_image_coords(
     norm_x: float, 

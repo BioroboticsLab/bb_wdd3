@@ -6,8 +6,8 @@ data:
   subset_size: 1.0
   width: 224
   height: 224
-  clip_len: 16
-  data_fraction_divisor: 32   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
+  window_size: 16 # defines max clip length
+  data_fraction_divisor: 16   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
 
 
 # Training augmentations configuration
@@ -114,4 +114,5 @@ eval:
   pos_thresholds: [20]
   iou_thresholds: [0.5]
   angular_thresholds: [15]
+  metric: loss # support for loss and spatio-tempral-direction mAP or in short std_map
   
