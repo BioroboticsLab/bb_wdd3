@@ -223,9 +223,9 @@ def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_f
             global_frame_idx = start_frame_idx + local_frame_idx
 
             cv2.putText(frame_with_bar, f"GT: {num_gt} | Pred: {num_pred}", (10, 13),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
-            cv2.putText(frame_with_bar, f"Global Frame: {global_frame_idx} | Batch: {batch_idx}", (10, 27),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+            cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 255), 1)
+            cv2.putText(frame_with_bar, f"Global Frame: {global_frame_idx} | Local Frame: {local_frame_idx+1}/{len(cv_frames)}", (10, 27),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 255), 1)
 
             out.write(frame_with_bar)
             frame_count += 1
