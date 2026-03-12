@@ -26,7 +26,6 @@ from src.utils.vis_utils import reverse_transform, save_frames
 import argparse
 from src.utils.model_utils import load_pretrained_model, EMA
 
-
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)

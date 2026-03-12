@@ -58,7 +58,6 @@ def main(args):
     # 1/8 of original data for fine-tuning
     data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)    #data = data.iloc[:100].reset_index(drop=True)
 
-    
     test_transform = T.Compose([
         T.ToPILImage(),
         T.Resize((224, 224)),
@@ -148,13 +147,13 @@ def main(args):
 
         # Draw gt and predictions onto frames and saves as video
         # Note: This shows each 16-frame window independently, so frames repeat at window intersections
-        #draw_waggle_batch(
-        #    all_frames=test_frames,
-        #    all_detections=test_preds, 
-        #    all_ground_truths=test_gts,
-        #    all_start_frame_idxs=test_all_starts,
-        #    output_dir='./outputs/vids'
-        #)
+        draw_waggle_batch(
+            all_frames=test_frames,
+            all_detections=test_preds, 
+            all_ground_truths=test_gts,
+            all_start_frame_idxs=test_all_starts,
+            output_dir='./outputs/vids'
+        )
 
         # This creates a continuous timeline without repeating frames
         # We use [:16] because test_frames only contains the first 16 sequences (batch #0),
