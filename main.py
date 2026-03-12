@@ -344,6 +344,8 @@ def main(args):
         
         #print_evaluation_results(test_metrics, post_test_metrics)
 
+        print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-F1 pre: {test_metrics['comprehensive']['f1']:.4f} | post: {post_test_metrics['comprehensive']['f1']:.4f}")       
+        
         # Restore original parameters after metrics
         ema.restore()
 
