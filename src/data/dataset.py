@@ -5,6 +5,7 @@ from torchvision.transforms import ToTensor
 from src.data.video_loader import load_video_frames
 import os
 from src.utils.video_utils import get_video_category
+from collections import Counter
 
 class TemporalWaggleCollator:
     """
@@ -88,6 +89,16 @@ class VideoYoloDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
+
+    def count_categories(self):
+        """Count samples per video category."""
+        counts = Counter(
+            get_video_category(name) for name in self.data['video_name']
+        )
+        print("Category counts:")
+        for cat, count in sorted(counts.items()):
+            print(f"  {cat:10s}: {count}")
+        return counts
 
     def _sample_frames(self, frames, target_length):
         """Uniformly sample frames"""

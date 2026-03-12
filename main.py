@@ -17,7 +17,7 @@ from src.loss.loss import WaggleDetectionLoss
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 import torch.nn  as nn
-from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv
+from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv, balance_sample
 import datetime
 import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results
@@ -25,6 +25,7 @@ from src.utils.postprocess import batch_postprocess_predictions
 from src.utils.vis_utils import reverse_transform, save_frames
 import argparse
 from src.utils.model_utils import load_pretrained_model, EMA
+from collections import Counter
 
 SEED = 42
 random.seed(SEED)
@@ -54,9 +55,13 @@ def main(args):
 
     full_data_size = len(data)
     # check config data fraction dividor if train on subset of data is desired
-    data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
+    #data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
+    data = balance_sample(data, config['data']['data_fraction_divisor'])
     print(f"Using: {len(data)} / {full_data_size} samples.")
     
+    #cats = Counter(data['video_name'].apply(get_video_category))
+    #print("Category counts (before split):", dict(cats))
+
     # random shuffle rows of data
     data = data.sample(frac=1).reset_index(drop=True)
 
@@ -201,12 +206,12 @@ def main(args):
         pin_memory=True
     )
 
-    print(f'Training on {len(train_loader)} batches with {config['train']['batch_size']}.')
-    print(f'{len(train_loader) * config['train']['batch_size']} videos in total.')
+    train_dataset.count_categories()
 
-    print(f'Evaluating on {len(test_loader)} batches with {config['test']['batch_size']}.')
-    print(f'{len(test_loader) * config['test']['batch_size']} videos in total.')
-
+    print(f'Training on {len(train_loader)} batches with {config["train"]["batch_size"]}.')
+    print(f'{len(train_loader) * config["train"]["batch_size"]} videos in total.')
+    print(f'Evaluating on {len(test_loader)} batches with {config["val"]["batch_size"]}.')
+    print(f'{len(test_loader) * config["val"]["batch_size"]} videos in total.')
 
     model = R2Plus1D_YOLO_MultiHead(n_classes=config['model']['n_classes'],
                                     max_detections_per_cell=config['model']['max_detections_per_cell'], 

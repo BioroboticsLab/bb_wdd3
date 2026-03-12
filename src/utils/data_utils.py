@@ -5,6 +5,7 @@ import torch
 import os
 import cv2
 import yaml
+from src.utils.video_utils import get_video_category
 cv2.setNumThreads(4)
 
 def load_preds_csv(csv_path):
@@ -225,3 +226,19 @@ def load_config(config_path='config.yaml'):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
+
+def balance_sample(data, divisor):
+    # used to balance subset sample so each recording is balanced based on groups recording
+    # landgraf group, sharaonis group and niehs group
+    if divisor == 1:
+        return data
+        
+    data['_category'] = data['video_name'].apply(get_video_category)
+        
+    grouped = data.groupby('_category')
+    n_per_category = len(data) // (divisor * len(grouped))
+        
+    sampled = grouped.apply(lambda g: g.sample(n=min(n_per_category, len(g)), random_state=42))
+    sampled = sampled.reset_index(drop=True).drop(columns='_category')
+        
+    return sampled
