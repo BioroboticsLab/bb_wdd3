@@ -346,6 +346,13 @@ def main(args):
 
         print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-F1 pre: {test_metrics['comprehensive']['f1']:.4f} | post: {post_test_metrics['comprehensive']['f1']:.4f}")       
         
+
+        wandb.log({
+            'epoch': epoch,
+            'eval/std_f1_pre': test_metrics['comprehensive']['f1'],
+            'eval/std_f1_post': post_test_metrics['comprehensive']['f1'],
+        })
+
         # Restore original parameters after metrics
         ema.restore()
 
