@@ -106,7 +106,7 @@ def main(args):
 
 
     model, checkpoint = load_pretrained_model(args.ckpt_path, config, device)
-    ema = EMA(model, decay=0.9999, device=device)
+    ema = EMA(model, decay=config['train']['ema_decay'], device=device)
 
     # for ema
     if 'ema_state_dict' in checkpoint:

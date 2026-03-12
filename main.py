@@ -38,6 +38,11 @@ torch.backends.cudnn.benchmark = False
 def main(args):
     config = load_config(args.config_path)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    
+    # run name either specified or date time so multiple runs dont overwrite checkpoint
+    run_name = args.run_name if args.run_name else f"run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    ckpt_dir = f"./ckpt/{run_name}"
+    os.makedirs(ckpt_dir, exist_ok=True)
 
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs!")
@@ -53,6 +58,7 @@ def main(args):
     data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
     print(f"Using: {len(data)} / {full_data_size} samples.")
     
+    # random shuffle rows of data
     data = data.sample(frac=1).reset_index(drop=True)
 
     transforms = T.Compose([
@@ -65,8 +71,8 @@ def main(args):
         T.ToPILImage(),
         T.Resize((224, 224)),
         T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], 
-                    std=[0.229, 0.224, 0.225])])
+        T.Normalize(mean=config['augmentations']['mean'], 
+                    std=config['augmentations']['std'])])
     
     # Create augmentation
     train_augmentation = WaggleAugmentations(
@@ -196,7 +202,12 @@ def main(args):
         pin_memory=True
     )
 
-    print('Len train loader:', len(train_loader))
+    print(f'Training on {len(train_loader)} batches with {config['train']['batch_size']}.')
+    print(f'{len(train_loader) * config['train']['batch_size']} videos in total.')
+
+    print(f'Evaluating on {len(test_loader)} batches with {config['test']['batch_size']}.')
+    print(f'{len(test_loader) * config['test']['batch_size']} videos in total.')
+
 
     model = R2Plus1D_YOLO_MultiHead(n_classes=config['model']['n_classes'],
                                     max_detections_per_cell=config['model']['max_detections_per_cell'], 
@@ -207,8 +218,6 @@ def main(args):
                                     cross_attention=config['model']['cross_attention'],
                                     dropout_rate=config['model']['dropout']   
                                     )
-
-    os.makedirs('./ckpt', exist_ok=True)
 
     model = model.to(device)
 
@@ -221,7 +230,7 @@ def main(args):
                             weight_decay=config['train']['weight_decay'], 
                             betas=config['train']['betas'])
     
-    ema = EMA(model, decay=0.9999, device=device)
+    ema = EMA(model, decay=config['train']['ema_decay'], device=device)
 
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -274,7 +283,7 @@ def main(args):
         **config,  # Log entire config
         "seed": SEED,
     },
-    name=f"run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}",
+    name=run_name,
     resume="allow" if args.resume else None
 )
     
@@ -343,7 +352,7 @@ def main(args):
                         'scaler_state_dict': scaler.state_dict(),
                         'ema_state_dict': ema.state_dict(),
                         'best_val_loss': best_val_loss,
-                    }, './ckpt/best_model.pth')
+                    }, os.path.join(ckpt_dir, 'best.pth'))
                     print(f"New best model saved with val_loss: {val_loss:.4f}")
                 else:
                     print(f"New best val_loss: {val_loss:.4f} (model saving disabled)")
@@ -358,7 +367,7 @@ def main(args):
                     'scaler_state_dict': scaler.state_dict(),
                     'ema_state_dict': ema.state_dict(),
                     'best_val_loss': best_val_loss,
-                }, './ckpt/latest.pth')
+                }, os.path.join(ckpt_dir, 'latest.pth'))
                 print(f'Saved and evaluated model at Epoch {epoch}/{config["train"]["epochs"]}')
             else:
                 print(f'Evaluated model at Epoch {epoch}/{config["train"]["epochs"]} (model saving disabled)')
@@ -371,7 +380,7 @@ def get_args():
 
     parser.add_argument("--config_path", type=str, default='./configs/config.yaml', help="Path to the config file.")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from (e.g. ./ckpt/latest.pth).")
-
+    parser.add_argument("--run_name", type=str, default=None, help="Name for this run. Defaults to datetime if not specified.")
     return parser.parse_args()
 
 if __name__ == '__main__':

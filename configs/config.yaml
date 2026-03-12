@@ -71,6 +71,7 @@ train:
   num_workers: 4
   save_model: True
   betas: [0.937, 0.999]
+  ema_decay: 9999
 
 val:
     batch_size: 32
