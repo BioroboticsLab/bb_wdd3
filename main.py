@@ -305,9 +305,7 @@ def main(args):
 
         # fetch gt and preds
         test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader)
-        # denorms imgs
-        test_frames = reverse_transform_batch(test_frames, original_size=(config['data']['width'],
-                                                                          config['data']['height']))
+       
         # Transform yolo coordinates onto image domain for both gt and predicted values
         test_gts = yolo_to_img_space_gt(test_gt_raw, 
                                         all_starts=test_all_starts, 
@@ -372,6 +370,8 @@ def main(args):
                         'scaler_state_dict': scaler.state_dict(),
                         'ema_state_dict': ema.state_dict(),
                         'best_score': best_score,
+                        'val_loss': val_loss,
+                        'std_f1': post_test_metrics['comprehensive']['f1'], 
                     }, os.path.join(ckpt_dir, 'best.pth'))
                     print(f"New best model saved → {score_str}")
                 else:
@@ -386,6 +386,8 @@ def main(args):
                     'scaler_state_dict': scaler.state_dict(),
                     'ema_state_dict': ema.state_dict(),
                     'best_score': best_score,
+                    'val_loss': val_loss,
+                    'std_f1': post_test_metrics['comprehensive']['f1'], 
                 }, os.path.join(ckpt_dir, 'latest.pth'))
                 print(f"Saved latest checkpoint at epoch {epoch}/{config['train']['epochs']}")
             else:
