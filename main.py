@@ -259,7 +259,8 @@ def main(args):
 
     # Resume from checkpoint if provided
     start_epoch = 0
-    best_val_loss = float('inf')
+    monitor_metric = config['eval']['metric']
+    best_score = float('inf') if monitor_metric == 'loss' else 0.0
 
     if args.resume and os.path.exists(args.resume):
         print(f"Resuming from checkpoint: {args.resume}")
@@ -272,13 +273,13 @@ def main(args):
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-        best_val_loss = checkpoint['best_val_loss']
+        best_score = checkpoint['best_score']
 
         if 'ema_state_dict' in checkpoint:
             ema.load_state_dict(checkpoint['ema_state_dict'])
             print(f"Loaded EMA state (updates: {ema.updates})")
 
-        print(f"Resumed at epoch {start_epoch}, best_val_loss so far: {best_val_loss:.4f}")
+        print(f"Resumed at epoch {start_epoch}, best_score so far: {best_score:.4f}")
     elif args.resume:
         print(f"Warning: checkpoint path '{args.resume}' not found, starting from scratch.")
 
@@ -343,17 +344,26 @@ def main(args):
                                         iou_threshold_range=config['eval']['iou_thresholds'],
                                         angular_thresholds=config['eval']['angular_thresholds'])
         
-        print_evaluation_results(test_metrics, post_test_metrics)
-
+        #print_evaluation_results(test_metrics, post_test_metrics)
 
         # Restore original parameters after metrics
         ema.restore()
 
+        if monitor_metric == 'loss':
+            current_score = val_loss
+            is_best = current_score < best_score
+            score_str = f"val_loss: {current_score:.4f}"
+        # else is std map    
+        else:  
+            # use post-processed comprehensive F1 as the primary score (higher is better)
+            current_score = post_test_metrics['comprehensive']['f1']
+            is_best = current_score > best_score
+            score_str = f"STD-F1 (post-proc): {current_score:.4f}"
+
         if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if is_best:
+                best_score = current_score
                 if config['train'].get('save_model', True):
-                    # Save best model
                     torch.save({
                         'epoch': epoch,
                         'model_state_dict': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
@@ -361,14 +371,13 @@ def main(args):
                         'scheduler_state_dict': scheduler.state_dict(),
                         'scaler_state_dict': scaler.state_dict(),
                         'ema_state_dict': ema.state_dict(),
-                        'best_val_loss': best_val_loss,
+                        'best_score': best_score,
                     }, os.path.join(ckpt_dir, 'best.pth'))
-                    print(f"New best model saved with val_loss: {val_loss:.4f}")
+                    print(f"New best model saved → {score_str}")
                 else:
-                    print(f"New best val_loss: {val_loss:.4f} (model saving disabled)")
-            
+                    print(f"New best → {score_str} (model saving disabled)")
+
             if config['train'].get('save_model', True):
-                # Save latest checkpoint
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
@@ -376,11 +385,11 @@ def main(args):
                     'scheduler_state_dict': scheduler.state_dict(),
                     'scaler_state_dict': scaler.state_dict(),
                     'ema_state_dict': ema.state_dict(),
-                    'best_val_loss': best_val_loss,
+                    'best_score': best_score,
                 }, os.path.join(ckpt_dir, 'latest.pth'))
-                print(f'Saved and evaluated model at Epoch {epoch}/{config["train"]["epochs"]}')
+                print(f"Saved latest checkpoint at epoch {epoch}/{config['train']['epochs']}")
             else:
-                print(f'Evaluated model at Epoch {epoch}/{config["train"]["epochs"]} (model saving disabled)')
+                print(f"Evaluated model at epoch {epoch}/{config['train']['epochs']} (model saving disabled)")
             
     print('Training complete.')
     wandb.finish()
