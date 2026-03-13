@@ -134,7 +134,7 @@ def main(args):
             transforms,
             width=config['data']['width'],
             height=config['data']['height'],
-            clip_len=config['data']['clip_len'],
+            window_size=config['data']['window_size'],
             grid_size=config['model']['grid_size'],
             max_detections_per_cell=config['model']['max_detections_per_cell'],
             n_classes=config['model']['n_classes'],
@@ -148,7 +148,7 @@ def main(args):
             test_transform,
             width=config['data']['width'],
             height=config['data']['height'],
-            clip_len=config['data']['clip_len'],
+            window_size=config['data']['window_size'],
             grid_size=config['model']['grid_size'],
             max_detections_per_cell=config['model']['max_detections_per_cell'],
             n_classes=config['model']['n_classes'],
@@ -164,7 +164,7 @@ def main(args):
             transforms,
             width=config['data']['width'],
             height=config['data']['height'],
-            clip_len=config['data']['clip_len'],
+            window_size=config['data']['window_size'],
             grid_size=config['model']['grid_size'],
             max_detections_per_cell=config['model']['max_detections_per_cell'],
             n_classes=config['model']['n_classes'],
@@ -178,7 +178,7 @@ def main(args):
             test_transform,
             width=config['data']['width'],
             height=config['data']['height'],
-            clip_len=config['data']['clip_len'],
+            window_size=config['data']['window_size'],
             grid_size=config['model']['grid_size'],
             max_detections_per_cell=config['model']['max_detections_per_cell'],
             n_classes=config['model']['n_classes'],
@@ -301,10 +301,11 @@ def main(args):
             model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler, ema)
         
         # Validate
-        val_loss = eval(model, device, yolocriteria, test_loader, epoch, ema)
+        ema.apply_shadow()
+        val_loss = eval(model, device, yolocriteria, test_loader, epoch)
 
         # fetch gt and preds
-        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader)
+        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader, device)
        
         # Transform yolo coordinates onto image domain for both gt and predicted values
         test_gts = yolo_to_img_space_gt(test_gt_raw, 

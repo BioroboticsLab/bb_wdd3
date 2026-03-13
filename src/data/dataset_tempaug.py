@@ -60,7 +60,7 @@ class VideoYoloDatasetTemporalJitter(Dataset):
             Optional transformation applied to each frame (e.g., normalization).
         width, height : int
             Output spatial resolution of every crop (default = 224 x 224).
-        clip_len : int
+        window_size : int
             Number of frames returned per sample (frames are sampled or repeated).
         grid_size : int
             Size of YOLO detection grid (g x g).
@@ -74,7 +74,7 @@ class VideoYoloDatasetTemporalJitter(Dataset):
             If True, enables temporal jittering and spatial augmentations.
     """
     def __init__(self, dataframe, video_dir, transform=None, width=224, height=224, 
-                 clip_len=16, grid_size=25, max_detections_per_cell=1, n_classes=1,
+                 window_size=16, grid_size=25, max_detections_per_cell=1, n_classes=1,
                  augment=None, is_training=True):
 
         self.data = dataframe
@@ -82,7 +82,7 @@ class VideoYoloDatasetTemporalJitter(Dataset):
         self.transform = transform
         self.height = height
         self.width = width
-        self.clip_len = clip_len
+        self.window_size = window_size
         self.grid_size = grid_size
         self.max_detections_per_cell = max_detections_per_cell
         self.n_classes = n_classes
@@ -119,11 +119,11 @@ class VideoYoloDatasetTemporalJitter(Dataset):
             # Window must fully contain [waggle_start, waggle_end]
             # earliest: waggle ends right at clip end
             # latest: waggle starts right at clip start
-            earliest_win_start = max(0, waggle_end - self.clip_len)
+            earliest_win_start = max(0, waggle_end - self.window_size)
             latest_win_start = waggle_start
 
             if earliest_win_start >= latest_win_start:
-                # Waggle is longer than clip_len anchor at earliest
+                # Waggle is longer than window_size anchor at earliest
                 win_start = earliest_win_start
             else:
                 # Deterministic jitter for testing 
@@ -132,7 +132,7 @@ class VideoYoloDatasetTemporalJitter(Dataset):
                 #win_start = int(rng.randint(earliest_win_start, latest_win_start + 1))
                 win_start = int(np.random.randint(earliest_win_start, latest_win_start + 1))
                 
-            win_end = win_start + self.clip_len
+            win_end = win_start + self.window_size
             waggle_start_in_window = waggle_start
             waggle_end_in_window = waggle_end
         else:
@@ -211,7 +211,7 @@ class VideoYoloDatasetTemporalJitter(Dataset):
         H, W = self.height, self.width
 
         # Frame sampling
-        sampled_frames = self._sample_frames(frames, self.clip_len)
+        sampled_frames = self._sample_frames(frames, self.window_size)
         frames_tensor = torch.stack(sampled_frames).permute(1, 0, 2, 3)
 
         del frames, sampled_frames

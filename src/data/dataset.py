@@ -58,7 +58,7 @@ class VideoYoloDataset(Dataset):
             Optional transformation applied to each frame (e.g., normalization).
         width, height : int
             Output spatial resolution of every crop (default = 224 x 224).
-        clip_len : int
+        window_size : int
             Number of frames returned per sample (frames are sampled or repeated).
         grid_size : int
             Size of YOLO detection grid (g x g).
@@ -71,7 +71,7 @@ class VideoYoloDataset(Dataset):
 
     """
     def __init__(self, dataframe, video_dir, transform=None, width=224, height=224, 
-                 clip_len=16, grid_size=25, max_detections_per_cell=1, n_classes=1,
+                 window_size=16, grid_size=25, max_detections_per_cell=1, n_classes=1,
                  augment=None, is_training=True):
 
         self.data = dataframe
@@ -79,7 +79,7 @@ class VideoYoloDataset(Dataset):
         self.transform = transform
         self.height = height
         self.width = width
-        self.clip_len = clip_len
+        self.window_size = window_size
         self.grid_size = grid_size
         self.max_detections_per_cell = max_detections_per_cell
         self.n_classes = n_classes
@@ -184,7 +184,7 @@ class VideoYoloDataset(Dataset):
         H, W = self.height, self.width
 
         # Frame sampling
-        sampled_frames = self._sample_frames(frames, self.clip_len)
+        sampled_frames = self._sample_frames(frames, self.window_size)
         frames_tensor = torch.stack(sampled_frames).permute(1, 0, 2, 3)
         
         # Clear intermediate variables
