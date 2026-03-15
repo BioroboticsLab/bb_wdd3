@@ -57,10 +57,15 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    # 1/8 of original data for fine-tuning
-    # data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)    #data = data.iloc[:100].reset_index(drop=True)
-    data = balance_sample(data, config['data']['data_fraction_divisor'])
-    print(f"Using: {len(data)} / {full_data_size} samples.")
+    # if data fraction divisor 1 uses entire data no need to balance 
+    # videos from recordings of different groups
+    if config['data']['data_fraction_divisor'] == 1:
+        data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
+    
+    # if data fractor > 1 we use a subet and want to balance 
+    # videos by recordings of different groups 
+    elif config['data']['data_fraction_divisor'] > 1:
+        data = balance_sample(data, config['data']['data_fraction_divisor'])
 
     test_transform = T.Compose([
         T.ToPILImage(),
