@@ -17,7 +17,7 @@ from src.loss.loss_new import WaggleDetectionLoss_New
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 import torch.nn  as nn
-from src.utils.data_utils import fix_dataframe_with_video_lengths, find_overlapping_rows, preds_to_df, save_preds_to_csv, load_config
+from src.utils.data_utils import fix_dataframe_with_video_lengths, find_overlapping_rows, preds_to_df, save_preds_to_csv, load_config, balance_sample
 import datetime
 from torch.utils.tensorboard import SummaryWriter
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results
@@ -55,8 +55,12 @@ def main(args):
     writer = SummaryWriter(log_dir=log_dir)
 
     data = pd.read_csv(config['data']['annotations'])
+    full_data_size = len(data)
+
     # 1/8 of original data for fine-tuning
-    data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)    #data = data.iloc[:100].reset_index(drop=True)
+    # data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)    #data = data.iloc[:100].reset_index(drop=True)
+    data = balance_sample(data, config['data']['data_fraction_divisor'])
+    print(f"Using: {len(data)} / {full_data_size} samples.")
 
     test_transform = T.Compose([
         T.ToPILImage(),
@@ -83,7 +87,7 @@ def main(args):
         test_transform,
         width=config['data']['width'],
         height=config['data']['height'],
-        clip_len=config['data']['clip_len'],
+        window_size=config['data']['window_size'],
         grid_size=config['model']['grid_size'],
         max_detections_per_cell=config['model']['max_detections_per_cell'],
         n_classes=config['model']['n_classes'],
@@ -127,7 +131,7 @@ def main(args):
 
     for epoch in range(num_epochs):
         #train_loss =  eval(model, device, yolocriteria, train_loader, epoch, writer)
-        test_loss = eval(model, device, yolocriteria, test_loader, epoch, ema)
+        test_loss = eval(model, device, yolocriteria, test_loader, epoch)
         # Its not possible to fit all training or test frames onto cpu for visualisations
         # batch_idx_for_frames is set to 0 indicating that it will index into the first batch of the entire data loader and store the frames in there
         # if batch_size is set to 16, that means we have 16*window_size frames in our case 16 * 16, each individual batch represents a single waggle dance event of 16 frames
@@ -220,6 +224,9 @@ def main(args):
                                         angular_thresholds=config['eval']['angular_thresholds'])
         
         print_evaluation_results(test_metrics, post_test_metrics)
+
+        # Restore original parameters after metrics
+        ema.restore()
 
     print('Eval on single checkpoint complete.')
     writer.close()

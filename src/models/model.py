@@ -100,7 +100,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
             self.temporal_features = nn.Sequential(
                 nn.Conv3d(256, 256, kernel_size=(3, 1, 1), padding=(1, 0, 0), bias=False),
                 nn.GroupNorm(16, 256),
-                nn.ReLU(inplace=True),
+                nn.SiLU(inplace=True),
                 nn.AdaptiveAvgPool3d((1, None, None))  # collapse T only
             )
             self.temporal_head = nn.Sequential(
@@ -166,7 +166,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
 
             self.temporal_cross_ffn = nn.Sequential(
                 nn.Linear(256, 512),
-                nn.ReLU(inplace=True),
+                nn.GeLU(),
                 nn.Dropout(dropout_rate),
                 nn.Linear(512, 256),
                 nn.Dropout(dropout_rate)
@@ -183,7 +183,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
         return nn.Sequential(
             nn.Conv3d(channels, channels, kernel_size=(1, 1, 1), bias=False),
             nn.GroupNorm(16, channels),
-            nn.ReLU(inplace=True)
+            nn.SiLU(inplace=True)
         )
 
     def _make_transformer(
@@ -194,7 +194,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
             nhead=nhead,
             dim_feedforward=512,
             dropout=dropout,
-            activation='relu',
+            activation='gelu',
             batch_first=True
         )
         return nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
@@ -206,7 +206,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
         return nn.Sequential(
             nn.Conv2d(in_channels, 128, kernel_size=3, padding=1, bias=False),
             nn.GroupNorm(8, 128),
-            nn.ReLU(inplace=True),
+            nn.SiLU(inplace=True),
             nn.Dropout2d(dropout_rate),
             self._depthwise_block(128, 64, dropout_rate),
             nn.Conv2d(64, num_params * max_det, kernel_size=1)
@@ -218,10 +218,10 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
             nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1,
                       groups=in_channels, bias=False),
             nn.GroupNorm(8, in_channels),
-            nn.ReLU(inplace=True),
+            nn.SiLU(inplace=True),
             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
             nn.GroupNorm(8, out_channels),
-            nn.ReLU(inplace=True),
+            nn.SiLU(inplace=True),
             nn.Dropout2d(dropout_rate)
         )
 

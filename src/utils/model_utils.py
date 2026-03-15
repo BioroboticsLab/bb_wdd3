@@ -3,7 +3,8 @@ import torch.nn as nn
 import math
 from copy import deepcopy
 from src.models.model import R2Plus1D_YOLO_MultiHead
-
+import torch.serialization
+import numpy as np 
 
 def load_pretrained_model(checkpoint_path, config, 
                           device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")):
@@ -20,7 +21,8 @@ def load_pretrained_model(checkpoint_path, config,
                                     )
     
     print(f"Loading pretrained weights from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    torch.serialization.add_safe_globals([np._core.multiarray.scalar])
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # Handle different checkpoint formats
     if 'model_state_dict' in checkpoint:

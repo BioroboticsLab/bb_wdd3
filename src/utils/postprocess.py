@@ -132,8 +132,8 @@ def remove_outliers_density(predictions, min_neighbors=2, spatial_radius=50, tem
         else:
             outlier_count += 1
     
-    if outlier_count > 0:
-        print(f"Removed {outlier_count} sparse outliers ({outlier_count/len(predictions)*100:.1f}%)")
+    #if outlier_count > 0:
+    #    print(f"Removed {outlier_count} sparse outliers ({outlier_count/len(predictions)*100:.1f}%)")
     
     return inliers
 
@@ -168,8 +168,8 @@ def remove_outliers_isolation_forest(predictions, contamination=0.1):
     inliers = [pred for pred, label in zip(predictions, outlier_labels) if label == 1]
     
     removed = len(predictions) - len(inliers)
-    if removed > 0:
-        print(f"Removed {removed} outliers ({removed/len(predictions)*100:.1f}%)")
+    #if removed > 0:
+    #    print(f"Removed {removed} outliers ({removed/len(predictions)*100:.1f}%)")
     
     return inliers
 
