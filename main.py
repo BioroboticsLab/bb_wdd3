@@ -26,6 +26,8 @@ from src.utils.vis_utils import reverse_transform_batch, save_frames
 import argparse
 from src.utils.model_utils import load_pretrained_model, EMA
 from collections import Counter
+from src.utils.video_utils import get_video_category
+
 
 SEED = 42
 random.seed(SEED)
@@ -54,9 +56,16 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
 
     full_data_size = len(data)
-    # check config data fraction dividor if train on subset of data is desired
-    #data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
-    data = balance_sample(data, config['data']['data_fraction_divisor'])
+    # if data fraction divisor 1 uses entire data no need to balance 
+    # videos from recordings of different groups
+    if config['data']['data_fraction_divisor'] == 1:
+        data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
+    
+    # if data fractor > 1 we use a subet and want to balance 
+    # videos by recordings of different groups 
+    elif config['data']['data_fraction_divisor'] > 1:
+        data = balance_sample(data, config['data']['data_fraction_divisor'])
+    
     print(f"Using: {len(data)} / {full_data_size} samples.")
     
     #cats = Counter(data['video_name'].apply(get_video_category))
@@ -264,7 +273,7 @@ def main(args):
 
     if args.resume and os.path.exists(args.resume):
         print(f"Resuming from checkpoint: {args.resume}")
-        checkpoint = torch.load(args.resume, map_location=device)
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
         if isinstance(model, torch.nn.DataParallel):
             model.module.load_state_dict(checkpoint['model_state_dict'])
         else:

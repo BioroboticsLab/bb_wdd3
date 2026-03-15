@@ -166,7 +166,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
 
             self.temporal_cross_ffn = nn.Sequential(
                 nn.Linear(256, 512),
-                nn.GeLU(),
+                nn.GELU(),
                 nn.Dropout(dropout_rate),
                 nn.Linear(512, 256),
                 nn.Dropout(dropout_rate)

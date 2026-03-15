@@ -7,7 +7,7 @@ data:
   width: 224
   height: 224
   window_size: 16 # defines max clip length
-  data_fraction_divisor: 16   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
+  data_fraction_divisor: 4   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
 
 
 # Training augmentations configuration
@@ -61,7 +61,7 @@ model:
 
 # Training configuration
 train:
-  batch_size: 16
+  batch_size: 32
   epochs: 100
   lr: 0.0001
   weight_decay: 0.0005
