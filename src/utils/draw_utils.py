@@ -135,9 +135,20 @@ def draw_waggle(frames, detections, ground_truths, start_frame_idx, output_dir, 
     return saved_frame_paths
 
 
-def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_frame_idxs, file_name=None, output_dir='vids', fps=5):
+def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_frame_idxs, 
+                      file_name=None, output_dir='vids', fps=5,
+                      draw_gt=True, draw_pred=True,
+                      save_clean_frames=False, save_annotated_frames=True):
     os.makedirs(output_dir, exist_ok=True)
-    
+
+    if save_clean_frames:
+        clean_dir = os.path.join(output_dir, 'frames_clean')
+        os.makedirs(clean_dir, exist_ok=True)
+
+    if save_annotated_frames:
+        annotated_dir = os.path.join(output_dir, 'frames_annotated')
+        os.makedirs(annotated_dir, exist_ok=True)
+
     first_frame = cv2.cvtColor(np.array(all_frames[0][0]), cv2.COLOR_RGB2BGR)
     height, width = first_frame.shape[:2]
     
@@ -163,76 +174,82 @@ def draw_waggle_batch(all_frames, all_detections, all_ground_truths, all_start_f
             cv_frames.append(cv_frame)
         
         preds_by_frame = {}
-        for detection in detections:
-            start_offset, end_offset = detection['temporal_offsets']
-            for frame_offset in range(start_offset, end_offset + 1):
-                local_frame_idx = frame_offset - start_frame_idx
-                if 0 <= local_frame_idx < len(cv_frames):
-                    if local_frame_idx not in preds_by_frame:
-                        preds_by_frame[local_frame_idx] = []
-                    detection['type'] = 'prediction'
-                    preds_by_frame[local_frame_idx].append(detection)
+        if draw_pred:
+            for detection in detections:
+                start_offset, end_offset = detection['temporal_offsets']
+                for frame_offset in range(start_offset, end_offset + 1):
+                    local_frame_idx = frame_offset - start_frame_idx
+                    if 0 <= local_frame_idx < len(cv_frames):
+                        if local_frame_idx not in preds_by_frame:
+                            preds_by_frame[local_frame_idx] = []
+                        detection['type'] = 'prediction'
+                        preds_by_frame[local_frame_idx].append(detection)
         
         gt_by_frame = {}
-        for gt in ground_truths:
-            start_offset, end_offset = gt['temporal_offsets']
-            for frame_offset in range(start_offset, end_offset + 1):
-                local_frame_idx = frame_offset - start_frame_idx
-                if 0 <= local_frame_idx < len(cv_frames):
-                    if local_frame_idx not in gt_by_frame:
-                        gt_by_frame[local_frame_idx] = []
-                    gt['type'] = 'ground_truth'
-                    gt_by_frame[local_frame_idx].append(gt)
+        if draw_gt:
+            for gt in ground_truths:
+                start_offset, end_offset = gt['temporal_offsets']
+                for frame_offset in range(start_offset, end_offset + 1):
+                    local_frame_idx = frame_offset - start_frame_idx
+                    if 0 <= local_frame_idx < len(cv_frames):
+                        if local_frame_idx not in gt_by_frame:
+                            gt_by_frame[local_frame_idx] = []
+                        gt['type'] = 'ground_truth'
+                        gt_by_frame[local_frame_idx].append(gt)
         
         for local_frame_idx in range(len(cv_frames)):
             frame = cv_frames[local_frame_idx].copy()
-            
-            if local_frame_idx in gt_by_frame:
+            global_frame_idx = start_frame_idx + local_frame_idx
+
+            # Save clean frame before any annotations
+            if save_clean_frames:
+                cv2.imwrite(os.path.join(clean_dir, f"frame_{global_frame_idx:06d}.jpg"), frame)
+
+            # Draw GT if enabled
+            if draw_gt and local_frame_idx in gt_by_frame:
                 for gt in gt_by_frame[local_frame_idx]:
-                    x, y = gt['position']
-                    x, y = int(x), int(y)
+                    x, y = int(gt['position'][0]), int(gt['position'][1])
                     dx, dy = gt['direction']
                     color = (0, 0, 255)
                     cv2.circle(frame, (x, y), 6, color, 2)
-                    arrow_length = 30
-                    end_x = int(x + dx * arrow_length)
-                    end_y = int(y + dy * arrow_length)
+                    end_x = int(x + dx * 30)
+                    end_y = int(y + dy * 30)
                     cv2.arrowedLine(frame, (x, y), (end_x, end_y), color, 2, tipLength=0.3)
                     cv2.putText(frame, "GT", (x + 12, y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
-            if local_frame_idx in preds_by_frame:
+
+            # Draw predictions if enabled
+            if draw_pred and local_frame_idx in preds_by_frame:
                 for detection in preds_by_frame[local_frame_idx]:
-                    x, y = detection['position']
-                    x, y = int(x), int(y)
+                    x, y = int(detection['position'][0]), int(detection['position'][1])
                     dx, dy = detection['direction']
                     confidence = detection['confidence']
                     color = (0, 255, 0)
                     cv2.circle(frame, (x, y), 6, color, 2)
-                    arrow_length = 25
-                    end_x = int(x + dx * arrow_length)
-                    end_y = int(y + dy * arrow_length)
+                    end_x = int(x + dx * 25)
+                    end_y = int(y + dy * 25)
                     cv2.arrowedLine(frame, (x, y), (end_x, end_y), color, 2, tipLength=0.3)
                     cv2.putText(frame, f"{confidence:.2f}", (x + 8, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
-            # Build frame with black bar on top
+
+            # Save annotated frame whatever was drawn based on bools
+            if save_annotated_frames:
+                cv2.imwrite(os.path.join(annotated_dir, f"frame_{global_frame_idx:06d}.jpg"), frame)
+
+            # Build frame with black bar on top for video
             frame_with_bar = np.zeros((total_height, width, 3), dtype=np.uint8)
             frame_with_bar[bar_height:] = frame
 
             num_gt = len(gt_by_frame.get(local_frame_idx, []))
             num_pred = len(preds_by_frame.get(local_frame_idx, []))
-            global_frame_idx = start_frame_idx + local_frame_idx
 
             cv2.putText(frame_with_bar, f"GT: {num_gt} | Pred: {num_pred}", (10, 13),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 255), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 255), 1)
             cv2.putText(frame_with_bar, f"Global Frame: {global_frame_idx} | Local Frame: {local_frame_idx+1}/{len(cv_frames)}", (10, 27),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 255), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 255), 1)
 
             out.write(frame_with_bar)
             frame_count += 1
     
     out.release()
-    print(f"Created MP4 with {frame_count} frames: {mp4_path}")
-    
     return mp4_path
 
 
