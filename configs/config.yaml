@@ -7,7 +7,7 @@ data:
   width: 224
   height: 224
   window_size: 16 # defines max clip length
-  data_fraction_divisor: 16   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
+  data_fraction_divisor: 1   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
 
 
 # Training augmentations configuration
@@ -40,7 +40,7 @@ augmentations:
   prob_color_shuffle: 0.0
   prob_posterize: 0.0
   posterize_bits: [4, 7]
-  prob_greyscale: 0.0
+  prob_greyscale: 1.0
   normalize: true
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
