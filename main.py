@@ -54,25 +54,28 @@ def main(args):
         use_multi_gpu = False
 
     data = pd.read_csv(config['data']['annotations'])
-
     full_data_size = len(data)
-    # if data fraction divisor 1 uses entire data no need to balance 
-    # videos from recordings of different groups
-    if config['data']['data_fraction_divisor'] == 1:
-        data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
-    
-    # if data fractor > 1 we use a subet and want to balance 
-    # videos by recordings of different groups 
-    elif config['data']['data_fraction_divisor'] > 1:
-        data = balance_sample(data, config['data']['data_fraction_divisor'])
-    
-    print(f"Using: {len(data)} / {full_data_size} samples.")
-    
-    #cats = Counter(data['video_name'].apply(get_video_category))
-    #print("Category counts (before split):", dict(cats))
 
-    # random shuffle rows of data
-    data = data.sample(frac=1).reset_index(drop=True)
+    # Split by video name first to prevent temporal data leak
+    # All windows from a given video go entirely to train or test never both
+    video_names = data['video_name'].unique()
+    video_names = np.random.RandomState(SEED).permutation(video_names)
+
+    train_video_len = int(config['data']['train_ratio'] * len(video_names))
+    train_videos = set(video_names[:train_video_len])
+
+    train_df = data[data['video_name'].isin(train_videos)].reset_index(drop=True)
+    test_df  = data[~data['video_name'].isin(train_videos)].reset_index(drop=True)
+
+    # Balance/subsample data
+    if config['data']['data_fraction_divisor'] > 1:
+        train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
+
+    # Shuffle train rows (test stays ordered, DataLoader shuffles train anyway)
+    train_df = train_df.sample(frac=1, random_state=SEED).reset_index(drop=True)
+
+    print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")
+    print(f"Train videos: {len(train_videos)} | Test videos: {len(video_names) - len(train_videos)}")
 
     transforms = T.Compose([
         T.ToPILImage(),
@@ -124,16 +127,6 @@ def main(args):
         mean=config['augmentations']['mean'],
         std=config['augmentations']['std'],
         )
-    
-    total_len = len(data)
-    train_len = int(config['data']['train_ratio'] * total_len)
-    test_len = total_len - train_len
-
-    train_indices = list(range(train_len))
-    test_indices = list(range(train_len, total_len))
-
-    train_df = data.iloc[train_indices].reset_index(drop=True)
-    test_df = data.iloc[test_indices].reset_index(drop=True)
 
     if config['augmentations']['temporal_jitter'] is True:
         # applies temporal jitter to entire dataset as done in action detection

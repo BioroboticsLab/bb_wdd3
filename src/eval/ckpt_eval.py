@@ -57,35 +57,23 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    # if data fraction divisor 1 uses entire data no need to balance 
-    # videos from recordings of different groups
-    if config['data']['data_fraction_divisor'] == 1:
-        data = data.iloc[:len(data)//config['data']['data_fraction_divisor']].reset_index(drop=True)
-    
-    # if data fractor > 1 we use a subet and want to balance 
-    # videos by recordings of different groups 
-    elif config['data']['data_fraction_divisor'] > 1:
-        data = balance_sample(data, config['data']['data_fraction_divisor'])
+    # Split by video name first to prevent temporal data leak
+    # All windows from a given video go entirely to train or test never both
+    video_names = data['video_name'].unique()
+    video_names = np.random.RandomState(SEED).permutation(video_names)
+
+    train_video_len = int(config['data']['train_ratio'] * len(video_names))
+    train_videos = set(video_names[:train_video_len])
+    test_df  = data[~data['video_name'].isin(train_videos)].reset_index(drop=True)
 
     test_transform = T.Compose([
         T.ToPILImage(),
-        T.Resize((224, 224)),
+        T.Resize((config['augmentations']['width'], 
+                  config['augmentations']['height'])),
         T.ToTensor(),
         T.Normalize(mean=config['augmentations']['mean'], 
                     std=config['augmentations']['std'])])
-
-    total_len = len(data)
-    train_len = int(config['data']['train_ratio'] * total_len)
-
-    train_indices = list(range(train_len))
-    test_indices = list(range(train_len, total_len))
-
-    train_df = data.iloc[train_indices].reset_index(drop=True)
-    test_df = data.iloc[test_indices].reset_index(drop=True)
-    # sort by video name and start frames to recover chronological/sequential order
-    train_df = train_df.sort_values(['video_name', 'start_frame']).reset_index(drop=True)
-    test_df = test_df.sort_values(['video_name', 'start_frame']).reset_index(drop=True)
-
+    
     test_dataset = VideoYoloDataset(
         test_df,
         config['data']['data_dir'],
