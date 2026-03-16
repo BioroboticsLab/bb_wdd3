@@ -19,9 +19,18 @@ from torchvision.transforms import Compose, ToPILImage, Resize, ToTensor, Graysc
 from tqdm import tqdm
 import torchvision.transforms as T
 from src.data.dataset import TemporalWaggleCollator, VideoYoloDataset
-from src.data.augmentation import WaggleAugmentations
 from src.utils.data_utils import load_config, balance_sample
+from src.utils.video_utils import get_video_category
+import numpy as np 
+import random 
 
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 def get_args():
     parser = argparse.ArgumentParser(description="Compute dataset mean and std for normalization.")
@@ -39,12 +48,22 @@ def main():
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    if config['data']['data_fraction_divisor'] == 1:
-        data = data.iloc[:len(data) // config['data']['data_fraction_divisor']].reset_index(drop=True)
-    elif config['data']['data_fraction_divisor'] > 1:
-        data = balance_sample(data, config['data']['data_fraction_divisor'])
+    video_df = pd.DataFrame({'video_name': data['video_name'].unique()})
+    video_df['category'] = video_df['video_name'].apply(get_video_category)
 
-    print(f"Computing stats over {len(data)} / {full_data_size} samples.")
+    train_videos = set()
+    for category, group in video_df.groupby('category'):
+        vids = np.random.RandomState(SEED).permutation(group['video_name'].values)
+        n_train = int(config['data']['train_ratio'] * len(vids))
+        train_videos.update(vids[:n_train])
+    
+    train_df = data[data['video_name'].isin(train_videos)].reset_index(drop=True)
+
+    # Balance/subsample data
+    if config['data']['data_fraction_divisor'] > 1:
+        train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
+
+    print(f"Computing stats over {len(train_df)} / {full_data_size} train vs. total samples.")
 
     # Raw resize + to tensor, no normalization
     raw_transform = Compose([
@@ -54,32 +73,8 @@ def main():
         ToTensor(),
     ])
 
-    # Greyscale only — all stochastic augmentations off.
-    # prob_greyscale=1.0 because the model always sees greyscaled frames at train time,
-    # so the normalization stats should reflect that distribution.
-    # normalize=False because we are computing the stats to use for normalization.
-    greyscale_only_aug = WaggleAugmentations(
-        width=config['augmentations']['width'],
-        height=config['augmentations']['height'],
-        prob_flip_h=0.0,
-        prob_flip_v=0.0,
-        prob_rotate=0.0,
-        prob_scale=0.0,
-        prob_translate=0.0,
-        prob_hsv=0.0,
-        prob_brightness=0.0,
-        prob_contrast=0.0,
-        prob_gamma=0.0,
-        prob_blur=0.0,
-        prob_clahe=0.0,
-        prob_color_shuffle=0.0,
-        prob_posterize=0.0,
-        prob_greyscale=1.0,
-        normalize=False,
-    )
-
     dataset = VideoYoloDataset(
-        dataframe=data,
+        dataframe=train_df,
         video_dir=config['data']['data_dir'],
         transform=raw_transform,
         width=config['data']['width'],
