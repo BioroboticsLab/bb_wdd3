@@ -27,6 +27,7 @@ from src.utils.postprocess import batch_postprocess_predictions
 from src.utils.video_utils import frames_to_video
 from src.utils.draw_utils import  draw_waggle, draw_waggle_batch, draw_waggle_batch_union
 from src.utils.model_utils import load_pretrained_model, EMA
+from src.utils.video_utils import get_video_category
 import wandb
 
 SEED = 42
@@ -57,19 +58,26 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    # Split by video name first to prevent temporal data leak
-    # All windows from a given video go entirely to train or test never both
-    video_names = data['video_name'].unique()
-    video_names = np.random.RandomState(SEED).permutation(video_names)
+    # Stratified video-level split:
+    # all windows from a given video go entirely to train or test never both
+    # split is done per category so each group contributes proportionally to both splits 
+    # regardless of how many videos it has
+    video_df = pd.DataFrame({'video_name': data['video_name'].unique()})
+    video_df['category'] = video_df['video_name'].apply(get_video_category)
 
-    train_video_len = int(config['data']['train_ratio'] * len(video_names))
-    train_videos = set(video_names[:train_video_len])
+    train_videos = set()
+    for category, group in video_df.groupby('category'):
+        vids = np.random.RandomState(SEED).permutation(group['video_name'].values)
+        n_train = int(config['data']['train_ratio'] * len(vids))
+        train_videos.update(vids[:n_train])
+    
     test_df  = data[~data['video_name'].isin(train_videos)].reset_index(drop=True)
 
     test_transform = T.Compose([
         T.ToPILImage(),
         T.Resize((config['augmentations']['width'], 
                   config['augmentations']['height'])),
+        T.Grayscale(num_output_channels=3),
         T.ToTensor(),
         T.Normalize(mean=config['augmentations']['mean'], 
                     std=config['augmentations']['std'])])
@@ -99,7 +107,6 @@ def main(args):
         persistent_workers=(config['train']['num_workers'] > 0),
         pin_memory=True
     )
-
 
     model, checkpoint = load_pretrained_model(args.ckpt_path, config, device)
     ema = EMA(model, decay=config['train']['ema_decay'], device=device)

@@ -15,9 +15,9 @@ import argparse
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from torchvision.transforms import Compose, ToPILImage, Resize, ToTensor
+from torchvision.transforms import Compose, ToPILImage, Resize, ToTensor, Grayscale
 from tqdm import tqdm
-
+import torchvision.transforms as T
 from src.data.dataset import TemporalWaggleCollator, VideoYoloDataset
 from src.data.augmentation import WaggleAugmentations
 from src.utils.data_utils import load_config, balance_sample
@@ -50,6 +50,7 @@ def main():
     raw_transform = Compose([
         ToPILImage(),
         Resize((config['augmentations']['width'], config['augmentations']['height'])),
+        Grayscale(num_output_channels=3),
         ToTensor(),
     ])
 
@@ -87,8 +88,8 @@ def main():
         grid_size=config['model']['grid_size'],
         max_detections_per_cell=config['model']['max_detections_per_cell'],
         n_classes=config['model']['n_classes'],
-        augment=greyscale_only_aug,
-        is_training=True,  # set to true so augmentation greyscale is applied
+        augment=None,
+        is_training=False, 
     )
 
     loader = DataLoader(

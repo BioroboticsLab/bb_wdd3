@@ -56,14 +56,19 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    # Split by video name first to prevent temporal data leak
-    # All windows from a given video go entirely to train or test never both
-    video_names = data['video_name'].unique()
-    video_names = np.random.RandomState(SEED).permutation(video_names)
+    # Stratified video-level split:
+    # all windows from a given video go entirely to train or test never both
+    # split is done per category so each group contributes proportionally to both splits 
+    # regardless of how many videos it has
+    video_df = pd.DataFrame({'video_name': data['video_name'].unique()})
+    video_df['category'] = video_df['video_name'].apply(get_video_category)
 
-    train_video_len = int(config['data']['train_ratio'] * len(video_names))
-    train_videos = set(video_names[:train_video_len])
-
+    train_videos = set()
+    for category, group in video_df.groupby('category'):
+        vids = np.random.RandomState(SEED).permutation(group['video_name'].values)
+        n_train = int(config['data']['train_ratio'] * len(vids))
+        train_videos.update(vids[:n_train])
+    
     train_df = data[data['video_name'].isin(train_videos)].reset_index(drop=True)
     test_df  = data[~data['video_name'].isin(train_videos)].reset_index(drop=True)
 
@@ -71,11 +76,9 @@ def main(args):
     if config['data']['data_fraction_divisor'] > 1:
         train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
 
-    # Shuffle train rows (test stays ordered, DataLoader shuffles train anyway)
-    train_df = train_df.sample(frac=1, random_state=SEED).reset_index(drop=True)
-
+    total_videos = len(video_df)
     print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")
-    print(f"Train videos: {len(train_videos)} | Test videos: {len(video_names) - len(train_videos)}")
+    print(f"Train videos: {len(train_videos)} | Test videos: {total_videos - len(train_videos)}")
 
     transforms = T.Compose([
         T.ToPILImage(),
@@ -88,6 +91,7 @@ def main(args):
         T.ToPILImage(),
         T.Resize((config['augmentations']['width'], 
                   config['augmentations']['height'])),
+        T.Grayscale(num_output_channels=3),        
         T.ToTensor(),
         T.Normalize(mean=config['augmentations']['mean'], 
                     std=config['augmentations']['std'])])
