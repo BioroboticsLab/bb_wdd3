@@ -20,7 +20,7 @@ import torch.nn  as nn
 from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv, balance_sample
 import datetime
 import wandb
-from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results
+from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results, get_wandb_log_dict
 from src.utils.postprocess import batch_postprocess_predictions
 from src.utils.vis_utils import reverse_transform_batch, save_frames
 import argparse
@@ -47,10 +47,10 @@ def main(args):
     os.makedirs(ckpt_dir, exist_ok=True)
 
     if torch.cuda.device_count() > 1:
-        print(f"Using {torch.cuda.device_count()} GPUs!")
+        print(f"Using {torch.cuda.device_count()} GPUs.")
         use_multi_gpu = True
     else:
-        print("Using single GPU")
+        print("Using single GPU.")
         use_multi_gpu = False
 
     data = pd.read_csv(config['data']['annotations'])
@@ -84,6 +84,7 @@ def main(args):
         T.ToPILImage(),
         T.Resize((config['augmentations']['width'], 
                   config['augmentations']['height'])),
+        T.Grayscale(num_output_channels=3),
         T.ToTensor(),
     ])
 
@@ -301,14 +302,14 @@ def main(args):
 )
     
     for epoch in range(start_epoch, config['train']['epochs']):
-        print(f'\nEpoch {epoch+1}/{config["train"]["epochs"]}')
+        print(f'\n Epoch {epoch+1}/{config["train"]["epochs"]}')
         # Train one epoch
-        train_loss = train(
+        train_loss, train_log = train(
             model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler, ema)
         
         # Validate
         ema.apply_shadow()
-        val_loss = eval(model, device, yolocriteria, test_loader, epoch)
+        val_loss, val_log = eval(model, device, yolocriteria, test_loader, epoch)
 
         # fetch gt and preds
         test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader, device)
@@ -355,10 +356,10 @@ def main(args):
         
 
         wandb.log({
-            'epoch': epoch,
-            'eval/std_f1_pre': test_metrics['comprehensive']['f1'],
-            'eval/std_f1_post': post_test_metrics['comprehensive']['f1'],
-        })
+            **train_log,
+            **val_log,
+            **get_wandb_log_dict(epoch, test_metrics, post_test_metrics)
+            })
 
         # Restore original parameters after metrics
         ema.restore()

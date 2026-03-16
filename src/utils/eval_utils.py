@@ -700,6 +700,8 @@ def print_evaluation_results(test_metrics, post_test_metrics):
     print(f"{'  Duration Accuracy':<35} {test_metrics['temporal']['duration_accuracy']:<20.3f} {post_test_metrics['temporal']['duration_accuracy']:<20.3f}")
     print(f"{'  ME Start (frames)':<35} {test_metrics['temporal']['me_start']:<20.2f} {post_test_metrics['temporal']['me_start']:<20.2f}")
     print(f"{'  ME End   (frames)':<35} {test_metrics['temporal']['me_end']:<20.2f} {post_test_metrics['temporal']['me_end']:<20.2f}")
+    print(f"{'  MSE Start (frames²)':<35} {test_metrics['temporal']['mse_start']:<20.2f} {post_test_metrics['temporal']['mse_start']:<20.2f}")
+    print(f"{'  MSE End   (frames²)':<35} {test_metrics['temporal']['mse_end']:<20.2f} {post_test_metrics['temporal']['mse_end']:<20.2f}")
     print("-"*80)
     
     # Directional Detection
@@ -707,3 +709,33 @@ def print_evaluation_results(test_metrics, post_test_metrics):
     print(f"{'  Accuracy':<35} {test_metrics['directional']['accuracy']:<20.3f} {post_test_metrics['directional']['accuracy']:<20.3f}")
     print(f"{'  Mean Angular Error (°)':<35} {test_metrics['directional']['mean_error']:<20.1f} {post_test_metrics['directional']['mean_error']:<20.1f}")
     print("="*80 + "\n")
+
+def get_wandb_log_dict(epoch, test_metrics, post_test_metrics):
+    """Build wandb log dict from eval metrics."""
+    def _metrics_dict(m, prefix):
+        return {
+            f'{prefix}/std_f1':              m['comprehensive']['f1'],
+            f'{prefix}/std_precision':       m['comprehensive']['precision'],
+            f'{prefix}/std_recall':          m['comprehensive']['recall'],
+            f'{prefix}/spatial_f1':          m['spatial']['f1'],
+            f'{prefix}/spatial_precision':   m['spatial']['precision'],
+            f'{prefix}/spatial_recall':      m['spatial']['recall'],
+            f'{prefix}/spatial_mean_err_px': m['spatial']['mean_error'],
+            f'{prefix}/dir_accuracy':        m['directional']['accuracy'],
+            f'{prefix}/dir_mean_err_deg':    m['directional']['mean_error'],
+            f'{prefix}/dir_cosine_sim':      m['directional']['mean_cosine_similarity'],
+            f'{prefix}/temp_mean_iou':       m['temporal']['mean_iou'],
+            f'{prefix}/temp_duration_acc':   m['temporal']['duration_accuracy'],
+            f'{prefix}/temp_me_start':       m['temporal']['me_start'],
+            f'{prefix}/temp_me_end':         m['temporal']['me_end'],
+            f'{prefix}/temp_mse_start':      m['temporal']['mse_start'],
+            f'{prefix}/temp_mse_end':        m['temporal']['mse_end'],
+            f'{prefix}/n_predictions':       m['counts']['predictions'],
+        }
+
+    return {
+        'epoch':      epoch,
+        'eval/n_ground_truths': test_metrics['counts']['ground_truths'],
+        **_metrics_dict(test_metrics,      'eval/pre'),
+        **_metrics_dict(post_test_metrics, 'eval/post'),
+    }

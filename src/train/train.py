@@ -1,6 +1,5 @@
 from tqdm import tqdm
 import torch
-import wandb
 import datetime
 import os
 import torch.nn as nn
@@ -63,16 +62,12 @@ def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoc
     avg_direction_loss = total_direction_loss / num_batches
     avg_temporal_loss = total_temporal_loss / num_batches
     
-    # Log to wandb (once per epoch, after all batches)
-    wandb.log({
-        'epoch': epoch,
-        'train/total_loss': avg_val_loss,
-        'train/object_loss': avg_obj_loss,
-        'train/no_object_loss': avg_no_obj_loss,
-        'train/position_loss': avg_position_loss,
-        'train/direction_loss': avg_direction_loss,
-        'train/temporal_loss': avg_temporal_loss,
-        'learning_rate': optimizer.param_groups[0]['lr']
-    })
-    
-    return avg_val_loss
+    return avg_val_loss, {
+    'train/total_loss':     avg_val_loss,
+    'train/object_loss':    avg_obj_loss,
+    'train/no_object_loss': avg_no_obj_loss,
+    'train/position_loss':  avg_position_loss,
+    'train/direction_loss': avg_direction_loss,
+    'train/temporal_loss':  avg_temporal_loss,
+    'learning_rate':        optimizer.param_groups[0]['lr']
+    }

@@ -15,7 +15,6 @@ from src.utils.video_utils import process_video_with_detections, visualize_preds
 from src.utils.data_utils import detections_to_df
 from src.utils.metrics import match_detections_to_gt, get_metrics
 from tqdm import tqdm
-import wandb
 
 def eval_single_video(model, device, video_path, video_name, epoch, gt_folder,
                          output_folder="eval_results", confidence=0.5,
@@ -258,15 +257,11 @@ def eval(model, device, yolocriterion, val_loader, epoch):
     avg_direction_loss = total_direction_loss / num_batches
     avg_temporal_loss = total_temporal_loss / num_batches
     
-    # Log to wandb (once per epoch, after all batches)
-    wandb.log({
-        'epoch': epoch,
-        'val/total_loss': avg_val_loss,
-        'val/object_loss': avg_obj_loss,
-        'val/no_object_loss': avg_no_obj_loss,
-        'val/position_loss': avg_position_loss,
-        'val/direction_loss': avg_direction_loss,
-        'val/temporal_loss': avg_temporal_loss
-    })
-    
-    return avg_val_loss
+    return avg_val_loss, {
+    'val/total_loss':     avg_val_loss,
+    'val/object_loss':    avg_obj_loss,
+    'val/no_object_loss': avg_no_obj_loss,
+    'val/position_loss':  avg_position_loss,
+    'val/direction_loss': avg_direction_loss,
+    'val/temporal_loss':  avg_temporal_loss,
+    }
