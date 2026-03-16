@@ -98,18 +98,19 @@ def main():
     )
 
     mean_accum = torch.zeros(3)
-    std_accum  = torch.zeros(3)
-    n_batches  = len(loader)
+    sq_accum   = torch.zeros(3)
+    n_pixels   = 0
 
-    for batch in tqdm(loader, total=n_batches, desc="Computing stats"):
+    for batch in tqdm(loader, total=len(loader), desc="Computing stats"):
         video = batch['video'].float()  # (B, C, T, H, W)
         B, C, T, H, W = video.shape
         pixels = video.permute(1, 0, 2, 3, 4).reshape(C, -1)  # (C, N)
-        mean_accum += pixels.mean(dim=1)
-        std_accum  += pixels.std(dim=1)
+        mean_accum += pixels.sum(dim=1)
+        sq_accum   += (pixels ** 2).sum(dim=1)
+        n_pixels   += pixels.shape[1]
 
-    mean = mean_accum / n_batches
-    std  = std_accum  / n_batches
+    mean = mean_accum / n_pixels
+    std  = (sq_accum / n_pixels - mean ** 2).sqrt()
 
     print("\n" + "="*60)
     print("Summary stats — paste these into your config:")
@@ -120,7 +121,7 @@ def main():
     # Sanity check: after greyscale all 3 channels should be identical
     channel_diff_mean = mean.max() - mean.min()
     channel_diff_std  = std.max()  - std.min()
-    print(f"\nSanity check — channel spread (should be ~0.0 after greyscale):")
+    print(f"\nSanity check — channel spread (should be approx 0.0 after greyscale):")
     print(f"  mean channel spread: {channel_diff_mean:.4f}")
     print(f"  std  channel spread: {channel_diff_std:.4f}")
 
