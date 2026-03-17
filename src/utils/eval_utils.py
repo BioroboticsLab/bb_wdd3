@@ -620,9 +620,9 @@ def print_evaluation_results(test_metrics, post_test_metrics):
     
     # Spatial Detection
     print(f"{'Spatial Detection':<35}")
-    print(f"{'  Precision':<35} {test_metrics['spatial']['precision']:<20.3f} {post_test_metrics['spatial']['precision']:<20.3f}")
-    print(f"{'  Recall':<35} {test_metrics['spatial']['recall']:<20.3f} {post_test_metrics['spatial']['recall']:<20.3f}")
-    print(f"{'  F1 Score':<35} {test_metrics['spatial']['f1']:<20.3f} {post_test_metrics['spatial']['f1']:<20.3f}")
+    #print(f"{'  Precision':<35} {test_metrics['spatial']['precision']:<20.3f} {post_test_metrics['spatial']['precision']:<20.3f}")
+    #print(f"{'  Recall':<35} {test_metrics['spatial']['recall']:<20.3f} {post_test_metrics['spatial']['recall']:<20.3f}")
+    #print(f"{'  F1 Score':<35} {test_metrics['spatial']['f1']:<20.3f} {post_test_metrics['spatial']['f1']:<20.3f}")
     print(f"{'  Mean Error (px)':<35} {test_metrics['spatial']['mean_error']:<20.1f} {post_test_metrics['spatial']['mean_error']:<20.1f}")
     print("-"*80)
     
@@ -649,9 +649,9 @@ def get_wandb_log_dict(epoch, test_metrics, post_test_metrics):
             f'{prefix}/std_f1':              m['comprehensive']['f1'],
             f'{prefix}/std_precision':       m['comprehensive']['precision'],
             f'{prefix}/std_recall':          m['comprehensive']['recall'],
-            f'{prefix}/spatial_f1':          m['spatial']['f1'],
-            f'{prefix}/spatial_precision':   m['spatial']['precision'],
-            f'{prefix}/spatial_recall':      m['spatial']['recall'],
+            #f'{prefix}/spatial_f1':          m['spatial']['f1'],
+            #f'{prefix}/spatial_precision':   m['spatial']['precision'],
+            #f'{prefix}/spatial_recall':      m['spatial']['recall'],
             f'{prefix}/spatial_mean_err_px': m['spatial']['mean_error'],
             f'{prefix}/dir_accuracy':        m['directional']['accuracy'],
             f'{prefix}/dir_mean_err_deg':    m['directional']['mean_error'],
