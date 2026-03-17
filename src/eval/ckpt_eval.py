@@ -151,14 +151,14 @@ def main(args):
 
         # Draw gt and predictions onto frames and saves as video
         # Note: This shows each 16-frame window independently, so frames repeat at window intersections
-        draw_waggle_batch(
-            all_frames=test_frames,
-            all_detections=test_preds, 
-            all_ground_truths=test_gts,
-            all_start_frame_idxs=test_all_starts,
-            output_dir='./outputs/vids/pre',
-            draw_gt=False, draw_pred=True,
-            save_clean_frames=True, save_annotated_frames=True)
+        #draw_waggle_batch(
+        #   all_frames=test_frames,
+        #    all_detections=test_preds, 
+        #    all_ground_truths=test_gts,
+        #    all_start_frame_idxs=test_all_starts,
+        #   output_dir='./outputs/vids/pre',
+        #    draw_gt=False, draw_pred=True,
+        #    save_clean_frames=True, save_annotated_frames=True)
 
         # This creates a continuous timeline without repeating frames
         # We use [:16] because test_frames only contains the first 16 sequences (batch #0),
@@ -189,14 +189,14 @@ def main(args):
         #save_preds_to_csv(post_test_preds, f'postprocessed_predictions_epoch_{epoch}.csv', 'postprocessed', './outputs/preds_csv')
 
         # visualise and store postprocessed results
-        draw_waggle_batch(
-            all_frames=test_frames,
-            all_detections=post_test_preds, 
-            all_ground_truths=test_gts,
-            all_start_frame_idxs=test_all_starts,
-            output_dir='./outputs/vids/post',
-            draw_gt=False, draw_pred=True,
-            save_clean_frames=True, save_annotated_frames=True)
+        #draw_waggle_batch(
+        #    all_frames=test_frames,
+        #    all_detections=post_test_preds, 
+        #    all_ground_truths=test_gts,
+        #    all_start_frame_idxs=test_all_starts,
+        #    output_dir='./outputs/vids/post',
+        #    draw_gt=False, draw_pred=True,
+        #    save_clean_frames=True, save_annotated_frames=True)
 
         # Print unique clusters identifies
         #unique_clusters_all = len({det['cluster_id'] for seq in post_test_preds for det in seq})
