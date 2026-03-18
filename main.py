@@ -75,7 +75,8 @@ def main(args):
     # Balance/subsample data
     if config['data']['data_fraction_divisor'] > 1:
         train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
-
+        test_df  = balance_sample(test_df,  config['data']['data_fraction_divisor'])
+    
     total_videos = len(video_df)
     print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")
     print(f"Train videos: {len(train_videos)} | Test videos: {total_videos - len(train_videos)}")
@@ -207,7 +208,7 @@ def main(args):
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=config['train']['batch_size'],
+        batch_size=config['val']['batch_size'],
         collate_fn=collator, 
         shuffle=False, 
         num_workers=config['train']['num_workers'],

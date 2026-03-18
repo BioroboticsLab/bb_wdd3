@@ -2,6 +2,7 @@ import torch
 from tqdm import tqdm
 import numpy as np
 from typing import Dict, List, Tuple, Any
+from scipy.optimize import linear_sum_assignment
 
 def get_preds_gt(model, dataloader, device, return_frames=False, batch_idx_for_frames=0):
     """
@@ -671,3 +672,46 @@ def get_wandb_log_dict(epoch, test_metrics, post_test_metrics):
         **_metrics_dict(test_metrics,      'eval/pre'),
         **_metrics_dict(post_test_metrics, 'eval/post'),
     }
+
+def hungarian_match(batch_preds, batch_gts, pos_threshold, iou_threshold, angular_threshold):
+    """
+    Hungarian algorithmn to match pred to GT.
+    Finds the globally optimal 1-to-1 assignment that maximises true positives
+    and minimises combined cost.
+ 
+    Returns:
+        pairs   : list of (gt, pred) tuples for true positives
+        fp      : number of false positives
+        fn      : number of false negatives
+    """
+    if not batch_preds or not batch_gts:
+        return [], len(batch_preds), len(batch_gts)
+    
+    cost_matrix = np.full((len(batch_preds), len(batch_gts)), 1e6)
+    
+    for i, pred in enumerate(batch_preds):
+        for j, gt in enumerate(batch_gts):
+            pos_dist = np.linalg.norm(np.array(gt['position']) - np.array(pred['position']))
+            gt_s, gt_e = gt['temporal_offsets']
+            pr_s, pr_e = pred['temporal_offsets']
+            inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
+            union = max(gt_e, pr_e) - min(gt_s, pr_s)
+            tiou = inter / union if union > 0 else 0
+            gt_d = np.array(gt['direction']); gt_d /= np.linalg.norm(gt_d) + 1e-8
+            pr_d = np.array(pred['direction']); pr_d /= np.linalg.norm(pr_d) + 1e-8
+            ang_err = np.degrees(np.arccos(np.clip(np.dot(gt_d, pr_d), -1, 1)))
+            
+            if pos_dist <= pos_threshold and tiou >= iou_threshold and ang_err <= angular_threshold:
+                cost_matrix[i, j] = pos_dist / pos_threshold + (1 - tiou) + ang_err / angular_threshold
+    
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    
+    pairs = []
+    for r, c in zip(row_ind, col_ind):
+        if cost_matrix[r, c] < 1e6:
+            pairs.append((batch_gts[c], batch_preds[r]))
+    
+    tp = len(pairs)
+    fp = len(batch_preds) - tp
+    fn = len(batch_gts) - tp
+    return pairs, fp, fn
