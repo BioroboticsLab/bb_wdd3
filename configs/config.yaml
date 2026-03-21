@@ -80,7 +80,7 @@ val:
 post_process:
   spatial_threshold: 30
   temporal_threshold: 8
-  confidence_threshold: 0.99
+  confidence_threshold: 0.0 # disable confidence filtering bcs only max=5 prediction pass
   strategy: 'cluster_consolidate' # support various stategies see 
   mode: 'median'
   outlier_detection: False
@@ -94,8 +94,8 @@ loss:
   lambda_temporal: 7.5 
   use_varifocal: False  # use varifocal loss to link confidence with localization quality
   varifocal_gamma: 2.0  # focusing parameter for hard examples (higher = more focus)
-  varifocal_quality_scale: .25  # quality decay scale (higher = more lenient penality for predictions furhter from center)
-  
+  quality_decay: 'exponential'  # 'exponential', 'gaussian', or 'linear'
+
 # System configuration
 system:
   seed: 42
@@ -110,11 +110,11 @@ logging:
 # Evaluation configuration
 eval:
   batch_size: 64
-  confidence_threshold: 0.99
+  confidence_threshold: 0.001
   consolidation_strategy: 'cluster_consolidate'
   pos_thresholds: [20]
   iou_thresholds: [0.5]
   angular_thresholds: [15]
   metric: loss # support for loss and spatio-tempral-direction mAP or in short std_map
   match_pairs: greedy # match pred to gt using either geedy or hungarian
-  
+  max_dets: 5 # maximal number of prediciton per frame/window  

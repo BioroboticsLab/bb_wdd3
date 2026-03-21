@@ -122,7 +122,7 @@ def main(args):
                                        lambda_temporal=config["loss"]["lambda_temporal"],
                                        use_varifocal=config["loss"]["use_varifocal"],
                                        gamma=config["loss"]["varifocal_gamma"],
-                                       quality_scale=config["loss"]["varifocal_quality_scale"])
+                                       quality_decay=config["loss"]["quality_decay"])
     
     wandb.init(mode='disabled')
 
@@ -136,18 +136,32 @@ def main(args):
         # batch_idx_for_frames is set to 0 indicating that it will index into the first batch of the entire data loader and store the frames in there
         # if batch_size is set to 16, that means we have 16*window_size frames in our case 16 * 16, each individual batch represents a single waggle dance event of 16 frames
         # with 16 batches that is 16 * 16
-        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , test_frames, _ = get_preds_gt(model, test_loader, device, return_frames=True, batch_idx_for_frames=0)
+        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , test_frames, _ = get_preds_gt(model, 
+                                                                                                       test_loader, 
+                                                                                                       device, 
+                                                                                                       return_frames=True, 
+                                                                                                       batch_idx_for_frames=0)
         # denorms imgs
-        test_frames = reverse_transform_batch(test_frames, original_size=(224,224))
+        test_frames = reverse_transform_batch(test_frames, 
+                                              original_size=(224,224))
 
         # visualize fetched test frames as a video if you want
         #frames_to_video(test_frames, output_name= 'data_loader_batches_0')
         
         # Transform yolo coordinates onto image domain for both gt and predicted values
-        test_gts = yolo_to_img_space_gt(test_gt_raw, all_starts=test_all_starts, all_ends=test_all_ends, window_size = 16, original_size=(224,224))
+        test_gts = yolo_to_img_space_gt(test_gt_raw, 
+                                        all_starts=test_all_starts, 
+                                        all_ends=test_all_ends,
+                                        window_size = config['data']['window_size'],
+                                        original_size=(config['data']['width'],
+                                                       config['data']['height']))
+        
         test_preds  = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends, 
                                         confidence_threshold=config['eval']['confidence_threshold'], 
-                                        window_size = 16, original_size=(224,224))
+                                        window_size = config['data']['window_size'],
+                                        original_size=(config['data']['width'],
+                                                       config['data']['height']),
+                                                       max_dets=config['eval']['max_dets'])
 
         # Draw gt and predictions onto frames and saves as video
         # Note: This shows each 16-frame window independently, so frames repeat at window intersections

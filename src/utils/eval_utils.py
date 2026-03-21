@@ -105,11 +105,12 @@ def compute_temporal_window(
 
 def yolo_to_img_space(
     model_output: torch.Tensor,
-    all_starts: List[int],  # window start frame
-    all_ends: List[int],    # window end frames
+    all_starts: List[int],
+    all_ends: List[int],
     window_size: int = 16,
-    confidence_threshold: float = 0.8,
-    original_size: tuple = (960, 540)
+    confidence_threshold: float = 0.001,
+    original_size: tuple = (960, 540),
+    max_dets: int = 10
 ) -> List[List[Dict]]:
     all_detections = []
     batch_size, grid_size, _, _, _ = model_output.shape
@@ -148,9 +149,17 @@ def yolo_to_img_space(
                             "temporal_offsets": [start_frame, end_frame]
                         })
         
+        # sort by confidence descending and keep top N per clip
+        # we keep only top N bcs models can overinflate FP FN rates
+        # standard practice, COCO eval for exmaple uses 100 
+        # we deal with binary action probably max 2 or 3 dances can occur
+        # at the same time. So we use 10
+        sample_detections.sort(key=lambda x: x['confidence'], reverse=True)
+        sample_detections = sample_detections[:max_dets]
+
         all_detections.append(sample_detections)
     
-    return all_detections 
+    return all_detections
 
 def yolo_to_img_space_gt(
     model_output: torch.Tensor,
@@ -373,12 +382,46 @@ def calculate_temporal_metrics(matched_pairs, iou_threshold_range=(0.25, 0.75)):
         'duration_accuracy': float(np.mean(duration_accuracies)),  # 1.0 perfect, 0.0 worst
     }
 
-def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 30], 
-                              iou_threshold_range=(0.25, 0.75), angular_thresholds=[10, 15, 20]):
+def _compute_pair_validity(pred, gt, pos_threshold, iou_threshold, angular_threshold):
     """
-    Comprehensive detection metrics across ALL THREE dimensions.
+    Check whether a (pred, gt) pair meets all three STD thresholds.
+    Returns (valid, cost) where cost is lower for better matches.
     """
-    # handle flexible input formats
+    pos_dist = np.linalg.norm(np.array(gt['position']) - np.array(pred['position']))
+
+    gt_s, gt_e = gt['temporal_offsets']
+    pr_s, pr_e = pred['temporal_offsets']
+    inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
+    union = max(gt_e, pr_e) - min(gt_s, pr_s)
+    tiou = inter / union if union > 0 else 0
+
+    gt_d = np.array(gt['direction'])
+    pr_d = np.array(pred['direction'])
+    gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
+    pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
+    ang_err = np.degrees(np.arccos(np.clip(np.dot(gt_d, pr_d), -1.0, 1.0)))
+
+    valid = (pos_dist <= pos_threshold and
+             tiou >= iou_threshold and
+             ang_err <= angular_threshold)
+
+    cost = pos_dist / pos_threshold + (1.0 - tiou) + ang_err / angular_threshold
+
+    return valid, cost
+
+
+def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 30],
+                                iou_threshold_range=(0.25, 0.75), angular_thresholds=[10, 15, 20]):
+    """
+    Compute STD-mAP via confidence sweep (analogous to COCO mAP).
+    For each threshold combo (pos, iou, angular):
+        - Sort all predictions by confidence descending across all samples
+        - Sweep confidence top→bottom, greedily match each pred against unmatched GTs
+        - Build PR curve -> AP = area under curve via trapz
+        - Extract F1-optimal operating point -> P, R, F1, confidence threshold
+    STD-mAP = mean AP across all threshold combos.
+    """
+    # normalise threshold inputs
     if isinstance(pos_thresholds, (int, float)):
         pos_thresholds = [pos_thresholds]
     if isinstance(iou_threshold_range, (int, float)):
@@ -387,87 +430,102 @@ def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 3
         iou_threshold_range = (iou_threshold_range[0], iou_threshold_range[0])
     if isinstance(angular_thresholds, (int, float)):
         angular_thresholds = [angular_thresholds]
-    
-    # handle IoU thresholds
-    iou_thresholds = np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.05, 0.05)
-    iou_thresholds = [round(t, 2) for t in iou_thresholds]
-    
-    comprehensive_precisions = []
-    comprehensive_recalls = []
-    comprehensive_f1_scores = []
-    all_matched_pairs_per_combo = [] # matched pair one per threshold combo or values 
-    
+
+    iou_thresholds = [round(t, 2) for t in
+                      np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.05, 0.05)]
+
+    total_gts = sum(len(g) for g in gts)
+
+    # Flatten all predictions across samples once and reused for every threshold combo
+    # Each entry: (confidence, sample_idx, pred_dict)
+    all_preds_flat = []
+    for sample_idx, sample_preds in enumerate(preds):
+        for pred in sample_preds:
+            all_preds_flat.append((pred['confidence'], sample_idx, pred))
+
+    # Sort by confidence descending, which is also the sweep order, done once outside the combo loop
+    all_preds_flat.sort(key=lambda x: x[0], reverse=True)
+
+    ap_scores        = []
+    precision_scores = []
+    recall_scores    = []
+    f1_scores        = []
+    conf_scores      = []
+    all_matched_pairs_per_combo = []
+
     for pos_threshold in pos_thresholds:
         for iou_threshold in iou_thresholds:
             for angular_threshold in angular_thresholds:
-                true_positives = 0
-                false_positives = 0
-                false_negatives = 0
-                pairs_this_combo = []
-                
-                for batch_preds, batch_gts in zip(preds, gts):
-                    matched_gts = set()
-                    
-                    for pred in batch_preds:
-                        best_score = -1
-                        best_gt_idx = None
-                        best_gt = None
-                        
-                        for gt_idx, gt in enumerate(batch_gts):
-                            if gt_idx in matched_gts:
-                                continue
-                            
-                            # position distance
-                            pos_dist = np.linalg.norm(np.array(gt['position']) - np.array(pred['position']))
-                            
-                            # temporal IoU
-                            gt_start, gt_end = gt['temporal_offsets']
-                            pred_start, pred_end = pred['temporal_offsets']
-                            intersection = max(0, min(gt_end, pred_end) - max(gt_start, pred_start))
-                            union = max(gt_end, pred_end) - min(gt_start, pred_start)
-                            temp_iou = intersection / union if union > 0 else 0
-                            
-                            # angular error
-                            gt_dir = np.array(gt['direction'])
-                            pred_dir = np.array(pred['direction'])
-                            gt_dir_norm = gt_dir / (np.linalg.norm(gt_dir) + 1e-8)
-                            pred_dir_norm = pred_dir / (np.linalg.norm(pred_dir) + 1e-8)
-                            cos_sim = np.dot(gt_dir_norm, pred_dir_norm)
-                            angular_error = np.degrees(np.arccos(np.clip(cos_sim, -1.0, 1.0)))
-                            
-                            # check if all 3 conditions apply
-                            if (pos_dist <= pos_threshold and
-                                temp_iou >= iou_threshold and
-                                angular_error <= angular_threshold):
-                            
-                                combined_score = temp_iou * (1 - pos_dist / pos_threshold) * (1 - angular_error / angular_threshold)
-                                if combined_score > best_score:
-                                    best_score = combined_score
-                                    best_gt_idx = gt_idx
-                                    best_gt = gt
 
-                        if best_gt_idx is not None:
-                            true_positives += 1
-                            matched_gts.add(best_gt_idx)
-                            pairs_this_combo.append((best_gt, pred))
-                        else:
-                            false_positives += 1
-                    
-                    false_negatives += len(batch_gts) - len(matched_gts)
-                
-                all_matched_pairs_per_combo.append(pairs_this_combo)
-                precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
-                recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
-                f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-                
-                comprehensive_precisions.append(precision)
-                comprehensive_recalls.append(recall)
-                comprehensive_f1_scores.append(f1)
-    
+                # per sample set of already-matched GT indices, reset per combo
+                matched_gts = {i: set() for i in range(len(gts))}
+                tp_flags    = []      # 1=TP, 0=FP at each confidence step
+                matched_pairs = []    # (gt, pred) for TP detections
+
+                for _, sample_idx, pred in all_preds_flat:
+                    batch_gts = gts[sample_idx]
+                    best_cost = float('inf')
+                    best_gt_idx = None
+                    best_gt = None
+
+                    for gt_idx, gt in enumerate(batch_gts):
+                        if gt_idx in matched_gts[sample_idx]:
+                            continue
+                        valid, cost = _compute_pair_validity(
+                            pred, gt, pos_threshold, iou_threshold, angular_threshold
+                        )
+                        if valid and cost < best_cost:
+                            best_cost = cost
+                            best_gt_idx = gt_idx
+                            best_gt = gt
+
+                    if best_gt_idx is not None:
+                        matched_gts[sample_idx].add(best_gt_idx)
+                        tp_flags.append(1)
+                        matched_pairs.append((best_gt, pred))
+                    else:
+                        tp_flags.append(0)
+
+                # early exit if no predictions or no gts
+                if len(tp_flags) == 0 or total_gts == 0:
+                    ap_scores.append(0.0)
+                    precision_scores.append(0.0)
+                    recall_scores.append(0.0)
+                    f1_scores.append(0.0)
+                    conf_scores.append(0.0)
+                    all_matched_pairs_per_combo.append([])
+                    continue
+
+                tp_cumsum  = np.cumsum(tp_flags)
+                n_preds    = np.arange(1, len(tp_flags) + 1)
+                precisions = tp_cumsum / n_preds
+                recalls    = tp_cumsum / total_gts
+
+                precisions = np.maximum.accumulate(precisions[::-1])[::-1]
+
+                # F1-optimal operating point so P, R, F1 and confidence at best F1
+                f1s      = 2 * precisions * recalls / (precisions + recalls + 1e-8)
+                best_idx = np.argmax(f1s)
+                precision_scores.append(float(precisions[best_idx]))
+                recall_scores.append(float(recalls[best_idx]))
+                f1_scores.append(float(f1s[best_idx]))
+                conf_scores.append(float(all_preds_flat[best_idx][0]))
+
+                # prepend (recall=0, precision=1) so curve starts at origin convention
+                precisions = np.concatenate([[1.0], precisions])
+                recalls    = np.concatenate([[0.0], recalls])
+
+                ap = float(np.trapz(precisions, recalls))
+                ap_scores.append(ap)
+                all_matched_pairs_per_combo.append(matched_pairs)
+
     return {
-        'precision': np.mean(comprehensive_precisions),
-        'recall': np.mean(comprehensive_recalls),
-        'f1': np.mean(comprehensive_f1_scores),
+        'map':                     float(np.mean(ap_scores)),
+        'mean_precision':          float(np.mean(precision_scores)),  # at F1-optimal point
+        'mean_recall':             float(np.mean(recall_scores)),     # at F1-optimal point
+        'mean_f1':                 float(np.mean(f1_scores)),         # best F1 per combo, averaged
+        'mean_best_conf':          float(np.mean(conf_scores)),       # suggested confidence threshold
+        'ap_per_combo':            ap_scores,
         'matched_pairs_per_combo': all_matched_pairs_per_combo
     }
 
@@ -614,11 +672,14 @@ def print_evaluation_results(test_metrics, post_test_metrics):
     
     # Comprehensive Detection
     print(f"{'Spatio-Temporal-Directional Detection':<35}")
-    print(f"{'  Precision':<35} {test_metrics['comprehensive']['precision']:<20.3f} {post_test_metrics['comprehensive']['precision']:<20.3f}")
-    print(f"{'  Recall':<35} {test_metrics['comprehensive']['recall']:<20.3f} {post_test_metrics['comprehensive']['recall']:<20.3f}")
-    print(f"{'  F1 Score':<35} {test_metrics['comprehensive']['f1']:<20.3f} {post_test_metrics['comprehensive']['f1']:<20.3f}")
+    print(f"{'  STD-mAP':<35} {test_metrics['comprehensive']['map']:<20.3f} {post_test_metrics['comprehensive']['map']:<20.3f}")
+    print(f"{'  Mean Precision (F1-opt)':<35} {test_metrics['comprehensive']['mean_precision']:<20.3f} {post_test_metrics['comprehensive']['mean_precision']:<20.3f}")
+    print(f"{'  Mean Recall (F1-opt)':<35} {test_metrics['comprehensive']['mean_recall']:<20.3f} {post_test_metrics['comprehensive']['mean_recall']:<20.3f}")
+    print(f"{'  Mean F1 (F1-opt)':<35} {test_metrics['comprehensive']['mean_f1']:<20.3f} {post_test_metrics['comprehensive']['mean_f1']:<20.3f}")
+    print(f"{'  Mean Best Conf':<35} {test_metrics['comprehensive']['mean_best_conf']:<20.3f} {post_test_metrics['comprehensive']['mean_best_conf']:<20.3f}")
     print("-"*80)
-    
+
+
     # Spatial Detection
     print(f"{'Spatial Detection':<35}")
     #print(f"{'  Precision':<35} {test_metrics['spatial']['precision']:<20.3f} {post_test_metrics['spatial']['precision']:<20.3f}")
@@ -647,12 +708,11 @@ def get_wandb_log_dict(epoch, test_metrics, post_test_metrics):
     """Build wandb log dict from eval metrics."""
     def _metrics_dict(m, prefix):
         return {
-            f'{prefix}/std_f1':              m['comprehensive']['f1'],
-            f'{prefix}/std_precision':       m['comprehensive']['precision'],
-            f'{prefix}/std_recall':          m['comprehensive']['recall'],
-            #f'{prefix}/spatial_f1':          m['spatial']['f1'],
-            #f'{prefix}/spatial_precision':   m['spatial']['precision'],
-            #f'{prefix}/spatial_recall':      m['spatial']['recall'],
+            f'{prefix}/std_map':             m['comprehensive']['map'],
+            f'{prefix}/std_mean_precision':  m['comprehensive']['mean_precision'],
+            f'{prefix}/std_mean_recall':     m['comprehensive']['mean_recall'],
+            f'{prefix}/std_mean_f1':         m['comprehensive']['mean_f1'],
+            f'{prefix}/std_mean_best_conf':  m['comprehensive']['mean_best_conf'],
             f'{prefix}/spatial_mean_err_px': m['spatial']['mean_error'],
             f'{prefix}/dir_accuracy':        m['directional']['accuracy'],
             f'{prefix}/dir_mean_err_deg':    m['directional']['mean_error'],

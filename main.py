@@ -261,7 +261,7 @@ def main(args):
                                        lambda_temporal=config["loss"]["lambda_temporal"],
                                        use_varifocal=config['loss'].get('use_varifocal', False),
                                        gamma=config["loss"]["varifocal_gamma"],
-                                       quality_scale=config["loss"]["varifocal_quality_scale"])
+                                       quality_decay=config["loss"]["quality_decay"])
     
     scaler = torch.amp.GradScaler()
 
@@ -329,7 +329,8 @@ def main(args):
                                         confidence_threshold=config['eval']['confidence_threshold'], 
                                         window_size = config['data']['window_size'],
                                         original_size=(config['data']['width'],
-                                                       config['data']['height']))
+                                                       config['data']['height']),
+                                                       max_dets=config['eval']['max_dets'])
         
         # Post Process all predictions
         post_test_preds = batch_postprocess_predictions(test_preds, 
@@ -353,8 +354,7 @@ def main(args):
         
         #print_evaluation_results(test_metrics, post_test_metrics)
 
-        print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-F1 pre: {test_metrics['comprehensive']['f1']:.4f} | post: {post_test_metrics['comprehensive']['f1']:.4f}")       
-        
+        print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-mAP pre: {test_metrics['comprehensive']['map']:.4f} | post: {post_test_metrics['comprehensive']['map']:.4f}")        
 
         wandb.log({
             **train_log,
@@ -371,10 +371,10 @@ def main(args):
             score_str = f"val_loss: {current_score:.4f}"
         # else is std map    
         else:  
-            # use post-processed comprehensive F1 as the primary score (higher is better)
-            current_score = post_test_metrics['comprehensive']['f1']
+            # use post-processed comprehensive mAP as the primary score. Thehigher is better
+            current_score = post_test_metrics['comprehensive']['map']
             is_best = current_score > best_score
-            score_str = f"STD-F1 (post-proc): {current_score:.4f}"
+            score_str = f"STD-mAP (post-proc): {current_score:.4f}"
 
         if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
             if is_best:
@@ -389,7 +389,7 @@ def main(args):
                         'ema_state_dict': ema.state_dict(),
                         'best_score': best_score,
                         'val_loss': val_loss,
-                        'std_f1': post_test_metrics['comprehensive']['f1'], 
+                        'std_map': post_test_metrics['comprehensive']['map'],
                     }, os.path.join(ckpt_dir, 'best.pth'))
                     print(f"New best model saved → {score_str}")
                 else:
