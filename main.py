@@ -75,7 +75,7 @@ def main(args):
     # Balance/subsample data
     if config['data']['data_fraction_divisor'] > 1:
         train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
-        test_df  = balance_sample(test_df,  config['data']['data_fraction_divisor'])
+        #test_df  = balance_sample(test_df,  config['data']['data_fraction_divisor'])
     
     total_videos = len(video_df)
     print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")
@@ -395,9 +395,9 @@ def main(args):
                         'val_loss': val_loss,
                         'std_map': post_test_metrics['comprehensive']['map'],
                     }, os.path.join(ckpt_dir, 'best.pth'))
-                    print(f"New best model saved → {score_str}")
+                    print(f"New best model saved -> {score_str}")
                 else:
-                    print(f"New best → {score_str} (model saving disabled)")
+                    print(f"New best -> {score_str} (model saving disabled)")
 
             if config['train'].get('save_model', True):
                 torch.save({
@@ -409,7 +409,7 @@ def main(args):
                     'ema_state_dict': ema.state_dict(),
                     'best_score': best_score,
                     'val_loss': val_loss,
-                    'std_f1': post_test_metrics['comprehensive']['f1'], 
+                    'std_map': post_test_metrics['comprehensive']['map'],
                 }, os.path.join(ckpt_dir, 'latest.pth'))
                 print(f"Saved latest checkpoint at epoch {epoch}/{config['train']['epochs']}")
             else:
