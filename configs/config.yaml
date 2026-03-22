@@ -7,9 +7,7 @@ data:
   width: 224
   height: 224
   window_size: 16 # defines max clip length
-  data_fraction_divisor: 4   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
-
-
+  data_fraction_divisor: 8   # 1=full, 2=half, 4=quarter, 16=1/16th, etc.
 
 # Training augmentations configuration
 augmentations:
@@ -92,9 +90,11 @@ loss:
   lambda_noobj: 0.7
   lambda_direction: 7.5
   lambda_temporal: 7.5 
-  use_varifocal: False  # use varifocal loss to link confidence with localization quality
+  use_varifocal: True  # use varifocal loss to link confidence with localization quality
   varifocal_gamma: 2.0  # focusing parameter for hard examples (higher = more focus)
   quality_decay: 'exponential'  # 'exponential', 'gaussian', or 'linear'
+  grid_size: 28
+  input_size: 224
 
 # System configuration
 system:
@@ -117,4 +117,4 @@ eval:
   angular_thresholds: [15]
   metric: loss # support for loss and spatio-tempral-direction mAP or in short std_map
   match_pairs: hungarian # match pred to gt using either geedy or hungarian algo
-  max_dets: 5 # maximal number of prediciton per frame/window
+  max_dets: 20 # maximal number of prediciton per frame/window

@@ -122,7 +122,11 @@ def main(args):
                                        lambda_temporal=config["loss"]["lambda_temporal"],
                                        use_varifocal=config["loss"]["use_varifocal"],
                                        gamma=config["loss"]["varifocal_gamma"],
-                                       quality_decay=config["loss"]["quality_decay"])
+                                       quality_decay=config["loss"]["quality_decay"],
+                                       grid_size=config["loss"]["grid_size"],
+                                       input_size=config["loss"]["input_size"])
+    
+    scaler = torch.amp.GradScaler()
     
     wandb.init(mode='disabled')
 
