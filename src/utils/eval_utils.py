@@ -411,15 +411,23 @@ def _compute_pair_validity(pred, gt, pos_threshold, iou_threshold, angular_thres
 
 
 def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 30],
-                                iou_threshold_range=(0.25, 0.75), angular_thresholds=[10, 15, 20]):
+                                iou_threshold_range=(0.25, 0.75), angular_thresholds=[10, 15, 20],
+                                match_pairs='hungarian'):
     """
     Compute STD-mAP via confidence sweep (analogous to COCO mAP).
     For each threshold combo (pos, iou, angular):
         - Sort all predictions by confidence descending across all samples
         - Sweep confidence top→bottom, greedily match each pred against unmatched GTs
         - Build PR curve -> AP = area under curve via trapz
-        - Extract F1-optimal operating point -> P, R, F1, confidence threshold
-    STD-mAP = mean AP across all threshold combos.
+        - Extract F1-optimal confidence threshold from sweep
+        - Compute P/R/F1 at that threshold using either greedy (from sweep) or
+          Hungarian (optimal global assignment) matching
+
+    Args:
+        match_pairs: 'greedy' reads P/R/F1 from the sweep directly.
+                  'hungarian' re-runs matching at the F1-optimal confidence
+                  threshold using Hungarian algorithm for optimal assignment.
+                  mAP is always computed from the greedy sweep regardless.
     """
     # normalise threshold inputs
     if isinstance(pos_thresholds, (int, float)):
@@ -431,19 +439,19 @@ def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 3
     if isinstance(angular_thresholds, (int, float)):
         angular_thresholds = [angular_thresholds]
 
+    if match_pairs not in ('greedy', 'hungarian'):
+        raise ValueError(f"Unknown matching: '{match_pairs}'. Use 'greedy' or 'hungarian'.")
+
     iou_thresholds = [round(t, 2) for t in
                       np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.05, 0.05)]
 
     total_gts = sum(len(g) for g in gts)
 
-    # Flatten all predictions across samples once and reused for every threshold combo
-    # Each entry: (confidence, sample_idx, pred_dict)
+    # flatten all predictions across samples once and reused for every threshold combo
     all_preds_flat = []
     for sample_idx, sample_preds in enumerate(preds):
         for pred in sample_preds:
             all_preds_flat.append((pred['confidence'], sample_idx, pred))
-
-    # Sort by confidence descending, which is also the sweep order, done once outside the combo loop
     all_preds_flat.sort(key=lambda x: x[0], reverse=True)
 
     ap_scores        = []
@@ -457,10 +465,10 @@ def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 3
         for iou_threshold in iou_thresholds:
             for angular_threshold in angular_thresholds:
 
-                # per sample set of already-matched GT indices, reset per combo
+                # greedy confidence sweep as in standard yolo coco eval
                 matched_gts = {i: set() for i in range(len(gts))}
-                tp_flags    = []      # 1=TP, 0=FP at each confidence step
-                matched_pairs = []    # (gt, pred) for TP detections
+                tp_flags    = []
+                matched_pairs = []
 
                 for _, sample_idx, pred in all_preds_flat:
                     batch_gts = gts[sample_idx]
@@ -486,7 +494,7 @@ def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 3
                     else:
                         tp_flags.append(0)
 
-                # early exit if no predictions or no gts
+                # early exit
                 if len(tp_flags) == 0 or total_gts == 0:
                     ap_scores.append(0.0)
                     precision_scores.append(0.0)
@@ -501,31 +509,75 @@ def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 3
                 precisions = tp_cumsum / n_preds
                 recalls    = tp_cumsum / total_gts
 
+                # monotonic precision envelope
                 precisions = np.maximum.accumulate(precisions[::-1])[::-1]
 
-                # F1-optimal operating point so P, R, F1 and confidence at best F1
+                # F1-optimal confidence threshold from sweep
                 f1s      = 2 * precisions * recalls / (precisions + recalls + 1e-8)
                 best_idx = np.argmax(f1s)
-                precision_scores.append(float(precisions[best_idx]))
-                recall_scores.append(float(recalls[best_idx]))
-                f1_scores.append(float(f1s[best_idx]))
-                conf_scores.append(float(all_preds_flat[best_idx][0]))
+                best_conf = float(all_preds_flat[best_idx][0])
+                conf_scores.append(best_conf)
 
-                # prepend (recall=0, precision=1) so curve starts at origin convention
-                precisions = np.concatenate([[1.0], precisions])
-                recalls    = np.concatenate([[0.0], recalls])
+                # P/R/F1 at best_conf for greedy or hungarian
+                if match_pairs == 'greedy':
+                    # read directly off the sweep
+                    precision_scores.append(float(precisions[best_idx]))
+                    recall_scores.append(float(recalls[best_idx]))
+                    f1_scores.append(float(f1s[best_idx]))
+                    hungarian_pairs = matched_pairs  # use sweep pairs for downstream metrics
 
-                ap = float(np.trapz(precisions, recalls))
+                else:  # hungarian
+                    # filter predictions to those above best_conf threshold
+                    # then run Hungarian for optimal global assignment
+                    total_tp = 0
+                    total_fp = 0
+                    total_fn = 0
+                    hungarian_pairs = []
+
+                    # group predictions per sample above best_conf
+                    preds_at_threshold = {}
+                    for conf, sample_idx, pred in all_preds_flat:
+                        if conf < best_conf:
+                            break  # sorted descending so we can stop early
+                        if sample_idx not in preds_at_threshold:
+                            preds_at_threshold[sample_idx] = []
+                        preds_at_threshold[sample_idx].append(pred)
+
+                    for sample_idx in range(len(gts)):
+                        sample_preds_filtered = preds_at_threshold.get(sample_idx, [])
+                        pairs, fp, fn = hungarian_match(
+                            sample_preds_filtered, gts[sample_idx],
+                            pos_threshold, iou_threshold, angular_threshold
+                        )
+                        hungarian_pairs.extend(pairs)
+                        total_tp += len(pairs)
+                        total_fp += fp
+                        total_fn += fn
+
+                    h_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+                    h_recall    = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+                    h_f1        = 2 * h_precision * h_recall / (h_precision + h_recall + 1e-8) if (h_precision + h_recall) > 0 else 0.0
+                    precision_scores.append(h_precision)
+                    recall_scores.append(h_recall)
+                    f1_scores.append(h_f1)
+
+                # AP from greedy sweep always included
+                precisions_curve = np.concatenate([[1.0], precisions])
+                recalls_curve    = np.concatenate([[0.0], recalls])
+                ap = float(np.trapz(precisions_curve, recalls_curve))
                 ap_scores.append(ap)
-                all_matched_pairs_per_combo.append(matched_pairs)
+
+                # downstream spatial/temporal/directional use hungarian pairs if available
+                all_matched_pairs_per_combo.append(hungarian_pairs)
 
     return {
-        'map':                     float(np.mean(ap_scores)),
-        'mean_precision':          float(np.mean(precision_scores)),  # at F1-optimal point
-        'mean_recall':             float(np.mean(recall_scores)),     # at F1-optimal point
-        'mean_f1':                 float(np.mean(f1_scores)),         # best F1 per combo, averaged
-        'mean_best_conf':          float(np.mean(conf_scores)),       # suggested confidence threshold
-        'ap_per_combo':            ap_scores,
+        'map':             float(np.mean(ap_scores)),
+        'mean_precision':  float(np.mean(precision_scores)),
+        'mean_recall':     float(np.mean(recall_scores)),
+        'mean_f1':         float(np.mean(f1_scores)),
+        'mean_best_conf':  float(np.mean(conf_scores)),
+        'matching':        match_pairs,
+        'ap_per_combo':    ap_scores,
         'matched_pairs_per_combo': all_matched_pairs_per_combo
     }
 
@@ -534,7 +586,8 @@ def get_eval_metrics(
     gts, 
     pos_thresholds=None,
     iou_threshold_range=None,
-    angular_thresholds=None
+    angular_thresholds=None,
+    match_pairs='greedy'
 ):
     """
     Run complete evaluation with hierarchical metrics structure.
@@ -576,12 +629,14 @@ def get_eval_metrics(
     if isinstance(angular_thresholds, (int, float)):
         angular_thresholds = [angular_thresholds]
 
-    # comprehensive metrics + matched pairs per combo — single source of truth for matching
+    # comprehensive metrics + matched pairs per combo giving a single source of truth for matching pairs
+    # of preds to gt
     comprehensive_metrics = calculate_detection_metrics(
         preds, gts, 
         pos_thresholds,
         iou_threshold_range,
-        angular_thresholds
+        angular_thresholds, 
+        match_pairs='greedy'
     )
     matched_pairs_per_combo = comprehensive_metrics.pop('matched_pairs_per_combo')
 

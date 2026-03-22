@@ -116,5 +116,5 @@ eval:
   iou_thresholds: [0.5]
   angular_thresholds: [15]
   metric: loss # support for loss and spatio-tempral-direction mAP or in short std_map
-  match_pairs: greedy # match pred to gt using either geedy or hungarian
-  max_dets: 5 # maximal number of prediciton per frame/window  
+  match_pairs: hungarian # match pred to gt using either geedy or hungarian algo
+  max_dets: 5 # maximal number of prediciton per frame/window
