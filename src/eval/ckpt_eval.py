@@ -237,7 +237,9 @@ def main(args):
         test_metrics = get_eval_metrics(test_preds, test_gts, 
                                         pos_thresholds=config['eval']['pos_thresholds'],
                                         iou_threshold_range=config['eval']['iou_thresholds'],
-                                        angular_thresholds=config['eval']['angular_thresholds'])
+                                        angular_thresholds=config['eval']['angular_thresholds'],
+                                        match_pairs=config['eval']['match_pairs']))
+        
         post_test_metrics = get_eval_metrics(post_test_preds, test_gts, 
                                         pos_thresholds=config['eval']['pos_thresholds'],
                                         iou_threshold_range=config['eval']['iou_thresholds'],
