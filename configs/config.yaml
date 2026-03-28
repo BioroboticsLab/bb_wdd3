@@ -1,7 +1,7 @@
 # Data configuration
 data:
   data_dir: './data/videos/'
-  annotations: './data/annotations/fps_multires_full_data.csv'
+  annotations: './data/annotations/fps_multires_clean.csv'
   train_ratio: 0.90
   subset_size: 1.0
   width: 224
