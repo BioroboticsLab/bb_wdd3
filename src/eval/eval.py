@@ -230,6 +230,7 @@ def eval(model, device, yolocriterion, val_loader, epoch):
             
             with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 outputs = model(inputs)
+                #print("Raw model output shape:", outputs.shape)
                 total_loss_batch, obj_loss, no_obj_loss, position_loss, direction_loss, temporal_loss = yolocriterion(outputs, targets)
             
             total_loss += total_loss_batch.item()

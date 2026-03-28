@@ -29,6 +29,7 @@ from src.utils.draw_utils import  draw_waggle, draw_waggle_batch, draw_waggle_ba
 from src.utils.model_utils import load_pretrained_model, EMA
 from src.utils.video_utils import get_video_category
 import wandb
+import matplotlib.pyplot as plt
 
 SEED = 42
 random.seed(SEED)
@@ -144,7 +145,7 @@ def main(args):
                                                                                                        test_loader, 
                                                                                                        device, 
                                                                                                        return_frames=True, 
-                                                                                                       batch_idx_for_frames=0)
+                                                                                                batch_idx_for_frames=0)
         # denorms imgs
         test_frames = reverse_transform_batch(test_frames, 
                                               original_size=(224,224))
@@ -166,7 +167,117 @@ def main(args):
                                         original_size=(config['data']['width'],
                                                        config['data']['height']),
                                                        max_dets=config['eval']['max_dets'])
+        
+        # use raw tensor BEFORE max_dets and BEFORE sigmoid — this shows true distribution
+        raw_confs = torch.sigmoid(test_preds_raw[..., 0]).flatten().cpu().numpy()
 
+        # also get post-filter confidences from the dict list
+        filtered_confs = np.array([
+            pred['confidence'] 
+            for sample in test_preds 
+            for pred in sample
+        ])
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+        # full raw distribution — all 784 cells per clip
+        axes[0].hist(raw_confs, bins=50, edgecolor='black')
+        axes[0].set_title('Confidence across all cells per clip')
+        axes[0].set_xlabel('Confidence')
+        axes[0].set_ylabel('Count')
+        axes[0].axvline(raw_confs.mean(), color='red', linestyle='--', 
+                        label=f'mean={raw_confs.mean():.3f}')
+        axes[0].legend()
+
+        # zoomed into high confidence region
+        axes[1].hist(raw_confs, bins=50, range=(0.9, 1.0), edgecolor='black')
+        axes[1].set_title('Confidences at 0.9 to 1.0 region')
+        axes[1].set_xlabel('Confidence')
+        axes[1].set_ylabel('Count')
+
+        # post-filter distribution (top max_dets per clip)
+        axes[2].hist(filtered_confs, bins=50, edgecolor='black')
+        axes[2].set_title(f'After max_dets={config["eval"]["max_dets"]} filter')
+        axes[2].set_xlabel('Confidence')
+        axes[2].set_ylabel('Count')
+        axes[2].axvline(filtered_confs.mean(), color='red', linestyle='--',
+                        label=f'mean={filtered_confs.mean():.3f}')
+        axes[2].legend()
+
+        n_raw = len(raw_confs)
+        n_filtered = len(filtered_confs)
+        n_gt = sum(len(g) for g in test_gts)
+
+        plt.suptitle(
+            f'Predictions: {n_raw} | After filter: {n_filtered} | GTs: {n_gt} | '
+            f'Ratio GT vs. predictions: {100*n_gt/n_raw:.3f}% | After filter: {100*n_gt//n_filtered:.3f}%'
+        )
+
+        plt.tight_layout()
+        plt.savefig('./outputs/confidence_histogram.png', dpi=150, bbox_inches='tight')
+        plt.show()
+
+        n_empty_gts = sum(1 for g in test_gts if len(g) == 0)
+        n_nonempty_gts = sum(1 for g in test_gts if len(g) > 0)
+        print(f"Clips with GT:    {n_nonempty_gts}")
+        print(f"Clips without GT: {n_empty_gts}")
+        print(f"Total GTs:        {sum(len(g) for g in test_gts)}")
+
+        print(f"Raw cells:        {n_raw}")
+        print(f"Filtered cells:   {n_filtered}")
+        print(f"Ground truths:    {n_gt}")
+        print(f"Positive rate:    {100*n_gt/n_raw:.3f}%")
+        print(f"\nRaw confidence:")
+        print(f"  mean:    {raw_confs.mean():.4f}")
+        print(f"  std:     {raw_confs.std():.4f}")
+        print(f"  >0.99:   {(raw_confs > 0.99).mean():.4f}")
+        print(f"  >0.5:    {(raw_confs > 0.5).mean():.4f}")
+        print(f"  >0.1:    {(raw_confs > 0.1).mean():.4f}")
+        print(f"\nFiltered confidence:")
+        print(f"  mean:    {filtered_confs.mean():.4f}")
+        print(f"  std:     {filtered_confs.std():.4f}")
+        print(f"  >0.99:   {(filtered_confs > 0.99).mean():.4f}")
+
+        # check how many clips pass each threshold independently
+        n_spatial_pass = 0
+        n_temporal_pass = 0
+        n_angular_pass = 0
+        n_all_pass = 0
+        n_clips_with_preds = 0
+
+        for sample_preds, sample_gts in zip(test_preds, test_gts):
+            if not sample_preds or not sample_gts:
+                continue
+            
+            n_clips_with_preds += 1
+            pred = sample_preds[0]  # top prediction
+            gt = sample_gts[0]      # only GT
+            
+            pos_dist = np.linalg.norm(np.array(gt['position']) - np.array(pred['position']))
+            
+            gt_s, gt_e = gt['temporal_offsets']
+            pr_s, pr_e = pred['temporal_offsets']
+            inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
+            union = max(gt_e, pr_e) - min(gt_s, pr_s)
+            tiou = inter / union if union > 0 else 0
+            
+            gt_d = np.array(gt['direction'])
+            pr_d = np.array(pred['direction'])
+            gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
+            pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
+            ang_err = np.degrees(np.arccos(np.clip(np.dot(gt_d, pr_d), -1, 1)))
+            
+            if pos_dist <= 20:   n_spatial_pass += 1
+            if tiou >= 0.5:      n_temporal_pass += 1
+            if ang_err <= 20:    n_angular_pass += 1
+            if pos_dist <= 20 and tiou >= 0.5 and ang_err <= 15:
+                n_all_pass += 1
+
+        print(f"Clips with predictions: {n_clips_with_preds}")
+        print(f"Pass spatial  (<=20px): {n_spatial_pass} ({100*n_spatial_pass/n_clips_with_preds:.1f}%)")
+        print(f"Pass temporal (>=0.5):  {n_temporal_pass} ({100*n_temporal_pass/n_clips_with_preds:.1f}%)")
+        print(f"Pass angular  (<=15°):  {n_angular_pass} ({100*n_angular_pass/n_clips_with_preds:.1f}%)")
+        print(f"Pass ALL three:         {n_all_pass} ({100*n_all_pass/n_clips_with_preds:.1f}%)")
         # Draw gt and predictions onto frames and saves as video
         # Note: This shows each 16-frame window independently, so frames repeat at window intersections
         #draw_waggle_batch(

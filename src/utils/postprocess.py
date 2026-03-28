@@ -293,13 +293,18 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         aggregated_direction = tuple(mean_dir / np.linalg.norm(mean_dir))  # norm = 1.0
         
         # Compute merged temporal range (always min/max)
+        #start_times = [p['temporal_offsets'][0] for p in cluster_points]
+        #end_times = [p['temporal_offsets'][1] for p in cluster_points]
+        #merged_start = min(start_times)
+        #merged_end = max(end_times)
         start_times = [p['temporal_offsets'][0] for p in cluster_points]
         end_times = [p['temporal_offsets'][1] for p in cluster_points]
-        merged_start = min(start_times)
-        merged_end = max(end_times)
+        merged_start = int(agg_func(start_times))
+        merged_end = int(agg_func(end_times))
         
         # Compute mean confidence
-        mean_confidence = np.mean([p['confidence'] for p in cluster_points])
+        # mean_confidence = np.mean([p['confidence'] for p in cluster_points])
+        mean_confidence = np.max([p['confidence'] for p in cluster_points])
         
         # Create consolidated detection
         consolidated_detection = {

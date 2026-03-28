@@ -636,7 +636,7 @@ def get_eval_metrics(
         pos_thresholds,
         iou_threshold_range,
         angular_thresholds, 
-        match_pairs='greedy'
+        match_pairs=match_pairs
     )
     matched_pairs_per_combo = comprehensive_metrics.pop('matched_pairs_per_combo')
 
