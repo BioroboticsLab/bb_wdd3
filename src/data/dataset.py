@@ -258,3 +258,177 @@ class VideoYoloDataset(Dataset):
                 "fps": fps
             }
         }
+
+    def get_item_debug(self, idx, crop_mode='inference'):
+        """Run the exact same pipeline as __getitem__ but return all intermediate stages.
+
+        This is the SINGLE SOURCE OF TRUTH for the pipeline inspector.
+        Every computation here mirrors __getitem__ line-for-line.
+
+        Parameters
+        ----------
+        idx : int
+            Index into self.data
+        crop_mode : str
+            'training' uses deterministic random offset (same as __getitem__),
+            'inference' uses centered crop (no offset).
+
+        Returns
+        -------
+        dict with keys: 'raw', 'crop', 'transform', 'sample', 'target', 'metadata'
+        """
+        row = self.data.iloc[idx]
+        video_name = row['video_name']
+        label = row['waggle']
+        video_path = os.path.join(self.video_dir, video_name)
+        start_frame, end_frame = row["start_frame"], row["end_frame"]
+
+        # ── RAW: load frames ──
+        raw_frames = load_video_frames(video_path, start_frame, end_frame, use_cache=False)
+        if not raw_frames:
+            raise ValueError(f"No frames found for video {video_name}")
+
+        gt_x, gt_y = row["x1"], row["y1"]
+        first_frame = raw_frames[0]
+        if isinstance(first_frame, torch.Tensor):
+            original_h, original_w = first_frame.shape[-2:]
+        else:
+            original_h, original_w = first_frame.shape[:2]
+
+        crop_h, crop_w = self.height, self.width
+
+        # ── CROP: compute origin ──
+        # (mirrors __getitem__ L142-156 exactly)
+        if crop_mode == 'training':
+            rng = np.random.RandomState(seed=idx)
+            margin_x = int(crop_w * 0.2)
+            margin_y = int(crop_h * 0.2)
+            max_offset_x = (crop_w // 2) - margin_x
+            max_offset_y = (crop_h // 2) - margin_y
+            offset_x = rng.randint(-max_offset_x, max_offset_x + 1)
+            offset_y = rng.randint(-max_offset_y, max_offset_y + 1)
+        else:
+            offset_x, offset_y = 0, 0
+
+        x_min_ideal = int(gt_x - crop_w / 2) + offset_x
+        y_min_ideal = int(gt_y - crop_h / 2) + offset_y
+        x_min = max(0, min(original_w - crop_w, x_min_ideal))
+        y_min = max(0, min(original_h - crop_h, y_min_ideal))
+        x_max = x_min + crop_w
+        y_max = y_min + crop_h
+
+        # Crop numpy frames (before tensor conversion)
+        cropped_np = [f[y_min:y_max, x_min:x_max] for f in raw_frames]
+
+        # ── TRANSFORM: crop + to_tensor + transform ──
+        # (mirrors __getitem__ L159-163 exactly)
+        cropped_tensors = [self.to_tensor(f) for f in cropped_np]
+
+        if self.transform:
+            transformed = [self.transform(f) for f in cropped_tensors]
+        else:
+            transformed = list(cropped_tensors)
+
+        # GT in cropped region (mirrors L166-167)
+        x = gt_x - x_min
+        y = gt_y - y_min
+        dir_x = row.get('direction_x', 1.0)
+        dir_y = row.get('direction_y', 0.0)
+
+        # ── SAMPLE: frame sampling ──
+        # (mirrors __getitem__ L187 exactly)
+        sampled = self._sample_frames(transformed, self.window_size)
+        n_loaded = len(transformed)
+        if n_loaded >= self.window_size:
+            sampled_idxs = np.linspace(0, n_loaded - 1, self.window_size, dtype=int).tolist()
+            sampling_method = 'linspace'
+        else:
+            reps = list(range(n_loaded)) * (self.window_size // n_loaded + 1)
+            sampled_idxs = reps[:self.window_size]
+            sampling_method = 'repeat_pad'
+
+        frames_tensor = torch.stack(sampled).permute(1, 0, 2, 3)
+
+        # ── TARGET: YOLO grid encoding ──
+        # (mirrors __getitem__ L193-234 exactly)
+        H, W = self.height, self.width
+        target_tensor = torch.zeros(
+            self.grid_size, self.grid_size,
+            self.max_detections_per_cell, 7,
+            dtype=torch.float32
+        )
+        target_info = {'objectness': 0.0}
+
+        if label == 1:
+            x_norm, y_norm = x / W, y / H
+            ws_in = row['waggle_start_in_window']
+            we_in = row['waggle_end_in_window']
+            start_norm, end_norm = -1, -1
+            if ws_in != -1 and we_in != -1:
+                duration = end_frame - start_frame
+                if duration > 0:
+                    start_norm = (ws_in - start_frame) / duration
+                    end_norm = (we_in - start_frame) / duration
+
+            dir_norm = np.sqrt(dir_x**2 + dir_y**2)
+            if dir_norm > 0:
+                dir_x_n, dir_y_n = dir_x / dir_norm, dir_y / dir_norm
+            else:
+                dir_x_n, dir_y_n = 1.0, 0.0
+
+            grid_x = max(0, min(self.grid_size - 1, int(x_norm * self.grid_size)))
+            grid_y = max(0, min(self.grid_size - 1, int(y_norm * self.grid_size)))
+            cell_x = (x_norm * self.grid_size) - grid_x
+            cell_y = (y_norm * self.grid_size) - grid_y
+
+            target_tensor[grid_y, grid_x, 0, 0] = 1.0
+            target_tensor[grid_y, grid_x, 0, 1] = cell_x
+            target_tensor[grid_y, grid_x, 0, 2] = cell_y
+            target_tensor[grid_y, grid_x, 0, 3] = dir_x_n
+            target_tensor[grid_y, grid_x, 0, 4] = dir_y_n
+            target_tensor[grid_y, grid_x, 0, 5] = start_norm
+            target_tensor[grid_y, grid_x, 0, 6] = end_norm
+
+            target_info = {
+                'objectness': 1.0,
+                'grid_cell': [grid_y, grid_x],
+                'cell_coords': [round(cell_x, 4), round(cell_y, 4)],
+                'position_norm': [round(x_norm, 4), round(y_norm, 4)],
+                'direction': [round(float(dir_x_n), 4), round(float(dir_y_n), 4)],
+                'temporal_norm': [round(float(start_norm), 4), round(float(end_norm), 4)],
+                'waggle_start_in_window': int(ws_in),
+                'waggle_end_in_window': int(we_in),
+            }
+
+        return {
+            'raw_frames': raw_frames,          # list of numpy (H,W,3) — original video frames
+            'crop_params': {
+                'x_min': x_min, 'y_min': y_min,
+                'x_max': x_max, 'y_max': y_max,
+                'offset_x': offset_x, 'offset_y': offset_y,
+                'crop_mode': crop_mode,
+            },
+            'cropped_np': cropped_np,           # list of numpy (crop_h, crop_w, 3)
+            'transformed': transformed,         # list of tensors (C, H, W) after transform
+            'sampled': sampled,                 # list of tensors — window_size frames
+            'sampled_indices': sampled_idxs,
+            'sampling_method': sampling_method,
+            'frames_tensor': frames_tensor,     # (C, T, H, W) — model input
+            'target_tensor': target_tensor,     # (grid, grid, det, 7)
+            'target_info': target_info,
+            'metadata': {
+                'video_name': video_name,
+                'start_frame': int(start_frame),
+                'end_frame': int(end_frame),
+                'resolution': [int(original_w), int(original_h)],
+                'crop_size': [crop_w, crop_h],
+                'window_size': self.window_size,
+                'n_frames_loaded': n_loaded,
+                'gt_position': [float(gt_x), float(gt_y)],
+                'gt_direction': [float(row.get('direction_x', 1.0)),
+                                 float(row.get('direction_y', 0.0))],
+                'bee_in_crop': [round(float(x), 1), round(float(y), 1)],
+                'is_waggle': int(label),
+                'run_id': int(row.get('waggle_run_id', -1)),
+            },
+        }

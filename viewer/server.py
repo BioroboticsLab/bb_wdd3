@@ -602,379 +602,145 @@ def api_checkpoint_load():
 # Pipeline Inspector — step-by-step data pipeline visualization
 # ---------------------------------------------------------------------------
 
+# Build a Dataset instance for inspection (same config as main.py uses)
+import torchvision.transforms as T
+with open(CONFIG_PATH) as _cf:
+    _insp_config = yaml.safe_load(_cf)
+_insp_transform = T.Compose([
+    T.ToPILImage(),
+    T.Resize((_insp_config['augmentations']['width'],
+              _insp_config['augmentations']['height'])),
+    T.Grayscale(num_output_channels=3),
+    T.ToTensor(),
+])
+from src.data.dataset import VideoYoloDataset as _DatasetClass
+_inspector_ds = _DatasetClass(
+    dataframe=annotations_df,
+    video_dir=VIDEO_DIR,
+    transform=_insp_transform,
+    width=_insp_config['data']['width'],
+    height=_insp_config['data']['height'],
+    window_size=_insp_config['data']['window_size'],
+    grid_size=_insp_config['model']['grid_size'],
+    augment=None,
+    is_training=False,
+)
+
+
+def _np_to_jpeg(frame_np, quality=90):
+    """Encode a numpy (H,W,3) RGB frame as base64 JPEG."""
+    bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+    _, buf = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(buf).decode('ascii')
+
+
+def _tensor_to_jpeg(t, greyscale=False, quality=90):
+    """Encode a (C,H,W) float tensor [0..1] as base64 JPEG."""
+    import torch
+    arr = t.clamp(0, 1).mul(255).byte().permute(1, 2, 0).cpu().numpy()
+    if greyscale and arr.shape[2] == 3:
+        arr = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
+    else:
+        arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    _, buf = cv2.imencode('.jpg', arr, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(buf).decode('ascii')
+
+
 @app.route("/api/pipeline/<video_name>")
 def api_pipeline(video_name):
     """Return one stage of the data pipeline for a specific annotation window.
 
+    This endpoint delegates ALL computation to Dataset.get_item_debug(),
+    ensuring the inspector shows exactly what the training pipeline produces.
+
     Query params:
-        stage: 'raw' | 'crop' | 'transform' | 'normalize' | 'sample' | 'target' | 'output'
+        stage: 'raw' | 'crop' | 'transform' | 'sample' | 'target' | 'output'
         row_idx: index into this video's annotation rows (default: 0)
+        crop_mode: 'inference' (centered) or 'training' (random offset)
     """
     import torch
-    import torchvision.transforms as T
-    from torchvision.transforms import ToTensor
-    from src.data.video_loader import load_video_frames
-
-    with open(CONFIG_PATH) as f:
-        config = yaml.safe_load(f)
 
     stage = request.args.get('stage', 'raw')
     row_idx = int(request.args.get('row_idx', 0))
-    crop_mode = request.args.get('crop_mode', 'inference')  # 'inference' or 'training'
+    crop_mode = request.args.get('crop_mode', 'inference')
 
-    video_rows = annotations_df[annotations_df['video_name'] == video_name]
-    if row_idx >= len(video_rows):
-        return jsonify({"error": f"row_idx {row_idx} >= {len(video_rows)} rows"}), 404
-    row = video_rows.iloc[row_idx]
+    # Find the global index for this video + row_idx
+    video_mask = annotations_df['video_name'] == video_name
+    video_indices = annotations_df.index[video_mask].tolist()
+    if row_idx >= len(video_indices):
+        return jsonify({"error": f"row_idx {row_idx} >= {len(video_indices)} rows"}), 404
 
-    start_frame = int(row['start_frame'])
-    end_frame = int(row['end_frame'])
-    gt_x, gt_y = float(row['x1']), float(row['y1'])
-    dir_x, dir_y = float(row.get('direction_x', 1.0)), float(row.get('direction_y', 0.0))
-    is_waggle = int(row.get('waggle', 0))
-    run_id = int(row.get('waggle_run_id', -1))
+    global_idx = video_indices[row_idx]
 
-    crop_h, crop_w = config['data']['height'], config['data']['width']
-    window_size = config['data']['window_size']
+    # ── Run the actual pipeline ──
+    try:
+        dbg = _inspector_ds.get_item_debug(global_idx, crop_mode=crop_mode)
+    except Exception as e:
+        return jsonify({"error": f"Pipeline error: {str(e)}"}), 500
 
-    def compute_crop_origin(orig_w, orig_h):
-        """Compute crop origin. Training mode matches dataset.py with random offset."""
-        if crop_mode == 'training':
-            # Exact logic from dataset.py L142-154
-            rng = np.random.RandomState(seed=row_idx)
-            margin_x = int(crop_w * 0.2)
-            margin_y = int(crop_h * 0.2)
-            max_offset_x = (crop_w // 2) - margin_x
-            max_offset_y = (crop_h // 2) - margin_y
-            offset_x = rng.randint(-max_offset_x, max_offset_x + 1)
-            offset_y = rng.randint(-max_offset_y, max_offset_y + 1)
-            x_min_ideal = int(gt_x - crop_w / 2) + offset_x
-            y_min_ideal = int(gt_y - crop_h / 2) + offset_y
-        else:
-            # Inference: centered on GT
-            x_min_ideal = int(gt_x - crop_w / 2)
-            y_min_ideal = int(gt_y - crop_h / 2)
-            offset_x, offset_y = 0, 0
-        x_min = max(0, min(orig_w - crop_w, x_min_ideal))
-        y_min = max(0, min(orig_h - crop_h, y_min_ideal))
-        return x_min, y_min, offset_x, offset_y
-
-    # Common metadata
-    meta = {
-        'video_name': video_name,
-        'row_idx': row_idx,
-        'total_rows': len(video_rows),
-        'start_frame': start_frame,
-        'end_frame': end_frame,
-        'gt_position': [gt_x, gt_y],
-        'gt_direction': [dir_x, dir_y],
-        'is_waggle': is_waggle,
-        'run_id': run_id,
-        'crop_size': [crop_w, crop_h],
-        'window_size': window_size,
-    }
+    meta = dict(dbg['metadata'])
+    meta['row_idx'] = row_idx
+    meta['total_rows'] = len(video_indices)
+    meta['crop_mode'] = crop_mode
 
     # ── Stage: RAW ──────────────────────────────────────────────────────
     if stage == 'raw':
-        frames = load_video_frames(
-            os.path.join(VIDEO_DIR, video_name),
-            start_frame, end_frame, use_cache=False
-        )
-        if not frames:
-            return jsonify({"error": "No frames loaded"}), 500
-
-        first = frames[0]
-        orig_h, orig_w = first.shape[:2]
-
-        # Compute crop box
-        x_min, y_min, offset_x, offset_y = compute_crop_origin(orig_w, orig_h)
-
-        # Encode frames as JPEG
-        frame_images = []
-        for f in frames:
-            f_bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR)
-            _, buf = cv2.imencode('.jpg', f_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            frame_images.append(base64.b64encode(buf).decode('ascii'))
-
-
-        n_loaded = len(frames)
+        frame_images = [_np_to_jpeg(f, quality=85) for f in dbg['raw_frames']]
+        cp = dbg['crop_params']
         meta.update({
-            'video_resolution': [orig_w, orig_h],
-            'n_frames_loaded': n_loaded,
-            'needs_sampling': n_loaded != window_size,
+            'video_resolution': meta['resolution'],
+            'n_frames_loaded': len(dbg['raw_frames']),
+            'needs_sampling': len(dbg['raw_frames']) != meta['window_size'],
             'crop_box': {
-                'x_min': x_min, 'y_min': y_min,
-                'x_max': x_min + crop_w, 'y_max': y_min + crop_h,
+                'x_min': cp['x_min'], 'y_min': cp['y_min'],
+                'x_max': cp['x_max'], 'y_max': cp['y_max'],
             },
         })
         return jsonify({'stage': 'raw', 'frames': frame_images, 'metadata': meta})
 
     # ── Stage: CROP ─────────────────────────────────────────────────────
     elif stage == 'crop':
-        frames = load_video_frames(
-            os.path.join(VIDEO_DIR, video_name),
-            start_frame, end_frame, use_cache=False
-        )
-        if not frames:
-            return jsonify({"error": "No frames loaded"}), 500
-
-        first = frames[0]
-        orig_h, orig_w = first.shape[:2]
-
-        # Exact crop logic — use compute_crop_origin for mode support
-        x_min, y_min, offset_x, offset_y = compute_crop_origin(orig_w, orig_h)
-
-        # Bee position in crop space
-        bee_crop_x = gt_x - x_min
-        bee_crop_y = gt_y - y_min
-
-        cropped = [f[y_min:y_min+crop_h, x_min:x_min+crop_w] for f in frames]
-
-        frame_images = []
-        for f in cropped:
-            f_bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR)
-            _, buf = cv2.imencode('.jpg', f_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            frame_images.append(base64.b64encode(buf).decode('ascii'))
-
+        frame_images = [_np_to_jpeg(f) for f in dbg['cropped_np']]
+        cp = dbg['crop_params']
         meta.update({
-            'video_resolution': [orig_w, orig_h],
-            'n_frames': len(cropped),
-            'crop_origin': [x_min, y_min],
-            'crop_offset': [offset_x, offset_y],
-            'crop_mode': crop_mode,
-            'bee_in_crop': [round(bee_crop_x, 1), round(bee_crop_y, 1)],
+            'video_resolution': meta['resolution'],
+            'n_frames': len(dbg['cropped_np']),
+            'crop_origin': [cp['x_min'], cp['y_min']],
+            'crop_offset': [cp['offset_x'], cp['offset_y']],
         })
         return jsonify({'stage': 'crop', 'frames': frame_images, 'metadata': meta})
 
     # ── Stage: TRANSFORM ────────────────────────────────────────────────
     elif stage == 'transform':
-        frames = load_video_frames(
-            os.path.join(VIDEO_DIR, video_name),
-            start_frame, end_frame, use_cache=False
-        )
-        if not frames:
-            return jsonify({"error": "No frames loaded"}), 500
-
-        first = frames[0]
-        orig_h, orig_w = first.shape[:2]
-        x_min, y_min, _, _ = compute_crop_origin(orig_w, orig_h)
-
-        to_tensor = ToTensor()
-
-        # Exact pipeline from dataset.py + main.py:
-        # 1. Crop  2. ToTensor  3. transform(ToPILImage→Resize→Grayscale→ToTensor)
-        transform = T.Compose([
-            T.ToPILImage(),
-            T.Resize((config['augmentations']['width'],
-                      config['augmentations']['height'])),
-            T.Grayscale(num_output_channels=3),
-            T.ToTensor(),
-        ])
-
-        frame_images = []
-        pixel_stats = []
-        for f in frames:
-            cropped = f[y_min:y_min+crop_h, x_min:x_min+crop_w]
-            t = to_tensor(cropped)
-            t = transform(t)
-            # Stats before normalization
-            pixel_stats.append({
-                'min': round(float(t.min()), 4),
-                'max': round(float(t.max()), 4),
-                'mean': round(float(t.mean()), 4),
-            })
-            frame_images.append(_tensor_to_jpeg(t, greyscale=True))
-
+        frame_images = [_tensor_to_jpeg(t, greyscale=True) for t in dbg['transformed']]
+        pixel_stats = [{
+            'min': round(float(t.min()), 4),
+            'max': round(float(t.max()), 4),
+            'mean': round(float(t.mean()), 4),
+        } for t in dbg['transformed']]
         meta.update({
             'n_frames': len(frame_images),
             'pixel_stats': pixel_stats,
-            'transform_pipeline': [
-                'ToTensor()',
-                'ToPILImage()',
-                f'Resize(({crop_w}, {crop_h}))',
-                'Grayscale(num_output_channels=3)',
-                'ToTensor()',
-            ],
         })
         return jsonify({'stage': 'transform', 'frames': frame_images, 'metadata': meta})
 
-    # ── Stage: NORMALIZE ────────────────────────────────────────────────
-    elif stage == 'normalize':
-        frames = load_video_frames(
-            os.path.join(VIDEO_DIR, video_name),
-            start_frame, end_frame, use_cache=False
-        )
-        if not frames:
-            return jsonify({"error": "No frames loaded"}), 500
-
-        first = frames[0]
-        orig_h, orig_w = first.shape[:2]
-        x_min, y_min, _, _ = compute_crop_origin(orig_w, orig_h)
-
-        to_tensor = ToTensor()
-        mean = config['augmentations']['mean']
-        std = config['augmentations']['std']
-
-        # Full eval transform (same as server.py inference)
-        test_transform = T.Compose([
-            T.ToPILImage(),
-            T.Resize((config['augmentations']['width'],
-                      config['augmentations']['height'])),
-            T.Grayscale(num_output_channels=3),
-            T.ToTensor(),
-            T.Normalize(mean=mean, std=std),
-        ])
-
-        frame_images = []  # de-normalized for display
-        pixel_stats_pre = []
-        pixel_stats_post = []
-        for f in frames:
-            cropped = f[y_min:y_min+crop_h, x_min:x_min+crop_w]
-            t_raw = to_tensor(cropped)
-
-            # Pre-norm via transform without normalize
-            transform_no_norm = T.Compose([
-                T.ToPILImage(),
-                T.Resize((crop_w, crop_h)),
-                T.Grayscale(num_output_channels=3),
-                T.ToTensor(),
-            ])
-            t_pre = transform_no_norm(t_raw)
-            pixel_stats_pre.append({
-                'min': round(float(t_pre.min()), 4),
-                'max': round(float(t_pre.max()), 4),
-                'mean': round(float(t_pre.mean()), 4),
-            })
-
-            t_norm = test_transform(t_raw)
-            pixel_stats_post.append({
-                'min': round(float(t_norm.min()), 4),
-                'max': round(float(t_norm.max()), 4),
-                'mean': round(float(t_norm.mean()), 4),
-            })
-
-            # De-normalize for display
-            mean_t = torch.tensor(mean).view(3, 1, 1)
-            std_t = torch.tensor(std).view(3, 1, 1)
-            t_denorm = t_norm * std_t + mean_t
-            frame_images.append(_tensor_to_jpeg(t_denorm, greyscale=True))
-
-        meta.update({
-            'n_frames': len(frame_images),
-            'normalization': {'mean': mean, 'std': std},
-            'pixel_stats_pre_norm': pixel_stats_pre,
-            'pixel_stats_post_norm': pixel_stats_post,
-        })
-        return jsonify({'stage': 'normalize', 'frames': frame_images, 'metadata': meta})
-
     # ── Stage: SAMPLE ───────────────────────────────────────────────────
     elif stage == 'sample':
-        frames = load_video_frames(
-            os.path.join(VIDEO_DIR, video_name),
-            start_frame, end_frame, use_cache=False
-        )
-        if not frames:
-            return jsonify({"error": "No frames loaded"}), 500
-
-        n_loaded = len(frames)
-
-        # Exact sampling logic from dataset.py._sample_frames
-        if n_loaded >= window_size:
-            sampled_idxs = np.linspace(0, n_loaded - 1, window_size, dtype=int).tolist()
-        else:
-            # Repeat frames
-            reps = list(range(n_loaded)) * (window_size // n_loaded + 1)
-            sampled_idxs = reps[:window_size]
-
-        # Return the cropped+transformed sampled frames
-        first = frames[0]
-        orig_h, orig_w = first.shape[:2]
-        x_min, y_min, _, _ = compute_crop_origin(orig_w, orig_h)
-
-        to_tensor = ToTensor()
-        test_transform = T.Compose([
-            T.ToPILImage(),
-            T.Resize((crop_w, crop_h)),
-            T.Grayscale(num_output_channels=3),
-            T.ToTensor(),
-        ])
-
-        frame_images = []
-        for idx in sampled_idxs:
-            f = frames[idx]
-            cropped = f[y_min:y_min+crop_h, x_min:x_min+crop_w]
-            t = to_tensor(cropped)
-            t = test_transform(t)
-            frame_images.append(_tensor_to_jpeg(t, greyscale=True))
-
+        frame_images = [_tensor_to_jpeg(t, greyscale=True) for t in dbg['sampled']]
         meta.update({
-            'n_frames_loaded': n_loaded,
-            'n_frames_sampled': window_size,
-            'sampled_indices': sampled_idxs,
-            'sampling_method': 'linspace' if n_loaded >= window_size else 'repeat_pad',
+            'n_frames_loaded': meta['n_frames_loaded'],
+            'n_frames_sampled': meta['window_size'],
+            'sampled_indices': dbg['sampled_indices'],
+            'sampling_method': dbg['sampling_method'],
         })
         return jsonify({'stage': 'sample', 'frames': frame_images, 'metadata': meta})
 
     # ── Stage: TARGET ───────────────────────────────────────────────────
     elif stage == 'target':
-        grid_size = config['model']['grid_size']
-
-        # Compute crop and bee-in-crop position
-        video_path = os.path.join(VIDEO_DIR, video_name)
-        frames = load_video_frames(video_path, start_frame, end_frame, use_cache=False)
-        if not frames:
-            return jsonify({"error": "No frames loaded"}), 500
-
-        first = frames[0]
-        orig_h, orig_w = first.shape[:2]
-        x_min, y_min, _, _ = compute_crop_origin(orig_w, orig_h)
-
-        # Bee in crop space (same as dataset.py L166-167)
-        x = gt_x - x_min
-        y = gt_y - y_min
-
-        H, W = crop_h, crop_w
-        target_info = {}
-
-        if is_waggle == 1:
-            x_norm = x / W
-            y_norm = y / H
-            ws_in = int(row.get('waggle_start_in_window', -1))
-            we_in = int(row.get('waggle_end_in_window', -1))
-
-            duration = end_frame - start_frame
-            start_norm = (ws_in - start_frame) / duration if duration > 0 and ws_in != -1 else -1
-            end_norm = (we_in - start_frame) / duration if duration > 0 and we_in != -1 else -1
-
-            # Normalize direction
-            d_norm = np.sqrt(dir_x**2 + dir_y**2)
-            if d_norm > 0:
-                dir_x_n, dir_y_n = dir_x / d_norm, dir_y / d_norm
-            else:
-                dir_x_n, dir_y_n = 1.0, 0.0
-
-            grid_x = max(0, min(grid_size - 1, int(x_norm * grid_size)))
-            grid_y = max(0, min(grid_size - 1, int(y_norm * grid_size)))
-            cell_x = (x_norm * grid_size) - grid_x
-            cell_y = (y_norm * grid_size) - grid_y
-
-            target_info = {
-                'objectness': 1.0,
-                'grid_cell': [grid_y, grid_x],
-                'cell_coords': [round(cell_x, 4), round(cell_y, 4)],
-                'position_norm': [round(x_norm, 4), round(y_norm, 4)],
-                'direction': [round(dir_x_n, 4), round(dir_y_n, 4)],
-                'temporal_norm': [round(start_norm, 4), round(end_norm, 4)],
-                'waggle_start_in_window': ws_in,
-                'waggle_end_in_window': we_in,
-            }
-        else:
-            target_info = {'objectness': 0.0, 'note': 'Non-waggle window'}
-
         meta.update({
-            'bee_in_crop': [round(x, 1), round(y, 1)],
-            'grid_size': grid_size,
-            'target': target_info,
+            'grid_size': _insp_config['model']['grid_size'],
+            'target': dbg['target_info'],
         })
         return jsonify({'stage': 'target', 'frames': [], 'metadata': meta})
 
@@ -984,74 +750,48 @@ def api_pipeline(video_name):
             return jsonify({'stage': 'output', 'frames': [],
                             'metadata': {**meta, 'error': 'No model loaded'}}), 200
 
-        # Replicate full inference for this single window
-        frames = load_video_frames(
-            os.path.join(VIDEO_DIR, video_name),
-            start_frame, end_frame, use_cache=False
-        )
-        if not frames:
-            return jsonify({"error": "No frames loaded"}), 500
+        # Use the actual tensor from the pipeline (frames_tensor is model-ready)
+        config = _insp_config
+        mean = config['augmentations']['mean']
+        std = config['augmentations']['std']
+        mean_t = torch.tensor(mean).view(3, 1, 1)
+        std_t = torch.tensor(std).view(3, 1, 1)
 
-        first = frames[0]
-        orig_h, orig_w = first.shape[:2]
-        x_min, y_min, _, _ = compute_crop_origin(orig_w, orig_h)
-
-        to_tensor = ToTensor()
-        test_transform = T.Compose([
-            T.ToPILImage(),
-            T.Resize((config['augmentations']['width'],
-                      config['augmentations']['height'])),
-            T.Grayscale(num_output_channels=3),
-            T.ToTensor(),
-            T.Normalize(mean=config['augmentations']['mean'],
-                        std=config['augmentations']['std']),
-        ])
-
-        tensors = [test_transform(to_tensor(f[y_min:y_min+crop_h, x_min:x_min+crop_w]))
-                    for f in frames]
-
-        # Sample frames
-        n = len(tensors)
-        if n >= window_size:
-            idxs = np.linspace(0, n - 1, window_size, dtype=int)
-            tensors = [tensors[i] for i in idxs]
-        else:
-            reps = tensors * (window_size // n + 1)
-            tensors = reps[:window_size]
-
-        video_tensor = torch.stack(tensors).permute(1, 0, 2, 3)  # (C, T, H, W)
+        # Normalize (transform didn't include normalization, add it for inference)
+        norm = T.Normalize(mean=mean, std=std)
+        normalized = [norm(t) for t in dbg['sampled']]
+        video_tensor = torch.stack(normalized).permute(1, 0, 2, 3)  # (C, T, H, W)
         batch = video_tensor.unsqueeze(0).to(prediction_engine.device)
 
         with torch.no_grad():
             with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
                 output = prediction_engine.model(batch)
 
-        # Decode predictions
         from src.utils.eval_utils import yolo_to_img_space
+        start_frame = meta['start_frame']
+        end_frame = meta['end_frame']
         crop_size = (config['data']['width'], config['data']['height'])
         decoded = yolo_to_img_space(
             output, np.array([start_frame]), np.array([end_frame]),
-            window_size=window_size,
+            window_size=config['data']['window_size'],
             confidence_threshold=0.001,
             original_size=crop_size,
             max_dets=config['eval']['max_dets'],
         )
 
-        # Offset to full-frame coords
+        cp = dbg['crop_params']
         preds = []
         for pred in decoded[0]:
             pred['position'] = [
-                pred['position'][0] + x_min,
-                pred['position'][1] + y_min,
+                pred['position'][0] + cp['x_min'],
+                pred['position'][1] + cp['y_min'],
             ]
             preds.append(pred)
 
-        # Confidence heatmap from output grid
         grid_size = config['model']['grid_size']
         obj_grid = torch.sigmoid(output[0, :, :, 0, 0]).cpu().numpy()
         heatmap_data = obj_grid.tolist()
 
-        # Convert numpy types
         def _to_native(obj):
             if isinstance(obj, dict):
                 return {k: _to_native(v) for k, v in obj.items()}
@@ -1068,7 +808,7 @@ def api_pipeline(video_name):
         preds = [_to_native(p) for p in preds]
 
         meta.update({
-            'crop_origin': [x_min, y_min],
+            'crop_origin': [cp['x_min'], cp['y_min']],
             'n_predictions': len(preds),
             'predictions': preds,
             'confidence_heatmap': heatmap_data,
@@ -1157,21 +897,6 @@ def _frame_to_tensor(frame_bgr):
     to_tensor = ToTensor()
     return to_tensor(frame_bgr)  # HWC uint8 → CHW float [0,1]
 
-
-def _tensor_to_jpeg(tensor, greyscale=True):
-    """CHW float tensor → base64 JPEG string."""
-    import torch
-    # Clamp to [0,1]
-    t = tensor.clamp(0, 1)
-    # CHW → HWC uint8
-    arr = (t.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-    if greyscale and arr.shape[2] == 3:
-        arr_gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-        arr = cv2.cvtColor(arr_gray, cv2.COLOR_GRAY2BGR)
-    else:
-        arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-    _, buf = cv2.imencode('.jpg', arr, [cv2.IMWRITE_JPEG_QUALITY, 90])
-    return base64.b64encode(buf).decode('ascii')
 
 
 @app.route("/api/model_view/<video_name>")
