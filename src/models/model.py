@@ -243,7 +243,7 @@ class R2Plus1D_YOLO_MultiHead(nn.Module):
                 nn.init.constant_(final_conv.bias, 0)
 
         # confidence bias only on spatial head (index 0 = confidence logit)
-        # sigmoid(-4.6) ≈ 0.01, matches true prior of approx 0.128% positive cells
+        # sigmoid(-4.6) approx 0.01, matches true prior of approx 0.128% positive cells
         # avoids starting at sigmoid(0)=0.5 for all cells
         # only apply it to spatial head bcs only spatial head has confidence
         spatial_final = self.spatial_head[-1]
