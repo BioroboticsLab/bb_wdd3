@@ -233,12 +233,15 @@ def balance_sample(data, divisor):
     if divisor == 1:
         return data
         
+    data = data.copy()
     data['_category'] = data['video_name'].apply(get_video_category)
         
     grouped = data.groupby('_category')
     n_per_category = len(data) // (divisor * len(grouped))
         
     sampled = grouped.apply(lambda g: g.sample(n=min(n_per_category, len(g)), random_state=42))
-    sampled = sampled.reset_index(drop=True).drop(columns='_category')
+    sampled = sampled.reset_index(drop=True)
+    if '_category' in sampled.columns:
+        sampled = sampled.drop(columns='_category')
         
     return sampled

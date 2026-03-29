@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waggle Dance Annotation Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0c0c18;
+  --bg-secondary: #12122a;
+  --bg-tertiary: #1a1a3e;
+  --bg-card: #1e1e42;
+  --border: #2a2a5a;
+  --text-primary: #e8e8f0;
+  --text-secondary: #9898b8;
+  --text-muted: #6868a0;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --green: #22c55e;
+  --green-ghost: rgba(34, 197, 94, 0.25);
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --scrollbar-bg: #1a1a3e;
+  --scrollbar-thumb: #3a3a6a;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+
+/* Layout */
+#app { display: flex; flex-direction: column; height: 100vh; }
+header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
+header h1 span { font-size: 18px; margin-right: 4px; }
+#search-box {
+  flex: 0 0 200px;
+  padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+#search-box:focus { border-color: var(--accent); }
+#search-box::placeholder { color: var(--text-muted); }
+.header-actions { display: flex; gap: 8px; margin-left: auto; }
+.btn {
+  padding: 6px 14px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--bg-card); border-color: var(--accent); }
+.btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-icon { padding: 6px 10px; font-size: 14px; }
+
+main { display: flex; flex: 1; overflow: hidden; }
+
+/* Sidebar */
+#sidebar {
+  width: 240px; min-width: 240px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#sidebar-header {
+  padding: 12px 14px 8px;
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border-bottom: 1px solid var(--border);
+}
+#rec-list {
+  flex: 1; overflow-y: auto;
+  padding: 4px 0;
+}
+.rec-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px;
+  cursor: pointer; transition: background 0.1s;
+  font-size: 13px;
+  border-left: 3px solid transparent;
+}
+.rec-item:hover { background: var(--bg-tertiary); }
+.rec-item.selected {
+  background: var(--bg-tertiary);
+  border-left-color: var(--accent);
+}
+.rec-item .name { font-weight: 500; }
+.rec-item .count {
+  font-size: 11px; color: var(--text-muted);
+  background: var(--bg-card); padding: 2px 7px;
+  border-radius: 10px;
+}
+
+/* Viewer */
+#viewer {
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden; padding: 0;
+}
+#variant-tabs {
+  display: flex; gap: 4px; padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0; flex-wrap: wrap;
+  background: var(--bg-secondary);
+}
+.variant-tab {
+  padding: 5px 12px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s;
+}
+.variant-tab:hover { border-color: var(--accent); color: var(--text-primary); }
+.variant-tab.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+.variant-tab.unavailable { opacity: 0.35; cursor: not-allowed; }
+
+/* Canvas area */
+#canvas-container {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; position: relative;
+  background: #000;
+  min-height: 200px;
+}
+#frame-canvas { max-width: 100%; max-height: 100%; display: block; }
+#loading-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 14px; color: var(--text-secondary);
+  pointer-events: none; opacity: 0;
+  transition: opacity 0.2s;
+}
+#loading-overlay.visible { opacity: 1; }
+#empty-state {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  color: var(--text-muted); font-size: 14px;
+}
+#empty-state .icon { font-size: 48px; }
+
+/* Controls */
+#controls {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ctrl-group { display: flex; align-items: center; gap: 4px; }
+.ctrl-btn {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 14px; cursor: pointer;
+  transition: all 0.1s;
+}
+.ctrl-btn:hover { background: var(--bg-card); border-color: var(--accent); }
+.ctrl-btn.play-btn { width: 40px; height: 40px; font-size: 16px; }
+#frame-info {
+  font-size: 12px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 180px;
+}
+#frame-info strong { color: var(--text-primary); }
+#speed-slider { width: 80px; accent-color: var(--accent); }
+#speed-label { font-size: 11px; color: var(--text-muted); min-width: 30px; }
+.ctrl-divider {
+  width: 1px; height: 24px;
+  background: var(--border); margin: 0 4px;
+}
+
+/* Timeline */
+#timeline-container {
+  padding: 6px 16px 4px;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+#timeline-canvas {
+  width: 100%; height: 36px;
+  cursor: pointer; border-radius: 4px;
+  display: block;
+}
+
+/* Waggle run list */
+#run-list {
+  display: flex; gap: 6px; padding: 6px 16px 10px;
+  overflow-x: auto;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.run-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  font-size: 11px; cursor: pointer;
+  transition: all 0.15s; white-space: nowrap;
+  flex-shrink: 0;
+}
+.run-chip:hover { border-color: var(--accent); }
+.run-chip.active { border-color: var(--green); background: rgba(34, 197, 94, 0.1); }
+.run-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.run-frames { color: var(--text-muted); }
+
+/* Keyboard hint */
+#kbd-hint {
+  font-size: 10px; color: var(--text-muted);
+  margin-left: auto; white-space: nowrap;
+}
+kbd {
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-family: inherit; font-size: 10px;
+}
+
+/* Model View Panel */
+#model-view-panel {
+  width: 0; min-width: 0;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  transition: width 0.25s ease, min-width 0.25s ease, padding 0.25s ease;
+  display: flex; flex-direction: column;
+  padding: 0;
+}
+#model-view-panel.open {
+  width: 320px; min-width: 320px;
+  padding: 12px;
+}
+#model-view-panel .mv-title {
+  font-size: 12px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 10px;
+  display: none;
+}
+#model-view-panel.open .mv-title { display: block; }
+.mv-section {
+  margin-bottom: 14px;
+  display: none;
+}
+#model-view-panel.open .mv-section { display: block; }
+.mv-label {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.mv-canvas-wrap {
+  position: relative;
+  width: 224px; height: 224px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  margin: 0 auto;
+}
+.mv-canvas-wrap canvas {
+  width: 224px; height: 224px;
+  display: block;
+}
+.mv-meta {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.mv-meta strong { color: var(--text-primary); }
+.mv-meta .ratio-bar {
+  display: inline-block;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.mv-btn-row {
+  display: flex; gap: 6px;
+  margin-top: 8px;
+}
+.mv-btn {
+  padding: 4px 10px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px; cursor: pointer;
+  transition: all 0.15s;
+}
+.mv-btn:hover { border-color: var(--accent); background: var(--bg-card); }
+.mv-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mv-aug-list {
+  font-size: 10px; color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.6;
+}
+.mv-aug-list span {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--bg-card);
+  border-radius: 3px;
+  margin: 1px 2px;
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <h1><span>🐝</span> Waggle Viewer</h1>
+  <input type="text" id="search-box" placeholder="Search recordings…">
+  <div class="header-actions">
+    <button class="btn" id="btn-random" title="Load random recording (R)">🎲 Random</button>
+    <button class="btn" id="btn-annotations" title="Toggle annotations (A)">👁 Annotations</button>
+    <button class="btn" id="btn-zoom" title="Cycle zoom: 1× → 2× → 4× → 8× (Z)">🔍 1×</button>
+    <button class="btn" id="btn-model-view" title="Toggle model view panel (M)">🤖 Model View</button>
+  </div>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <div id="sidebar-header">Recordings</div>
+    <div id="rec-list"></div>
+  </aside>
+
+  <section id="viewer">
+    <div id="variant-tabs"></div>
+
+    <div id="canvas-container">
+      <canvas id="frame-canvas"></canvas>
+      <div id="loading-overlay">Loading…</div>
+      <div id="empty-state">
+        <div class="icon">🐝</div>
+        <div>Select a recording or press <kbd>R</kbd> for random</div>
+      </div>
+    </div>
+
+    <div id="controls">
+      <div class="ctrl-group">
+        <button class="ctrl-btn" id="btn-skip-back" title="Back 10 frames (Shift+←)">⏪</button>
+        <button class="ctrl-btn" id="btn-prev" title="Previous frame (←)">◀</button>
+        <button class="ctrl-btn play-btn" id="btn-play" title="Play/Pause (Space)">▶</button>
+        <button class="ctrl-btn" id="btn-next" title="Next frame (→)">▶</button>
+        <button class="ctrl-btn" id="btn-skip-fwd" title="Forward 10 frames (Shift+→)">⏩</button>
+      </div>
+      <div class="ctrl-divider"></div>
+      <div id="frame-info">No video loaded</div>
+      <div class="ctrl-divider"></div>
+      <label id="speed-label">1×</label>
+      <input type="range" id="speed-slider" min="0.25" max="4" step="0.25" value="1">
+      <div id="kbd-hint">
+      <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>A</kbd> annotations &nbsp;<kbd>Z</kbd> zoom &nbsp;<kbd>M</kbd> model &nbsp;<kbd>R</kbd> random
+      </div>
+    </div>
+
+    <div id="timeline-container">
+      <canvas id="timeline-canvas"></canvas>
+    </div>
+
+    <div id="run-list"></div>
+  </section>
+
+  <!-- Model View Panel -->
+  <aside id="model-view-panel">
+    <div class="mv-title">🤖 Model View</div>
+
+    <div class="mv-section">
+      <div class="mv-label">Crop (224×224) — what the model sees</div>
+      <div class="mv-canvas-wrap">
+        <canvas id="mv-crop-canvas" width="224" height="224"></canvas>
+      </div>
+      <div class="mv-meta" id="mv-crop-meta"></div>
+    </div>
+
+    <div class="mv-section">
+      <div class="mv-label">Augmented view</div>
+      <div class="mv-btn-row">
+        <button class="mv-btn" id="mv-btn-augment">Show Augmented</button>
+        <button class="mv-btn" id="mv-btn-reroll">🎲 Re-roll</button>
+      </div>
+      <div class="mv-canvas-wrap" id="mv-aug-wrap" style="display:none; margin-top:8px;">
+        <canvas id="mv-aug-canvas" width="224" height="224"></canvas>
+      </div>
+      <div class="mv-aug-list" id="mv-aug-info"></div>
+    </div>
+  </aside>
+</main>
+
+</div>
+
+<script>
+// ==========================================================================
+//  State
+// ==========================================================================
+const RUN_COLORS = [
+  '#22c55e', '#3b82f6', '#f59e0b', '#ef4444',
+  '#8b5cf6', '#ec4899', '#14b8a6', '#f97316',
+  '#a3e635', '#38bdf8', '#fb923c', '#f472b6',
+];
+
+const ZOOM_LEVELS = [1, 2, 4, 8];
+
+const state = {
+  recordings: [],
+  currentBaseId: null,
+  currentVideo: null,     // video_name string
+  currentFrame: 0,
+  totalFrames: 0,
+  videoWidth: 0,
+  videoHeight: 0,
+  videoFps: 15,
+  annotations: [],        // waggle runs for current video
+  showAnnotations: true,
+  showModelView: false,
+  isPlaying: false,
+  playbackSpeed: 1.0,
+  zoomLevel: 1,           // 1, 2, 4, or 8
+  focusedRunIdx: -1,      // which waggle run to center on (-1 = auto)
+  frameCache: new Map(),  // frame_idx → Image (loaded)
+  pendingLoads: new Set(), // frame indices currently loading
+  playTimerId: null,
+  modelViewSeed: 42,
+  showAugmented: false,
+  lastModelView: null,    // cached model view response
+};
+
+const PREFETCH_AHEAD = 24;
+const PREFETCH_BEHIND = 4;
+
+// ==========================================================================
+//  DOM refs
+// ==========================================================================
+const $ = (sel) => document.querySelector(sel);
+const canvas = $('#frame-canvas');
+const ctx = canvas.getContext('2d');
+const tlCanvas = $('#timeline-canvas');
+const tlCtx = tlCanvas.getContext('2d');
+
+// ==========================================================================
+//  API helpers
+// ==========================================================================
+async function api(path) {
+  const resp = await fetch(path);
+  if (!resp.ok) throw new Error(`API ${path}: ${resp.status}`);
+  return resp.json();
+}
+
+// ==========================================================================
+//  Recording list
+// ==========================================================================
+async function loadRecordingList() {
+  state.recordings = await api('/api/recordings');
+  renderRecordingList();
+}
+
+function renderRecordingList(filter = '') {
+  const list = $('#rec-list');
+  const lowerFilter = filter.toLowerCase();
+  list.innerHTML = state.recordings
+    .filter(r => !filter || r.base_id.toLowerCase().includes(lowerFilter))
+    .map(r => `
+      <div class="rec-item ${r.base_id === state.currentBaseId ? 'selected' : ''}"
+           data-base="${r.base_id}">
+        <span class="name">${r.base_id}</span>
+        <span class="count">${r.waggle_count} waggles</span>
+      </div>
+    `).join('');
+
+  list.querySelectorAll('.rec-item').forEach(el => {
+    el.addEventListener('click', () => selectRecording(el.dataset.base));
+  });
+}
+
+$('#search-box').addEventListener('input', (e) => {
+  renderRecordingList(e.target.value);
+});
+
+// ==========================================================================
+//  Select recording → show variant tabs
+// ==========================================================================
+async function selectRecording(baseId) {
+  state.currentBaseId = baseId;
+  renderRecordingList($('#search-box').value);
+
+  const rec = state.recordings.find(r => r.base_id === baseId);
+  if (!rec) return;
+
+  const tabs = $('#variant-tabs');
+  tabs.innerHTML = rec.variants.map(v => {
+    const label = v.width && v.height
+      ? `${v.width}×${v.height}${v.fps_tag !== '15fps' ? ' ' + v.fps_tag : ''}`
+      : v.video_name;
+    const cls = v.exists ? 'variant-tab' : 'variant-tab unavailable';
+    return `<div class="${cls}" data-video="${v.video_name}" title="${v.video_name}">${label}</div>`;
+  }).join('');
+
+  tabs.querySelectorAll('.variant-tab:not(.unavailable)').forEach(el => {
+    el.addEventListener('click', () => selectVideo(el.dataset.video));
+  });
+
+  // Auto-select first available variant
+  const first = rec.variants.find(v => v.exists);
+  if (first) selectVideo(first.video_name);
+}
+
+// ==========================================================================
+//  Select video → load info + annotations + frame
+// ==========================================================================
+async function selectVideo(videoName) {
+  stopPlayback();
+  state.currentVideo = videoName;
+  state.frameCache.clear();
+  state.pendingLoads.clear();
+  state.focusedRunIdx = -1; // reset zoom focus
+
+  // Highlight active tab
+  document.querySelectorAll('.variant-tab').forEach(el => {
+    el.classList.toggle('selected', el.dataset.video === videoName);
+  });
+
+  showLoading(true);
+  $('#empty-state').style.display = 'none';
+
+  try {
+    const [info, annotations] = await Promise.all([
+      api(`/api/video/${videoName}/info`),
+      api(`/api/video/${videoName}/annotations`),
+    ]);
+
+    state.totalFrames = info.total_frames;
+    state.videoWidth = info.width;
+    state.videoHeight = info.height;
+    state.videoFps = info.fps || 15;
+    state.annotations = annotations;
+
+    // Set canvas size to video resolution
+    canvas.width = state.videoWidth;
+    canvas.height = state.videoHeight;
+
+    renderRunList();
+
+    // Jump to first waggle run (with padding)
+    if (annotations.length > 0) {
+      const firstRun = annotations[0];
+      const pad = Math.round(state.videoFps); // 1 second
+      state.currentFrame = Math.max(0, firstRun.waggle_start - pad);
+    } else {
+      state.currentFrame = 0;
+    }
+
+    await loadAndRenderFrame(state.currentFrame);
+    prefetchAround(state.currentFrame);
+  } catch (err) {
+    console.error('Failed to load video:', err);
+  } finally {
+    showLoading(false);
+  }
+}
+
+// ==========================================================================
+//  Frame loading & rendering
+// ==========================================================================
+function loadFrameImage(frameIdx) {
+  return new Promise((resolve, reject) => {
+    if (state.frameCache.has(frameIdx)) {
+      resolve(state.frameCache.get(frameIdx));
+      return;
+    }
+    if (state.pendingLoads.has(frameIdx)) {
+      // Wait for existing load
+      const check = () => {
+        if (state.frameCache.has(frameIdx)) resolve(state.frameCache.get(frameIdx));
+        else setTimeout(check, 20);
+      };
+      check();
+      return;
+    }
+
+    state.pendingLoads.add(frameIdx);
+    const img = new Image();
+    img.onload = () => {
+      state.frameCache.set(frameIdx, img);
+      state.pendingLoads.delete(frameIdx);
+      // Evict old cache entries
+      if (state.frameCache.size > 200) {
+        const first = state.frameCache.keys().next().value;
+        state.frameCache.delete(first);
+      }
+      resolve(img);
+    };
+    img.onerror = () => {
+      state.pendingLoads.delete(frameIdx);
+      reject(new Error(`Failed to load frame ${frameIdx}`));
+    };
+    img.src = `/api/frame/${state.currentVideo}/${frameIdx}`;
+  });
+}
+
+async function loadAndRenderFrame(frameIdx) {
+  if (!state.currentVideo) return;
+  const idx = Math.max(0, Math.min(frameIdx, state.totalFrames - 1));
+  state.currentFrame = idx;
+
+  try {
+    const img = await loadFrameImage(idx);
+    renderFrameOnCanvas(img, idx);
+  } catch (err) {
+    // Draw error state
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#666';
+    ctx.font = '14px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Frame ${idx} unavailable`, canvas.width / 2, canvas.height / 2);
+  }
+
+  updateFrameInfo();
+  renderTimeline();
+  updateRunListHighlight();
+}
+
+function getZoomCenter(frameIdx) {
+  // Find the best bee position to center on:
+  // Priority: active waggle > focused run > nearest ghost > first run > frame center
+  const pad = Math.round(state.videoFps);
+
+  // If user has focused a specific run, use it
+  if (state.focusedRunIdx >= 0 && state.focusedRunIdx < state.annotations.length) {
+    const run = state.annotations[state.focusedRunIdx];
+    return { x: run.x, y: run.y };
+  }
+
+  // Find active runs
+  let bestActive = null, bestGhost = null, bestDist = Infinity;
+  for (const run of state.annotations) {
+    const isActive = frameIdx >= run.waggle_start && frameIdx <= run.waggle_end;
+    const isGhost = !isActive &&
+      frameIdx >= (run.waggle_start - pad) && frameIdx <= (run.waggle_end + pad);
+
+    if (isActive) {
+      // Prefer the run whose temporal midpoint is closest to current frame
+      const mid = (run.waggle_start + run.waggle_end) / 2;
+      const d = Math.abs(frameIdx - mid);
+      if (!bestActive || d < bestDist) {
+        bestActive = run;
+        bestDist = d;
+      }
+    } else if (isGhost && !bestActive) {
+      bestGhost = bestGhost || run;
+    }
+  }
+
+  const target = bestActive || bestGhost || state.annotations[0];
+  if (target) return { x: target.x, y: target.y };
+  return { x: state.videoWidth / 2, y: state.videoHeight / 2 };
+}
+
+function renderFrameOnCanvas(img, frameIdx) {
+  const Z = state.zoomLevel;
+
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (Z > 1) {
+    // Compute viewport centered on the bee
+    const center = getZoomCenter(frameIdx);
+    const viewW = canvas.width / Z;
+    const viewH = canvas.height / Z;
+
+    // Clamp so we don't go outside the video
+    let ox = center.x - viewW / 2;
+    let oy = center.y - viewH / 2;
+    ox = Math.max(0, Math.min(ox, canvas.width - viewW));
+    oy = Math.max(0, Math.min(oy, canvas.height - viewH));
+
+    ctx.scale(Z, Z);
+    ctx.translate(-ox, -oy);
+  }
+
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  if (state.showAnnotations) {
+    drawAnnotations(ctx, frameIdx, Z);
+  }
+
+  // Draw crop box if model view is open
+  if (state.showModelView && state.lastModelView) {
+    drawCropBox(ctx, state.lastModelView.crop, Z);
+  }
+
+  ctx.restore();
+
+  // Zoom indicator overlay (drawn outside the transform)
+  if (Z > 1) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.roundRect(canvas.width - 70, 10, 60, 28, 6);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${Z}×`, canvas.width - 40, 30);
+    ctx.restore();
+  }
+}
+
+function drawAnnotations(ctx, frameIdx, zoomLevel) {
+  const pad = Math.round(state.videoFps);
+  // Scale sizes inversely with zoom so they stay readable
+  const s = 1 / zoomLevel;
+
+  for (let i = 0; i < state.annotations.length; i++) {
+    const run = state.annotations[i];
+    const color = RUN_COLORS[i % RUN_COLORS.length];
+    const { waggle_start, waggle_end, x, y, dir_x, dir_y, run_id } = run;
+
+    const isActive = frameIdx >= waggle_start && frameIdx <= waggle_end;
+    const isGhostBefore = !isActive && frameIdx >= (waggle_start - pad) && frameIdx < waggle_start;
+    const isGhostAfter = !isActive && frameIdx > waggle_end && frameIdx <= (waggle_end + pad);
+    const isGhost = isGhostBefore || isGhostAfter;
+
+    if (!isActive && !isGhost) continue;
+
+    const alpha = isActive ? 1.0 : 0.25;
+
+    // Dot radius: keep ~8px visual size regardless of zoom
+    const dotR = isActive ? Math.max(8 * s, 3) : Math.max(6 * s, 2);
+
+    // Position dot
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(x, y, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (isActive) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(2 * s, 0.5);
+      ctx.stroke();
+    }
+
+    // Direction arrow
+    if (isActive) {
+      const arrowLen = Math.max(45 * s, 12);
+      const endX = x + dir_x * arrowLen;
+      const endY = y + dir_y * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(3 * s, 1);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = Math.max(10 * s, 4);
+      const angle = Math.atan2(dir_y, dir_x);
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2.5 * s, 0.8);
+      ctx.stroke();
+    }
+
+    // Label
+    if (isActive) {
+      const fontSize = Math.max(13 * s, 5);
+      const label = `R${run_id}`;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = x + 14 * s;
+      const ly = y - 14 * s;
+
+      const metrics = ctx.measureText(label);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(lx - 3 * s, ly - 12 * s, metrics.width + 6 * s, 16 * s);
+
+      ctx.fillStyle = color;
+      ctx.fillText(label, lx, ly);
+    }
+
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+function prefetchAround(center) {
+  if (!state.currentVideo) return;
+  for (let i = -PREFETCH_BEHIND; i <= PREFETCH_AHEAD; i++) {
+    const idx = center + i;
+    if (idx >= 0 && idx < state.totalFrames && !state.frameCache.has(idx)) {
+      loadFrameImage(idx).catch(() => {}); // fire and forget
+    }
+  }
+}
+
+// ==========================================================================
+//  Playback
+// ==========================================================================
+function startPlayback() {
+  if (state.isPlaying || !state.currentVideo) return;
+  state.isPlaying = true;
+  $('#btn-play').textContent = '⏸';
+
+  let lastTime = performance.now();
+  const interval = 1000 / (state.videoFps * state.playbackSpeed);
+
+  function tick() {
+    if (!state.isPlaying) return;
+    const now = performance.now();
+    const elapsed = now - lastTime;
+    const adjustedInterval = 1000 / (state.videoFps * state.playbackSpeed);
+
+    if (elapsed >= adjustedInterval) {
+      lastTime = now - (elapsed % adjustedInterval);
+      const next = state.currentFrame + 1;
+      if (next >= state.totalFrames) {
+        stopPlayback();
+        return;
+      }
+      loadAndRenderFrame(next);
+      prefetchAround(next);
+    }
+    state.playTimerId = requestAnimationFrame(tick);
+  }
+  state.playTimerId = requestAnimationFrame(tick);
+}
+
+function stopPlayback() {
+  state.isPlaying = false;
+  $('#btn-play').textContent = '▶';
+  if (state.playTimerId) {
+    cancelAnimationFrame(state.playTimerId);
+    state.playTimerId = null;
+  }
+}
+
+function togglePlayback() {
+  if (state.isPlaying) stopPlayback();
+  else startPlayback();
+}
+
+function stepFrame(delta) {
+  stopPlayback();
+  const next = state.currentFrame + delta;
+  if (next >= 0 && next < state.totalFrames) {
+    loadAndRenderFrame(next);
+    prefetchAround(next);
+  }
+}
+
+// ==========================================================================
+//  UI updates
+// ==========================================================================
+function updateFrameInfo() {
+  const info = $('#frame-info');
+  if (!state.currentVideo) {
+    info.innerHTML = 'No video loaded';
+    return;
+  }
+  info.innerHTML = `
+    Frame <strong>${state.currentFrame}</strong> / ${state.totalFrames - 1}
+    &nbsp;|&nbsp; ${state.videoWidth}×${state.videoHeight}
+    &nbsp;|&nbsp; ${state.videoFps}fps
+  `;
+}
+
+function showLoading(show) {
+  $('#loading-overlay').classList.toggle('visible', show);
+}
+
+// ==========================================================================
+//  Timeline
+// ==========================================================================
+function renderTimeline() {
+  const c = tlCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = c.getBoundingClientRect();
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  tlCtx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+
+  // Background
+  tlCtx.fillStyle = '#0a0a1a';
+  tlCtx.fillRect(0, 0, W, H);
+
+  if (state.totalFrames === 0) return;
+
+  const fps = state.videoFps;
+  const pad = Math.round(fps);
+
+  // Draw waggle run segments
+  for (let i = 0; i < state.annotations.length; i++) {
+    const run = state.annotations[i];
+    const color = RUN_COLORS[i % RUN_COLORS.length];
+
+    // Ghost (padding) region
+    const ghostStart = Math.max(0, run.waggle_start - pad) / state.totalFrames * W;
+    const ghostEnd = Math.min(state.totalFrames, run.waggle_end + pad) / state.totalFrames * W;
+    tlCtx.fillStyle = color + '20';
+    tlCtx.fillRect(ghostStart, 4, ghostEnd - ghostStart, H - 8);
+
+    // Active region
+    const x1 = run.waggle_start / state.totalFrames * W;
+    const x2 = run.waggle_end / state.totalFrames * W;
+    tlCtx.fillStyle = color + '80';
+    tlCtx.fillRect(x1, 2, Math.max(x2 - x1, 2), H - 4);
+  }
+
+  // Current frame indicator
+  const cx = state.currentFrame / state.totalFrames * W;
+  tlCtx.fillStyle = '#fff';
+  tlCtx.fillRect(cx - 1, 0, 2, H);
+}
+
+// Click on timeline to seek
+tlCanvas.addEventListener('click', (e) => {
+  if (state.totalFrames === 0) return;
+  const rect = tlCanvas.getBoundingClientRect();
+  const ratio = (e.clientX - rect.left) / rect.width;
+  const frame = Math.round(ratio * (state.totalFrames - 1));
+  stopPlayback();
+  loadAndRenderFrame(frame);
+  prefetchAround(frame);
+});
+
+// ==========================================================================
+//  Waggle run list
+// ==========================================================================
+function renderRunList() {
+  const list = $('#run-list');
+  list.innerHTML = state.annotations.map((run, i) => {
+    const color = RUN_COLORS[i % RUN_COLORS.length];
+    return `
+      <div class="run-chip" data-idx="${i}" data-start="${run.waggle_start}">
+        <span class="run-dot" style="background: ${color}"></span>
+        R${run.run_id}
+        <span class="run-frames">${run.waggle_start}–${run.waggle_end}</span>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.run-chip').forEach(el => {
+    el.addEventListener('click', () => jumpToRun(parseInt(el.dataset.idx)));
+  });
+}
+
+function jumpToRun(idx) {
+  const run = state.annotations[idx];
+  if (!run) return;
+  stopPlayback();
+  state.focusedRunIdx = idx; // lock zoom to this run
+  const pad = Math.round(state.videoFps);
+  const frame = Math.max(0, run.waggle_start - pad);
+  loadAndRenderFrame(frame);
+  prefetchAround(frame);
+}
+
+function updateRunListHighlight() {
+  document.querySelectorAll('.run-chip').forEach((el, i) => {
+    const run = state.annotations[i];
+    if (!run) return;
+    const active = state.currentFrame >= run.waggle_start && state.currentFrame <= run.waggle_end;
+    el.classList.toggle('active', active);
+  });
+}
+
+// ==========================================================================
+//  Random recording
+// ==========================================================================
+async function loadRandom() {
+  try {
+    const data = await api('/api/random');
+    selectRecording(data.base_id);
+    // Scroll sidebar to selection
+    setTimeout(() => {
+      const sel = document.querySelector('.rec-item.selected');
+      if (sel) sel.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 100);
+  } catch (err) {
+    console.error('Random failed:', err);
+  }
+}
+
+// ==========================================================================
+//  Event handlers
+// ==========================================================================
+
+// Buttons
+$('#btn-play').addEventListener('click', togglePlayback);
+$('#btn-prev').addEventListener('click', () => stepFrame(-1));
+$('#btn-next').addEventListener('click', () => stepFrame(1));
+$('#btn-skip-back').addEventListener('click', () => stepFrame(-10));
+$('#btn-skip-fwd').addEventListener('click', () => stepFrame(10));
+$('#btn-random').addEventListener('click', loadRandom);
+
+$('#btn-annotations').addEventListener('click', () => {
+  state.showAnnotations = !state.showAnnotations;
+  $('#btn-annotations').classList.toggle('active', state.showAnnotations);
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+});
+$('#btn-annotations').classList.add('active'); // default on
+
+function cycleZoom() {
+  const idx = ZOOM_LEVELS.indexOf(state.zoomLevel);
+  state.zoomLevel = ZOOM_LEVELS[(idx + 1) % ZOOM_LEVELS.length];
+  $('#btn-zoom').textContent = `🔍 ${state.zoomLevel}×`;
+  $('#btn-zoom').classList.toggle('active', state.zoomLevel > 1);
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+}
+
+$('#btn-zoom').addEventListener('click', cycleZoom);
+
+$('#speed-slider').addEventListener('input', (e) => {
+  state.playbackSpeed = parseFloat(e.target.value);
+  $('#speed-label').textContent = state.playbackSpeed + '×';
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  // Don't capture when typing in search
+  if (e.target.tagName === 'INPUT') return;
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      togglePlayback();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      stepFrame(e.shiftKey ? -10 : -1);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      stepFrame(e.shiftKey ? 10 : 1);
+      break;
+    case 'KeyA':
+      state.showAnnotations = !state.showAnnotations;
+      $('#btn-annotations').classList.toggle('active', state.showAnnotations);
+      if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+      break;
+    case 'KeyR':
+      loadRandom();
+      break;
+    case 'KeyZ':
+      cycleZoom();
+      break;
+    case 'KeyM':
+      toggleModelView();
+      break;
+    default:
+      // Number keys 1-9 → jump to waggle run
+      if (e.code.startsWith('Digit') && !e.shiftKey && !e.ctrlKey) {
+        const n = parseInt(e.code.replace('Digit', '')) - 1;
+        if (n >= 0 && n < state.annotations.length) jumpToRun(n);
+      }
+  }
+});
+
+// Resize handler
+window.addEventListener('resize', () => {
+  renderTimeline();
+});
+
+// ==========================================================================
+//  Model View
+// ==========================================================================
+const mvCropCanvas = $('#mv-crop-canvas');
+const mvCropCtx = mvCropCanvas.getContext('2d');
+const mvAugCanvas = $('#mv-aug-canvas');
+const mvAugCtx = mvAugCanvas.getContext('2d');
+
+function toggleModelView() {
+  state.showModelView = !state.showModelView;
+  $('#model-view-panel').classList.toggle('open', state.showModelView);
+  $('#btn-model-view').classList.toggle('active', state.showModelView);
+  if (state.showModelView && state.currentVideo) {
+    fetchModelView();
+  }
+}
+
+async function fetchModelView() {
+  if (!state.showModelView || !state.currentVideo) return;
+
+  // Find active waggle run for current frame
+  const run = getActiveRun(state.currentFrame);
+  if (!run) {
+    $('#mv-crop-meta').innerHTML = '<em>No waggle run at current frame</em>';
+    return;
+  }
+
+  const params = new URLSearchParams({
+    frame: state.currentFrame,
+    x: run.x,
+    y: run.y,
+    dir_x: run.dir_x,
+    dir_y: run.dir_y,
+    seed: state.modelViewSeed,
+    augment: state.showAugmented ? 'true' : 'false',
+  });
+
+  try {
+    const data = await api(`/api/model_view/${state.currentVideo}?${params}`);
+    state.lastModelView = data;
+    renderModelViewCrop(data);
+    if (data.augmented_image) {
+      renderModelViewAug(data);
+    }
+    // Re-render main canvas to show crop box
+    if (state.frameCache.has(state.currentFrame)) {
+      renderFrameOnCanvas(state.frameCache.get(state.currentFrame), state.currentFrame);
+    }
+  } catch (err) {
+    console.error('Model view failed:', err);
+  }
+}
+
+function getActiveRun(frameIdx) {
+  const pad = Math.round(state.videoFps);
+  // Prefer focused run
+  if (state.focusedRunIdx >= 0 && state.focusedRunIdx < state.annotations.length) {
+    return state.annotations[state.focusedRunIdx];
+  }
+  // Find active waggle
+  for (const run of state.annotations) {
+    if (frameIdx >= run.waggle_start && frameIdx <= run.waggle_end) return run;
+  }
+  // Find nearest ghost
+  for (const run of state.annotations) {
+    if (frameIdx >= (run.waggle_start - pad) && frameIdx <= (run.waggle_end + pad)) return run;
+  }
+  // Fall back to first run
+  return state.annotations[0] || null;
+}
+
+function renderModelViewCrop(data) {
+  const img = new Image();
+  img.onload = () => {
+    mvCropCtx.clearRect(0, 0, 224, 224);
+    mvCropCtx.drawImage(img, 0, 0, 224, 224);
+
+    // Draw bee position
+    const bx = data.crop.bee_in_crop.x;
+    const by = data.crop.bee_in_crop.y;
+    mvCropCtx.beginPath();
+    mvCropCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    mvCropCtx.fillStyle = '#22c55e';
+    mvCropCtx.fill();
+    mvCropCtx.strokeStyle = '#fff';
+    mvCropCtx.lineWidth = 1.5;
+    mvCropCtx.stroke();
+
+    // Draw direction arrow using run data
+    const run = getActiveRun(state.currentFrame);
+    if (run) {
+      const arrowLen = 35;
+      const endX = bx + run.dir_x * arrowLen;
+      const endY = by + run.dir_y * arrowLen;
+      mvCropCtx.beginPath();
+      mvCropCtx.moveTo(bx, by);
+      mvCropCtx.lineTo(endX, endY);
+      mvCropCtx.strokeStyle = '#22c55e';
+      mvCropCtx.lineWidth = 2;
+      mvCropCtx.stroke();
+
+      // Arrowhead
+      const angle = Math.atan2(run.dir_y, run.dir_x);
+      mvCropCtx.beginPath();
+      mvCropCtx.moveTo(endX, endY);
+      mvCropCtx.lineTo(endX - 8 * Math.cos(angle - 0.4), endY - 8 * Math.sin(angle - 0.4));
+      mvCropCtx.moveTo(endX, endY);
+      mvCropCtx.lineTo(endX - 8 * Math.cos(angle + 0.4), endY - 8 * Math.sin(angle + 0.4));
+      mvCropCtx.strokeStyle = '#22c55e';
+      mvCropCtx.lineWidth = 2;
+      mvCropCtx.stroke();
+    }
+  };
+  img.src = 'data:image/jpeg;base64,' + data.crop_image;
+
+  // Meta info
+  const ratio = data.crop_to_video_ratio;
+  const pct = Math.round(ratio * 100);
+  const barW = Math.round(pct * 1.5); // scale for visual
+  $('#mv-crop-meta').innerHTML = `
+    Video: <strong>${data.video_resolution.w}×${data.video_resolution.h}</strong><br>
+    Crop covers: <strong>${pct}%</strong> of longest dimension
+    <span class="ratio-bar" style="width:${barW}px"></span><br>
+    Offset: (${data.crop.offset_x}, ${data.crop.offset_y}) &nbsp;
+    Bee at: (${data.crop.bee_in_crop.x}, ${data.crop.bee_in_crop.y})
+  `;
+}
+
+function renderModelViewAug(data) {
+  if (!data.augmented_image) return;
+  $('#mv-aug-wrap').style.display = 'block';
+
+  const img = new Image();
+  img.onload = () => {
+    mvAugCtx.clearRect(0, 0, 224, 224);
+    mvAugCtx.drawImage(img, 0, 0, 224, 224);
+
+    // Draw augmented bee position
+    if (data.augmented_target) {
+      const ax = data.augmented_target.x;
+      const ay = data.augmented_target.y;
+      mvAugCtx.beginPath();
+      mvAugCtx.arc(ax, ay, 5, 0, Math.PI * 2);
+      mvAugCtx.fillStyle = '#f59e0b';
+      mvAugCtx.fill();
+      mvAugCtx.strokeStyle = '#fff';
+      mvAugCtx.lineWidth = 1.5;
+      mvAugCtx.stroke();
+
+      // Direction arrow
+      const arrowLen = 35;
+      const endX = ax + data.augmented_target.dir_x * arrowLen;
+      const endY = ay + data.augmented_target.dir_y * arrowLen;
+      mvAugCtx.beginPath();
+      mvAugCtx.moveTo(ax, ay);
+      mvAugCtx.lineTo(endX, endY);
+      mvAugCtx.strokeStyle = '#f59e0b';
+      mvAugCtx.lineWidth = 2;
+      mvAugCtx.stroke();
+
+      const angle = Math.atan2(data.augmented_target.dir_y, data.augmented_target.dir_x);
+      mvAugCtx.beginPath();
+      mvAugCtx.moveTo(endX, endY);
+      mvAugCtx.lineTo(endX - 8 * Math.cos(angle - 0.4), endY - 8 * Math.sin(angle - 0.4));
+      mvAugCtx.moveTo(endX, endY);
+      mvAugCtx.lineTo(endX - 8 * Math.cos(angle + 0.4), endY - 8 * Math.sin(angle + 0.4));
+      mvAugCtx.strokeStyle = '#f59e0b';
+      mvAugCtx.lineWidth = 2;
+      mvAugCtx.stroke();
+    }
+  };
+  img.src = 'data:image/jpeg;base64,' + data.augmented_image;
+
+  // Show augmentation info
+  const infoEl = $('#mv-aug-info');
+  if (data.aug_info && data.aug_info.length > 0) {
+    infoEl.innerHTML = data.aug_info.map(a => `<span>${a}</span>`).join(' ');
+  } else {
+    infoEl.innerHTML = '<span>No augmentations applied</span>';
+  }
+}
+
+function drawCropBox(ctx, crop, zoomLevel) {
+  if (!crop) return;
+  const s = 1 / zoomLevel;
+
+  ctx.save();
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = Math.max(2 * s, 0.5);
+  ctx.setLineDash([Math.max(8 * s, 2), Math.max(4 * s, 1)]);
+  ctx.strokeRect(crop.x_min, crop.y_min, crop.x_max - crop.x_min, crop.y_max - crop.y_min);
+  ctx.setLineDash([]);
+
+  // Label
+  const fontSize = Math.max(11 * s, 4);
+  ctx.font = `bold ${fontSize}px Inter`;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  const labelText = '224×224 crop';
+  const tw = ctx.measureText(labelText).width;
+  ctx.fillRect(crop.x_min, crop.y_min - fontSize - 4 * s, tw + 6 * s, fontSize + 4 * s);
+  ctx.fillStyle = '#f59e0b';
+  ctx.textAlign = 'left';
+  ctx.fillText(labelText, crop.x_min + 3 * s, crop.y_min - 3 * s);
+  ctx.restore();
+}
+
+// Model view button and events
+$('#btn-model-view').addEventListener('click', toggleModelView);
+
+$('#mv-btn-augment').addEventListener('click', () => {
+  state.showAugmented = !state.showAugmented;
+  $('#mv-btn-augment').classList.toggle('active', state.showAugmented);
+  if (!state.showAugmented) {
+    $('#mv-aug-wrap').style.display = 'none';
+    $('#mv-aug-info').innerHTML = '';
+  }
+  fetchModelView();
+});
+
+$('#mv-btn-reroll').addEventListener('click', () => {
+  state.modelViewSeed = Math.floor(Math.random() * 100000);
+  fetchModelView();
+});
+
+// Hook into frame changes to update model view
+const _origLoadAndRender = loadAndRenderFrame;
+loadAndRenderFrame = async function(frameIdx) {
+  await _origLoadAndRender(frameIdx);
+  if (state.showModelView) {
+    fetchModelView();
+  }
+};
+
+// Keyboard: M = toggle model view
+// (patched into existing keydown handler below)
+
+// ==========================================================================
+//  Init
+// ==========================================================================
+(async function init() {
+  await loadRecordingList();
+  updateFrameInfo();
+  renderTimeline();
+})();
+</script>
+</body>
+</html>

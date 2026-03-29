@@ -12,15 +12,21 @@ Usage:
 """
 
 import argparse
+import base64
 import re
 import os
+import sys
 import threading
 from collections import OrderedDict
 
 import cv2
 import numpy as np
 import pandas as pd
+import yaml
 from flask import Flask, render_template, jsonify, Response, request
+
+# Add project root to path so we can import training code
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -28,7 +34,9 @@ from flask import Flask, render_template, jsonify, Response, request
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 VIDEO_DIR = os.path.join(DATA_DIR, "videos")
-ANNOTATIONS_PATH = os.path.join(DATA_DIR, "annotations", "fps_multires_full_data.csv")
+ANNOTATIONS_PATH = os.path.join(DATA_DIR, "annotations", "fps_multires_clean.csv")
+CONFIG_PATH = os.path.join(BASE_DIR, "configs", "config.yaml")
+CROP_SIZE = 224  # must match config
 
 FRAME_CACHE_SIZE = 512   # max decoded JPEG frames in memory
 JPEG_QUALITY = 85
@@ -275,6 +283,196 @@ def api_random():
     if not candidates:
         return jsonify({"error": "No videos found on disk"}), 404
     return jsonify({"base_id": random.choice(candidates)})
+
+
+# ---------------------------------------------------------------------------
+# Model View — exact training pipeline crop + augmentation
+# ---------------------------------------------------------------------------
+
+def _load_augmenter():
+    """Lazily load the augmenter from training config."""
+    if not hasattr(_load_augmenter, '_instance'):
+        try:
+            from src.data.augmentation import WaggleAugmentations
+            with open(CONFIG_PATH) as f:
+                config = yaml.safe_load(f)
+            aug_cfg = config['augmentations']
+            _load_augmenter._instance = WaggleAugmentations(
+                width=aug_cfg['width'], height=aug_cfg['height'],
+                prob_flip_h=aug_cfg['prob_flip_h'],
+                prob_flip_v=aug_cfg['prob_flip_v'],
+                prob_rotate=aug_cfg['prob_rotate'],
+                rotate_range=aug_cfg['rotate_range'],
+                prob_scale=aug_cfg['prob_scale'],
+                scale_range=aug_cfg['scale_range'],
+                prob_translate=aug_cfg['prob_translate'],
+                translate_range=aug_cfg['translate_range'],
+                prob_hsv=aug_cfg['prob_hsv'],
+                hsv_hue=aug_cfg['hsv_hue'],
+                hsv_saturation=aug_cfg['hsv_saturation'],
+                hsv_value=aug_cfg['hsv_value'],
+                prob_brightness=aug_cfg['prob_brightness'],
+                brightness_range=aug_cfg['brightness_range'],
+                prob_contrast=aug_cfg['prob_contrast'],
+                contrast_range=aug_cfg['contrast_range'],
+                prob_gamma=aug_cfg['prob_gamma'],
+                gamma_range=aug_cfg['gamma_range'],
+                prob_blur=aug_cfg['prob_blur'],
+                blur_range=aug_cfg['blur_range'],
+                prob_clahe=aug_cfg['prob_clahe'],
+                clahe_clip_limit=aug_cfg['clahe_clip_limit'],
+                clahe_tile_grid_size=aug_cfg['clahe_tile_grid_size'],
+                prob_color_shuffle=aug_cfg['prob_color_shuffle'],
+                prob_posterize=aug_cfg['prob_posterize'],
+                posterize_bits=aug_cfg['posterize_bits'],
+                prob_greyscale=aug_cfg['prob_greyscale'],
+                normalize=False,  # Don't normalize — we want visible pixels
+                mean=aug_cfg['mean'], std=aug_cfg['std'],
+            )
+            print("  Loaded augmenter from config")
+        except Exception as e:
+            print(f"  Warning: could not load augmenter: {e}")
+            _load_augmenter._instance = None
+    return _load_augmenter._instance
+
+
+def _frame_to_tensor(frame_bgr):
+    """BGR numpy → CHW float32 tensor, matching dataset.py pipeline."""
+    import torch
+    from torchvision.transforms import ToTensor
+    to_tensor = ToTensor()
+    return to_tensor(frame_bgr)  # HWC uint8 → CHW float [0,1]
+
+
+def _tensor_to_jpeg(tensor, greyscale=True):
+    """CHW float tensor → base64 JPEG string."""
+    import torch
+    # Clamp to [0,1]
+    t = tensor.clamp(0, 1)
+    # CHW → HWC uint8
+    arr = (t.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    if greyscale and arr.shape[2] == 3:
+        arr_gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        arr = cv2.cvtColor(arr_gray, cv2.COLOR_GRAY2BGR)
+    else:
+        arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    _, buf = cv2.imencode('.jpg', arr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    return base64.b64encode(buf).decode('ascii')
+
+
+@app.route("/api/model_view/<video_name>")
+def api_model_view(video_name):
+    """Compute and return the model's view for a given frame + bee position.
+
+    Query params:
+        frame: frame index
+        x, y: bee position in full-resolution coordinates
+        dir_x, dir_y: direction vector
+        seed: random seed for crop offset (default: 42)
+        augment: 'true' to also return augmented version
+    """
+    import torch
+    from torchvision import transforms as T
+
+    frame_idx = int(request.args.get('frame', 0))
+    bee_x = float(request.args.get('x', 0))
+    bee_y = float(request.args.get('y', 0))
+    dir_x = float(request.args.get('dir_x', 1.0))
+    dir_y = float(request.args.get('dir_y', 0.0))
+    seed = int(request.args.get('seed', 42))
+    do_augment = request.args.get('augment', 'false').lower() == 'true'
+
+    # --- Load raw frame ---
+    cap, lock = frame_server._get_cap(video_name)
+    with lock:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame_bgr = cap.read()
+    if not ret:
+        return jsonify({"error": "Cannot read frame"}), 404
+
+    original_h, original_w = frame_bgr.shape[:2]
+    crop_h, crop_w = CROP_SIZE, CROP_SIZE
+
+    # --- Replicate exact crop logic from dataset.py L140-156 ---
+    rng = np.random.RandomState(seed=seed)
+    margin_x = int(crop_w * 0.2)
+    margin_y = int(crop_h * 0.2)
+    max_offset_x = (crop_w // 2) - margin_x
+    max_offset_y = (crop_h // 2) - margin_y
+    offset_x = rng.randint(-max_offset_x, max_offset_x + 1)
+    offset_y = rng.randint(-max_offset_y, max_offset_y + 1)
+
+    x_min_ideal = int(bee_x - crop_w / 2) + offset_x
+    y_min_ideal = int(bee_y - crop_h / 2) + offset_y
+    x_min = max(0, min(original_w - crop_w, x_min_ideal))
+    y_min = max(0, min(original_h - crop_h, y_min_ideal))
+    x_max = x_min + crop_w
+    y_max = y_min + crop_h
+
+    # Crop
+    crop_bgr = frame_bgr[y_min:y_max, x_min:x_max]
+
+    # Bee position in crop space
+    bee_in_crop_x = bee_x - x_min
+    bee_in_crop_y = bee_y - y_min
+
+    # --- Apply transforms: Grayscale (matching dataset.py pipeline) ---
+    # ToTensor → ToPILImage → Resize(224) → Grayscale(3) → ToTensor
+    crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+    crop_tensor = _frame_to_tensor(crop_rgb)
+
+    transform = T.Compose([
+        T.ToPILImage(),
+        T.Resize((CROP_SIZE, CROP_SIZE)),
+        T.Grayscale(num_output_channels=3),
+        T.ToTensor(),
+    ])
+    crop_transformed = transform(crop_tensor)
+
+    # Encode crop as base64 JPEG
+    crop_b64 = _tensor_to_jpeg(crop_transformed, greyscale=True)
+
+    result = {
+        "crop": {
+            "x_min": int(x_min), "y_min": int(y_min),
+            "x_max": int(x_max), "y_max": int(y_max),
+            "offset_x": int(offset_x), "offset_y": int(offset_y),
+            "bee_in_crop": {"x": round(bee_in_crop_x, 1), "y": round(bee_in_crop_y, 1)},
+        },
+        "video_resolution": {"w": original_w, "h": original_h},
+        "crop_to_video_ratio": round(CROP_SIZE / max(original_w, original_h), 3),
+        "crop_image": crop_b64,
+    }
+
+    # --- Augmentation (optional) ---
+    if do_augment:
+        augmenter = _load_augmenter()
+        if augmenter:
+            target_dict = {
+                "x": bee_in_crop_x,
+                "y": bee_in_crop_y,
+                "dir_x": dir_x,
+                "dir_y": dir_y,
+            }
+            # Augment expects a list of CHW tensors
+            aug_frames, aug_target, aug_info = augmenter(
+                [crop_transformed.clone()], target_dict
+            )
+            # Undo normalization for display if it was applied
+            aug_frame = aug_frames[0]
+            result["augmented_image"] = _tensor_to_jpeg(aug_frame, greyscale=True)
+            result["augmented_target"] = {
+                "x": round(float(aug_target["x"]), 1),
+                "y": round(float(aug_target["y"]), 1),
+                "dir_x": round(float(aug_target["dir_x"]), 3),
+                "dir_y": round(float(aug_target["dir_y"]), 3),
+            }
+            result["aug_info"] = aug_info if aug_info else []
+        else:
+            result["augmented_image"] = None
+            result["aug_info"] = ["Augmenter not available"]
+
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------
