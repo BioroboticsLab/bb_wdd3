@@ -564,7 +564,7 @@ def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 3
                 # AP from greedy sweep always included
                 precisions_curve = np.concatenate([[1.0], precisions])
                 recalls_curve    = np.concatenate([[0.0], recalls])
-                ap = float(np.trapz(precisions_curve, recalls_curve))
+                ap = float(np.trapezoid(precisions_curve, recalls_curve))
                 ap_scores.append(ap)
 
                 # downstream spatial/temporal/directional use hungarian pairs if available
