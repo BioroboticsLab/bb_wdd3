@@ -86,8 +86,17 @@ def create_downsampled_video(src_path: str, dst_path: str, factor: int) -> int:
     return out_count
 
 
-def create_downsampled_annotations(df: pd.DataFrame, src_video: str, dst_video: str, factor: int) -> pd.DataFrame:
-    """Create annotation rows for a downsampled video."""
+def create_downsampled_annotations(df: pd.DataFrame, src_video: str, dst_video: str,
+                                    factor: int, target_window: int = 16,
+                                    video_frame_count: int = None) -> pd.DataFrame:
+    """Create annotation rows for a downsampled video.
+    
+    Instead of simply dividing all frame columns by `factor` (which shrinks
+    the window from 16 to 16/factor), we:
+      1. Convert waggle_start / waggle_end to the new timebase
+      2. Recompute start_frame / end_frame to keep a full `target_window`-frame window
+      3. Recompute waggle_start_in_window / waggle_end_in_window accordingly
+    """
     src_rows = df[df["video_name"] == src_video].copy()
     if len(src_rows) == 0:
         return pd.DataFrame()
@@ -95,12 +104,54 @@ def create_downsampled_annotations(df: pd.DataFrame, src_video: str, dst_video: 
     dst_rows = src_rows.copy()
     dst_rows["video_name"] = dst_video
     
-    # Scale all frame-based columns by the downsampling factor
-    frame_cols = ["start_frame", "end_frame", "waggle_start", "waggle_end",
-                  "waggle_start_in_window", "waggle_end_in_window"]
-    for col in frame_cols:
+    # Max frame index in downsampled video (for clamping)
+    max_frame = (video_frame_count - 1) if video_frame_count else None
+    
+    # Convert absolute waggle positions to new timebase
+    for col in ["waggle_start", "waggle_end"]:
         if col in dst_rows.columns:
             dst_rows[col] = (dst_rows[col] / factor).astype(int)
+    
+    # For each row, recompute the window to be target_window frames
+    new_starts = []
+    new_ends = []
+    new_ws_in_win = []
+    new_we_in_win = []
+    
+    for _, row in dst_rows.iterrows():
+        # Original window midpoint in source timebase, converted
+        orig_start = int(row["start_frame"] / factor)
+        orig_end = int(row["end_frame"] / factor)
+        mid = (orig_start + orig_end) // 2
+        
+        # Create target_window-sized window centered on midpoint
+        new_start = mid - target_window // 2
+        new_end = new_start + target_window
+        
+        # Clamp to video bounds
+        if max_frame is not None:
+            if new_end > max_frame + 1:
+                new_end = max_frame + 1
+                new_start = new_end - target_window
+            if new_start < 0:
+                new_start = 0
+                new_end = new_start + target_window
+        if new_start < 0:
+            new_start = 0
+        
+        new_starts.append(new_start)
+        new_ends.append(new_end)
+        
+        # Recompute waggle position within the new window
+        ws = row["waggle_start"]
+        we = row["waggle_end"]
+        new_ws_in_win.append(max(ws, new_start))  # clamp to window
+        new_we_in_win.append(min(we, new_end))     # clamp to window
+    
+    dst_rows["start_frame"] = new_starts
+    dst_rows["end_frame"] = new_ends
+    dst_rows["waggle_start_in_window"] = new_ws_in_win
+    dst_rows["waggle_end_in_window"] = new_we_in_win
     
     # Coordinates stay the same (same resolution, just fewer frames)
     return dst_rows
@@ -175,20 +226,28 @@ def main():
         dst_30 = f"{base_name}_ds30fps.mp4"
         dst_30_path = os.path.join(VIDEO_DIR, dst_30)
         if not os.path.exists(dst_30_path):
-            create_downsampled_video(vpath, dst_30_path, factor=2)
+            n_frames_30 = create_downsampled_video(vpath, dst_30_path, factor=2)
         else:
             print(f"  Skipping {dst_30} (already exists)")
-        new_rows_30 = create_downsampled_annotations(df, vname, dst_30, factor=2)
+            cap = cv2.VideoCapture(dst_30_path)
+            n_frames_30 = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+        new_rows_30 = create_downsampled_annotations(df, vname, dst_30, factor=2,
+                                                      video_frame_count=n_frames_30)
         new_annotation_rows.append(new_rows_30)
         
         # Create 15fps version (every 4th frame)
         dst_15 = f"{base_name}_ds15fps.mp4"
         dst_15_path = os.path.join(VIDEO_DIR, dst_15)
         if not os.path.exists(dst_15_path):
-            create_downsampled_video(vpath, dst_15_path, factor=4)
+            n_frames_15 = create_downsampled_video(vpath, dst_15_path, factor=4)
         else:
             print(f"  Skipping {dst_15} (already exists)")
-        new_rows_15 = create_downsampled_annotations(df, vname, dst_15, factor=4)
+            cap = cv2.VideoCapture(dst_15_path)
+            n_frames_15 = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+        new_rows_15 = create_downsampled_annotations(df, vname, dst_15, factor=4,
+                                                      video_frame_count=n_frames_15)
         new_annotation_rows.append(new_rows_15)
     
     if new_annotation_rows:
