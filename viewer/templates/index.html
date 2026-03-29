@@ -355,7 +355,7 @@ kbd {
   width: 0; min-width: 0;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
-  overflow-y: auto;
+  overflow: hidden;
   transition: width 0.25s ease, min-width 0.25s ease, padding 0.25s ease;
   display: flex; flex-direction: column;
   padding: 0;
@@ -363,12 +363,14 @@ kbd {
 #pipeline-panel.open {
   width: 520px; min-width: 520px;
   padding: 12px;
+  overflow: hidden;
 }
 .pi-header {
   display: none;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  flex-shrink: 0;
 }
 #pipeline-panel.open .pi-header { display: flex; }
 .pi-title {
@@ -393,6 +395,7 @@ kbd {
   gap: 2px;
   margin-bottom: 10px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 #pipeline-panel.open .pi-tabs { display: flex; }
 .pi-tab {
@@ -413,10 +416,12 @@ kbd {
 }
 .pi-content {
   display: none;
-  min-height: 60px;
+  min-height: 0;
   position: relative;
+  flex: 1 1 0;
+  overflow-y: auto;
 }
-#pipeline-panel.open .pi-content { display: block; }
+#pipeline-panel.open .pi-content { display: flex; flex-direction: column; }
 .pi-loading {
   font-size: 12px; color: var(--amber);
   text-align: center; padding: 20px;
@@ -428,7 +433,8 @@ kbd {
 }
 .pi-options {
   display: none;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
 }
 #pipeline-panel.open .pi-options { display: block; }
 .pi-toggle {
@@ -440,7 +446,8 @@ kbd {
   accent-color: var(--accent);
 }
 .pi-player-wrap {
-  margin-top: 10px;
+  margin-top: 4px;
+  flex-shrink: 0;
 }
 .pi-player-label {
   font-size: 10px; color: var(--text-muted);
@@ -492,18 +499,17 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 .pi-metadata {
-  display: none;
-  margin-top: 10px;
+  margin-top: 6px;
   font-size: 11px;
   color: var(--text-secondary);
   background: var(--bg-card);
   border-radius: 6px;
   padding: 10px;
   line-height: 1.7;
-  max-height: 300px;
+  flex: 1 1 0;
+  min-height: 60px;
   overflow-y: auto;
 }
-#pipeline-panel.open .pi-metadata { display: block; }
 .pi-metadata .meta-key {
   color: var(--text-muted);
   font-size: 10px;
@@ -723,18 +729,18 @@ kbd {
     <div class="pi-content" id="pi-content">
       <div class="pi-loading" id="pi-loading" style="display:none;">⏳ Loading stage...</div>
       <div class="pi-empty" id="pi-empty">Select a video and click a tab to inspect the pipeline.</div>
-    </div>
-    <!-- Video player for frames -->
-    <div class="pi-player-wrap" id="pi-player-wrap" style="display:none;">
-      <div class="pi-player-label" id="pi-player-label">Frames</div>
-      <canvas id="pi-player-canvas" width="480" height="480"></canvas>
-      <div class="pi-player-controls">
-        <button class="pi-play-btn" id="pi-play-btn" title="Play/Pause">▶</button>
-        <input type="range" class="pi-scrubber" id="pi-scrubber" min="0" max="15" value="0">
-        <span class="pi-frame-info" id="pi-frame-info">0/0</span>
+      <!-- Video player for frames -->
+      <div class="pi-player-wrap" id="pi-player-wrap" style="display:none;">
+        <div class="pi-player-label" id="pi-player-label">Frames</div>
+        <canvas id="pi-player-canvas" width="480" height="480"></canvas>
+        <div class="pi-player-controls">
+          <button class="pi-play-btn" id="pi-play-btn" title="Play/Pause">▶</button>
+          <input type="range" class="pi-scrubber" id="pi-scrubber" min="0" max="15" value="0">
+          <span class="pi-frame-info" id="pi-frame-info">0/0</span>
+        </div>
       </div>
+      <div class="pi-metadata" id="pi-metadata"></div>
     </div>
-    <div class="pi-metadata" id="pi-metadata"></div>
   </aside>
 </main>
 

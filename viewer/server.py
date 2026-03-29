@@ -725,6 +725,42 @@ def api_pipeline(video_name):
         })
         return jsonify({'stage': 'transform', 'frames': frame_images, 'metadata': meta})
 
+    # ── Stage: NORMALIZE ────────────────────────────────────────────────
+    elif stage == 'normalize':
+        config = _insp_config
+        mean = config['augmentations']['mean']
+        std = config['augmentations']['std']
+        mean_t = torch.tensor(mean).view(3, 1, 1)
+        std_t = torch.tensor(std).view(3, 1, 1)
+        norm = T.Normalize(mean=mean, std=std)
+
+        frame_images = []
+        pixel_stats_pre = []
+        pixel_stats_post = []
+        for t in dbg['transformed']:
+            pixel_stats_pre.append({
+                'min': round(float(t.min()), 4),
+                'max': round(float(t.max()), 4),
+                'mean': round(float(t.mean()), 4),
+            })
+            t_norm = norm(t)
+            pixel_stats_post.append({
+                'min': round(float(t_norm.min()), 4),
+                'max': round(float(t_norm.max()), 4),
+                'mean': round(float(t_norm.mean()), 4),
+            })
+            # De-normalize for display
+            t_denorm = t_norm * std_t + mean_t
+            frame_images.append(_tensor_to_jpeg(t_denorm, greyscale=True))
+
+        meta.update({
+            'n_frames': len(frame_images),
+            'normalization': {'mean': mean, 'std': std},
+            'pixel_stats_pre_norm': pixel_stats_pre,
+            'pixel_stats_post_norm': pixel_stats_post,
+        })
+        return jsonify({'stage': 'normalize', 'frames': frame_images, 'metadata': meta})
+
     # ── Stage: SAMPLE ───────────────────────────────────────────────────
     elif stage == 'sample':
         frame_images = [_tensor_to_jpeg(t, greyscale=True) for t in dbg['sampled']]
