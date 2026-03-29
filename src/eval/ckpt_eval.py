@@ -28,7 +28,7 @@ from src.utils.video_utils import frames_to_video
 from src.utils.draw_utils import  draw_waggle, draw_waggle_batch, draw_waggle_batch_union
 from src.utils.model_utils import load_pretrained_model, EMA
 from src.utils.video_utils import get_video_category
-from src.utils.diagnostic import compute_pass_rates, plot_confidence_histogram, summarize_detection_stats
+from src.utils.diagnostic import compute_pass_rates, plot_confidence_histogram
 import wandb
 
 SEED = 42
