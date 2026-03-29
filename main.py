@@ -280,10 +280,23 @@ def main(args):
         else:
             model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_score = checkpoint['best_score']
+
+        if args.reset_scheduler:
+            remaining_epochs = config['train']['epochs'] - start_epoch
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=config['train']['lr'],
+                steps_per_epoch=len(train_loader),
+                epochs=remaining_epochs,
+                anneal_strategy='cos',
+                pct_start=config['train']['warmup_ratio']
+            )
+            print(f"Scheduler RESET for {remaining_epochs} remaining epochs (new steps_per_epoch={len(train_loader)})")
+        else:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
         if 'ema_state_dict' in checkpoint:
             ema.load_state_dict(checkpoint['ema_state_dict'])
@@ -314,57 +327,69 @@ def main(args):
         ema.apply_shadow()
         val_loss, val_log = eval(model, device, yolocriteria, test_loader, epoch)
 
-        # fetch gt and preds
-        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader, device)
-       
-        # Transform yolo coordinates onto image domain for both gt and predicted values
-        test_gts = yolo_to_img_space_gt(test_gt_raw, 
-                                        all_starts=test_all_starts, 
-                                        all_ends=test_all_ends,
-                                        window_size = config['data']['window_size'],
-                                        original_size=(config['data']['width'],
-                                                       config['data']['height']))
-        
-        test_preds  = yolo_to_img_space(test_preds_raw, 
-                                        all_starts=test_all_starts, 
-                                        all_ends=test_all_ends, 
-                                        confidence_threshold=config['eval']['confidence_threshold'], 
-                                        window_size = config['data']['window_size'],
-                                        original_size=(config['data']['width'],
-                                                       config['data']['height']),
-                                                       max_dets=config['eval']['max_dets'])
-        
-        # Post Process all predictions
-        post_test_preds = batch_postprocess_predictions(test_preds, 
-                                                        spatial_threshold=config['post_process']['spatial_threshold'], 
-                                                        temporal_threshold=config['post_process']['temporal_threshold'], 
-                                                        confidence_threshold=config['post_process']['confidence_threshold'], 
-                                                        strategy=config['post_process']['strategy'], 
-                                                        mode=config['post_process']['mode'],
-                                                        remove_outliers=config['post_process']['outlier_detection'],
-                                                        outlier_method='isolation_forest')
-        
-        test_metrics = get_eval_metrics(test_preds, test_gts, 
-                                        pos_thresholds=config['eval']['pos_thresholds'],
-                                        iou_threshold_range=config['eval']['iou_thresholds'],
-                                        angular_thresholds=config['eval']['angular_thresholds'],
-                                        match_pairs=config['eval']['match_pairs'])
-        
-        post_test_metrics = get_eval_metrics(post_test_preds, test_gts, 
-                                        pos_thresholds=config['eval']['pos_thresholds'],
-                                        iou_threshold_range=config['eval']['iou_thresholds'],
-                                        angular_thresholds=config['eval']['angular_thresholds'],
-                                        match_pairs=config['eval']['match_pairs'])
-        
-        #print_evaluation_results(test_metrics, post_test_metrics)
+        # Decide whether to compute expensive STD-mAP this epoch
+        map_freq = config['eval'].get('map_freq', 1)
+        compute_map = (epoch % map_freq == 0) or (epoch == config['train']['epochs'] - 1)
 
-        print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-mAP pre: {test_metrics['comprehensive']['map']:.4f} | post: {post_test_metrics['comprehensive']['map']:.4f}")        
+        test_metrics = None
+        post_test_metrics = None
 
-        wandb.log({
-            **train_log,
-            **val_log,
-            **get_wandb_log_dict(epoch, test_metrics, post_test_metrics)
-            })
+        if compute_map:
+            # fetch gt and preds
+            test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader, device)
+           
+            # Transform yolo coordinates onto image domain for both gt and predicted values
+            test_gts = yolo_to_img_space_gt(test_gt_raw, 
+                                            all_starts=test_all_starts, 
+                                            all_ends=test_all_ends,
+                                            window_size = config['data']['window_size'],
+                                            original_size=(config['data']['width'],
+                                                           config['data']['height']))
+            
+            test_preds  = yolo_to_img_space(test_preds_raw, 
+                                            all_starts=test_all_starts, 
+                                            all_ends=test_all_ends, 
+                                            confidence_threshold=config['eval']['confidence_threshold'], 
+                                            window_size = config['data']['window_size'],
+                                            original_size=(config['data']['width'],
+                                                           config['data']['height']),
+                                                           max_dets=config['eval']['max_dets'])
+            
+            # Post Process all predictions
+            post_test_preds = batch_postprocess_predictions(test_preds, 
+                                                            spatial_threshold=config['post_process']['spatial_threshold'], 
+                                                            temporal_threshold=config['post_process']['temporal_threshold'], 
+                                                            confidence_threshold=config['post_process']['confidence_threshold'], 
+                                                            strategy=config['post_process']['strategy'], 
+                                                            mode=config['post_process']['mode'],
+                                                            remove_outliers=config['post_process']['outlier_detection'],
+                                                            outlier_method='isolation_forest')
+            
+            test_metrics = get_eval_metrics(test_preds, test_gts, 
+                                            pos_thresholds=config['eval']['pos_thresholds'],
+                                            iou_threshold_range=config['eval']['iou_thresholds'],
+                                            angular_thresholds=config['eval']['angular_thresholds'],
+                                            match_pairs=config['eval']['match_pairs'])
+            
+            post_test_metrics = get_eval_metrics(post_test_preds, test_gts, 
+                                            pos_thresholds=config['eval']['pos_thresholds'],
+                                            iou_threshold_range=config['eval']['iou_thresholds'],
+                                            angular_thresholds=config['eval']['angular_thresholds'],
+                                            match_pairs=config['eval']['match_pairs'])
+
+            print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-mAP pre: {test_metrics['comprehensive']['map']:.4f} | post: {post_test_metrics['comprehensive']['map']:.4f}")        
+
+            wandb.log({
+                **train_log,
+                **val_log,
+                **get_wandb_log_dict(epoch, test_metrics, post_test_metrics)
+                })
+        else:
+            print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (mAP skipped, next at epoch {((epoch // map_freq) + 1) * map_freq + 1})")
+            wandb.log({
+                **train_log,
+                **val_log,
+                })
 
         # Restore original parameters after metrics
         ema.restore()
@@ -374,11 +399,18 @@ def main(args):
             is_best = current_score < best_score
             score_str = f"val_loss: {current_score:.4f}"
         # else is std map    
-        else:  
-            # use post-processed comprehensive mAP as the primary score. Thehigher is better
+        elif compute_map:  
+            # use post-processed comprehensive mAP as the primary score. The higher is better
             current_score = post_test_metrics['comprehensive']['map']
             is_best = current_score > best_score
             score_str = f"STD-mAP (post-proc): {current_score:.4f}"
+        else:
+            # mAP not computed this epoch, can't determine best
+            current_score = None
+            is_best = False
+            score_str = "(mAP not computed)"
+
+        std_map_val = post_test_metrics['comprehensive']['map'] if post_test_metrics else 0.0
 
         if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
             if is_best:
@@ -393,7 +425,7 @@ def main(args):
                         'ema_state_dict': ema.state_dict(),
                         'best_score': best_score,
                         'val_loss': val_loss,
-                        'std_map': post_test_metrics['comprehensive']['map'],
+                        'std_map': std_map_val,
                     }, os.path.join(ckpt_dir, 'best.pth'))
                     print(f"New best model saved -> {score_str}")
                 else:
@@ -409,7 +441,7 @@ def main(args):
                     'ema_state_dict': ema.state_dict(),
                     'best_score': best_score,
                     'val_loss': val_loss,
-                    'std_map': post_test_metrics['comprehensive']['map'],
+                    'std_map': std_map_val,
                 }, os.path.join(ckpt_dir, 'latest.pth'))
                 print(f"Saved latest checkpoint at epoch {epoch}/{config['train']['epochs']}")
             else:
@@ -424,6 +456,7 @@ def get_args():
     parser.add_argument("--config_path", type=str, default='./configs/config.yaml', help="Path to the config file.")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from (e.g. ./ckpt/latest.pth).")
     parser.add_argument("--run_name", type=str, default=None, help="Name for this run. Defaults to datetime if not specified.")
+    parser.add_argument("--reset_scheduler", action='store_true', help="Reset LR scheduler instead of loading from checkpoint (use when data size or epochs changed).")
     return parser.parse_args()
 
 if __name__ == '__main__':

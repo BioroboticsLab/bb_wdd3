@@ -328,6 +328,253 @@ kbd {
   border-radius: 3px;
   margin: 1px 2px;
 }
+
+/* Pipeline Inspector Panel */
+#pipeline-panel {
+  width: 0; min-width: 0;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  transition: width 0.25s ease, min-width 0.25s ease, padding 0.25s ease;
+  display: flex; flex-direction: column;
+  padding: 0;
+}
+#pipeline-panel.open {
+  width: 520px; min-width: 520px;
+  padding: 12px;
+}
+.pi-header {
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+#pipeline-panel.open .pi-header { display: flex; }
+.pi-title {
+  font-size: 13px; font-weight: 600;
+  color: var(--text-primary);
+}
+.pi-row-selector {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-secondary);
+}
+.pi-row-selector select {
+  padding: 3px 6px; border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary); color: var(--text-primary);
+  font-size: 11px; cursor: pointer;
+}
+.pi-row-info {
+  font-size: 10px; color: var(--text-muted);
+}
+.pi-tabs {
+  display: none;
+  gap: 2px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+#pipeline-panel.open .pi-tabs { display: flex; }
+.pi-tab {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pi-tab:hover { background: var(--bg-card); color: var(--text-primary); }
+.pi-tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.pi-content {
+  display: none;
+  min-height: 60px;
+  position: relative;
+}
+#pipeline-panel.open .pi-content { display: block; }
+.pi-loading {
+  font-size: 12px; color: var(--amber);
+  text-align: center; padding: 20px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.pi-empty {
+  font-size: 11px; color: var(--text-muted);
+  text-align: center; padding: 20px;
+}
+.pi-options {
+  display: none;
+  margin-bottom: 8px;
+}
+#pipeline-panel.open .pi-options { display: block; }
+.pi-toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-secondary);
+  cursor: pointer;
+}
+.pi-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+.pi-player-wrap {
+  margin-top: 10px;
+}
+.pi-player-label {
+  font-size: 10px; color: var(--text-muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#pi-player-canvas {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #000;
+  display: block;
+}
+.pi-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.pi-play-btn {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.pi-play-btn:hover { background: var(--accent); color: #fff; }
+.pi-scrubber {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none; appearance: none;
+  background: var(--bg-card); border-radius: 2px;
+  outline: none; cursor: pointer;
+}
+.pi-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%; background: var(--accent);
+  cursor: pointer;
+}
+.pi-frame-info {
+  font-size: 10px; color: var(--text-muted);
+  min-width: 40px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pi-metadata {
+  display: none;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border-radius: 6px;
+  padding: 10px;
+  line-height: 1.7;
+  max-height: 300px;
+  overflow-y: auto;
+}
+#pipeline-panel.open .pi-metadata { display: block; }
+.pi-metadata .meta-key {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.pi-metadata .meta-val {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.pi-metadata table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.pi-metadata th {
+  text-align: left; padding: 2px 6px;
+  color: var(--text-muted); font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+.pi-metadata td {
+  padding: 2px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.pi-heatmap {
+  display: block; margin: 8px auto;
+  image-rendering: pixelated;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pi-pred-list {
+  margin-top: 6px;
+}
+.pi-pred-item {
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  margin-bottom: 3px;
+  font-size: 10px;
+  display: flex; justify-content: space-between;
+}
+
+/* Prediction controls */
+.pred-controls {
+  display: flex; align-items: center; gap: 6px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+.pred-mode-select {
+  padding: 4px 8px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px; cursor: pointer;
+  outline: none;
+}
+.pred-mode-select:focus { border-color: var(--accent); }
+.pred-conf-group {
+  display: flex; align-items: center; gap: 4px;
+}
+.pred-conf-slider {
+  width: 80px; height: 4px;
+  -webkit-appearance: none; appearance: none;
+  background: var(--bg-card); border-radius: 2px;
+  outline: none; cursor: pointer;
+}
+.pred-conf-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%; background: var(--accent);
+  cursor: pointer;
+}
+.pred-conf-label {
+  font-size: 10px; color: var(--text-secondary);
+  min-width: 55px; font-variant-numeric: tabular-nums;
+}
+.ckpt-badge {
+  font-size: 10px; color: var(--text-muted);
+  background: var(--bg-card);
+  padding: 2px 8px; border-radius: 10px;
+  max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.pred-loading {
+  font-size: 11px; color: var(--amber);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 </style>
 </head>
 <body>
@@ -339,8 +586,23 @@ kbd {
   <div class="header-actions">
     <button class="btn" id="btn-random" title="Load random recording (R)">🎲 Random</button>
     <button class="btn" id="btn-annotations" title="Toggle annotations (A)">👁 Annotations</button>
+    <button class="btn" id="btn-predictions" title="Toggle predictions (P)">🔮 Predictions</button>
+    <div class="pred-controls" id="pred-controls" style="display:none;">
+      <select class="pred-mode-select" id="pred-mode-select" title="Prediction view mode">
+        <option value="postprocessed">Post-processed</option>
+        <option value="raw">Raw (per-window)</option>
+      </select>
+      <div class="pred-conf-group">
+        <input type="range" class="pred-conf-slider" id="pred-conf-slider"
+               min="0" max="1" step="0.05" value="0.5" title="Confidence threshold">
+        <span class="pred-conf-label" id="pred-conf-label">≥ 50%</span>
+      </div>
+      <span class="ckpt-badge" id="ckpt-badge"></span>
+      <span class="pred-loading" id="pred-loading" style="display:none;">⏳ Computing...</span>
+    </div>
     <button class="btn" id="btn-zoom" title="Cycle zoom: 1× → 2× → 4× → 8× (Z)">🔍 1×</button>
-    <button class="btn" id="btn-model-view" title="Toggle model view panel (M)">🤖 Model View</button>
+    <button class="btn" id="btn-model-view" title="Toggle model view panel (M)" style="display:none;">🤖 Model View</button>
+    <button class="btn" id="btn-pipeline" title="Toggle pipeline inspector (I)">🔬 Inspector</button>
   </div>
 </header>
 
@@ -376,7 +638,7 @@ kbd {
       <label id="speed-label">1×</label>
       <input type="range" id="speed-slider" min="0.25" max="4" step="0.25" value="1">
       <div id="kbd-hint">
-      <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>A</kbd> annotations &nbsp;<kbd>Z</kbd> zoom &nbsp;<kbd>M</kbd> model &nbsp;<kbd>R</kbd> random
+      <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>A</kbd> annotations &nbsp;<kbd>P</kbd> predictions &nbsp;<kbd>Z</kbd> zoom &nbsp;<kbd>M</kbd> model &nbsp;<kbd>R</kbd> random
       </div>
     </div>
 
@@ -411,6 +673,48 @@ kbd {
       <div class="mv-aug-list" id="mv-aug-info"></div>
     </div>
   </aside>
+
+  <!-- Pipeline Inspector Panel (replaces old Model View) -->
+  <aside id="pipeline-panel">
+    <div class="pi-header">
+      <span class="pi-title">🔬 Pipeline Inspector</span>
+      <div class="pi-row-selector">
+        <label>Row:</label>
+        <select id="pi-row-select"></select>
+        <span id="pi-row-info" class="pi-row-info"></span>
+      </div>
+    </div>
+    <div class="pi-tabs" id="pi-tabs">
+      <button class="pi-tab active" data-stage="raw">1. Raw</button>
+      <button class="pi-tab" data-stage="crop">2. Crop</button>
+      <button class="pi-tab" data-stage="transform">3. Transform</button>
+      <button class="pi-tab" data-stage="normalize">4. Normalize</button>
+      <button class="pi-tab" data-stage="sample">5. Sample</button>
+      <button class="pi-tab" data-stage="target">6. Target</button>
+      <button class="pi-tab" data-stage="output">7. Output</button>
+    </div>
+    <div class="pi-options">
+      <label class="pi-toggle" title="Training mode uses random crop offset (position varies). Inference mode centers crop on bee (always grid 14,14).">
+        <input type="checkbox" id="pi-crop-mode">
+        <span>Training crop (random offset)</span>
+      </label>
+    </div>
+    <div class="pi-content" id="pi-content">
+      <div class="pi-loading" id="pi-loading" style="display:none;">⏳ Loading stage...</div>
+      <div class="pi-empty" id="pi-empty">Select a video and click a tab to inspect the pipeline.</div>
+    </div>
+    <!-- Video player for frames -->
+    <div class="pi-player-wrap" id="pi-player-wrap" style="display:none;">
+      <div class="pi-player-label" id="pi-player-label">Frames</div>
+      <canvas id="pi-player-canvas" width="480" height="480"></canvas>
+      <div class="pi-player-controls">
+        <button class="pi-play-btn" id="pi-play-btn" title="Play/Pause">▶</button>
+        <input type="range" class="pi-scrubber" id="pi-scrubber" min="0" max="15" value="0">
+        <span class="pi-frame-info" id="pi-frame-info">0/0</span>
+      </div>
+    </div>
+    <div class="pi-metadata" id="pi-metadata"></div>
+  </aside>
 </main>
 
 </div>
@@ -438,7 +742,18 @@ const state = {
   videoFps: 15,
   annotations: [],        // waggle runs for current video
   showAnnotations: true,
+  showPredictions: false,
+  predictionMode: 'postprocessed', // 'raw' or 'postprocessed'
+  predConfThreshold: 0.5, // confidence threshold for display
+  predictions: null,      // { raw: [...], postprocessed: [...] }
+  predictionsLoading: false,
+  checkpointInfo: null,
   showModelView: false,
+  showPipeline: false,
+  pipelineStage: 'raw',
+  pipelineRowIdx: 0,
+  pipelineRows: [],
+  pipelineCache: {},
   isPlaying: false,
   playbackSpeed: 1.0,
   zoomLevel: 1,           // 1, 2, 4, or 8
@@ -548,6 +863,9 @@ async function selectVideo(videoName) {
   showLoading(true);
   $('#empty-state').style.display = 'none';
 
+  // Reset predictions for new video
+  state.predictions = null;
+
   try {
     const [info, annotations] = await Promise.all([
       api(`/api/video/${videoName}/info`),
@@ -577,6 +895,19 @@ async function selectVideo(videoName) {
 
     await loadAndRenderFrame(state.currentFrame);
     prefetchAround(state.currentFrame);
+
+    // Auto-fetch predictions if toggle is on
+    if (state.showPredictions) {
+      fetchPredictions().then(() => {
+        if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+        renderTimeline();
+      });
+    }
+
+    // Auto-refresh pipeline inspector if open
+    if (state.showPipeline) {
+      piLoadRows();
+    }
   } catch (err) {
     console.error('Failed to load video:', err);
   } finally {
@@ -707,7 +1038,13 @@ function renderFrameOnCanvas(img, frameIdx) {
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   if (state.showAnnotations) {
-    drawAnnotations(ctx, frameIdx, Z);
+    const gtStyle = state.showPredictions ? 'background' : 'normal';
+    drawAnnotations(ctx, frameIdx, Z, gtStyle);
+  }
+
+  // Draw predictions overlay
+  if (state.showPredictions && state.predictions) {
+    drawPredictions(ctx, frameIdx, Z);
   }
 
   // Draw crop box if model view is open
@@ -731,10 +1068,10 @@ function renderFrameOnCanvas(img, frameIdx) {
   }
 }
 
-function drawAnnotations(ctx, frameIdx, zoomLevel) {
+function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
   const pad = Math.round(state.videoFps);
-  // Scale sizes inversely with zoom so they stay readable
   const s = 1 / zoomLevel;
+  const isBg = style === 'background';
 
   for (let i = 0; i < state.annotations.length; i++) {
     const run = state.annotations[i];
@@ -748,10 +1085,16 @@ function drawAnnotations(ctx, frameIdx, zoomLevel) {
 
     if (!isActive && !isGhost) continue;
 
-    const alpha = isActive ? 1.0 : 0.25;
+    // When predictions are active, GT becomes semi-transparent background
+    const baseAlpha = isBg ? 0.4 : 1.0;
+    const alpha = isActive ? baseAlpha : (isBg ? 0.15 : 0.25);
 
-    // Dot radius: keep ~8px visual size regardless of zoom
-    const dotR = isActive ? Math.max(8 * s, 3) : Math.max(6 * s, 2);
+    // Thicker dots/lines in background mode to visually distinguish
+    const dotScale = isBg ? 1.4 : 1.0;
+    const lineScale = isBg ? 1.6 : 1.0;
+    const dotR = isActive
+      ? Math.max(8 * s * dotScale, 3)
+      : Math.max(6 * s * dotScale, 2);
 
     // Position dot
     ctx.globalAlpha = alpha;
@@ -761,7 +1104,7 @@ function drawAnnotations(ctx, frameIdx, zoomLevel) {
     ctx.fill();
     if (isActive) {
       ctx.strokeStyle = '#fff';
-      ctx.lineWidth = Math.max(2 * s, 0.5);
+      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.5);
       ctx.stroke();
     }
 
@@ -775,7 +1118,7 @@ function drawAnnotations(ctx, frameIdx, zoomLevel) {
       ctx.moveTo(x, y);
       ctx.lineTo(endX, endY);
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(3 * s, 1);
+      ctx.lineWidth = Math.max(3.5 * s * lineScale, 1);
       ctx.stroke();
 
       // Arrowhead
@@ -787,12 +1130,12 @@ function drawAnnotations(ctx, frameIdx, zoomLevel) {
       ctx.moveTo(endX, endY);
       ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2.5 * s, 0.8);
+      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.8);
       ctx.stroke();
     }
 
-    // Label
-    if (isActive) {
+    // Label — only in normal mode or when predictions off
+    if (isActive && !isBg) {
       const fontSize = Math.max(13 * s, 5);
       const label = `R${run_id}`;
       ctx.font = `bold ${fontSize}px Inter`;
@@ -806,6 +1149,113 @@ function drawAnnotations(ctx, frameIdx, zoomLevel) {
 
       ctx.fillStyle = color;
       ctx.fillText(label, lx, ly);
+    }
+
+    // Label "GT" marker in background mode
+    if (isActive && isBg) {
+      const fontSize = Math.max(10 * s, 4);
+      ctx.font = `${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = x + 14 * s;
+      const ly = y + 4 * s;
+      ctx.fillStyle = color;
+      ctx.fillText('GT', lx, ly);
+    }
+
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+function drawPredictions(ctx, frameIdx, zoomLevel) {
+  if (!state.predictions) return;
+  const s = 1 / zoomLevel;
+
+  const preds = state.predictionMode === 'raw'
+    ? state.predictions.raw
+    : state.predictions.postprocessed;
+
+  if (!preds || preds.length === 0) return;
+
+  for (const pred of preds) {
+    const [px, py] = pred.position;
+    const [dx, dy] = pred.direction;
+    const conf = pred.confidence;
+    const [tStart, tEnd] = pred.temporal_offsets;
+
+    // Skip predictions below confidence threshold
+    if (conf < state.predConfThreshold) continue;
+
+    // Is this prediction active at the current frame?
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    // Ghost: within 1 second of temporal range
+    const pad = Math.round(state.videoFps);
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+
+    if (!isActive && !isGhost) continue;
+
+    const alpha = isActive ? 1.0 : 0.3;
+
+    // Find closest matching GT run to pick same color
+    const runId = pred.waggle_run_id;
+    let colorIdx = 0;
+    if (runId !== undefined && runId >= 0) {
+      // Match by run_id
+      const matchIdx = state.annotations.findIndex(a => a.run_id === runId);
+      if (matchIdx >= 0) colorIdx = matchIdx;
+    }
+    const color = RUN_COLORS[colorIdx % RUN_COLORS.length];
+
+    const dotR = isActive ? Math.max(6 * s, 2) : Math.max(4 * s, 1.5);
+
+    // Position dot — thin, solid
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(px, py, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = Math.max(1.5 * s, 0.5);
+    ctx.stroke();
+
+    // Direction arrow — thin
+    if (isActive) {
+      const arrowLen = Math.max(35 * s, 10);
+      const endX = px + dx * arrowLen;
+      const endY = py + dy * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2 * s, 0.8);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = Math.max(8 * s, 3);
+      const angle = Math.atan2(dy, dx);
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1.5 * s, 0.5);
+      ctx.stroke();
+
+      // Confidence label
+      const fontSize = Math.max(11 * s, 4);
+      const confLabel = `${(conf * 100).toFixed(0)}%`;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = px + 12 * s;
+      const ly = py - 10 * s;
+
+      const metrics = ctx.measureText(confLabel);
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillRect(lx - 2 * s, ly - 10 * s, metrics.width + 4 * s, 14 * s);
+
+      ctx.fillStyle = color;
+      ctx.fillText(confLabel, lx, ly);
     }
 
     ctx.globalAlpha = 1.0;
@@ -919,7 +1369,14 @@ function renderTimeline() {
   const fps = state.videoFps;
   const pad = Math.round(fps);
 
-  // Draw waggle run segments
+  // Split timeline: top half for GT, bottom half for predictions (if active)
+  const hasPreds = state.showPredictions && state.predictions;
+  const gtTop = hasPreds ? 0 : 2;
+  const gtH = hasPreds ? H / 2 - 1 : H - 4;
+  const predTop = H / 2 + 1;
+  const predH = H / 2 - 2;
+
+  // Draw GT waggle run segments
   for (let i = 0; i < state.annotations.length; i++) {
     const run = state.annotations[i];
     const color = RUN_COLORS[i % RUN_COLORS.length];
@@ -928,13 +1385,58 @@ function renderTimeline() {
     const ghostStart = Math.max(0, run.waggle_start - pad) / state.totalFrames * W;
     const ghostEnd = Math.min(state.totalFrames, run.waggle_end + pad) / state.totalFrames * W;
     tlCtx.fillStyle = color + '20';
-    tlCtx.fillRect(ghostStart, 4, ghostEnd - ghostStart, H - 8);
+    tlCtx.fillRect(ghostStart, gtTop + 2, ghostEnd - ghostStart, gtH - 2);
 
     // Active region
     const x1 = run.waggle_start / state.totalFrames * W;
     const x2 = run.waggle_end / state.totalFrames * W;
     tlCtx.fillStyle = color + '80';
-    tlCtx.fillRect(x1, 2, Math.max(x2 - x1, 2), H - 4);
+    tlCtx.fillRect(x1, gtTop, Math.max(x2 - x1, 2), gtH);
+  }
+
+  // Draw prediction temporal spans
+  if (hasPreds) {
+    const preds = state.predictionMode === 'raw'
+      ? state.predictions.raw
+      : state.predictions.postprocessed;
+
+    if (preds) {
+      // Divider line
+      tlCtx.fillStyle = '#333';
+      tlCtx.fillRect(0, H / 2 - 0.5, W, 1);
+
+      for (const pred of preds) {
+        const [tStart, tEnd] = pred.temporal_offsets;
+        const conf = pred.confidence;
+
+        // Skip below threshold
+        if (conf < state.predConfThreshold) continue;
+
+        // Color by run ID match
+        const runId = pred.waggle_run_id;
+        let colorIdx = 0;
+        if (runId !== undefined && runId >= 0) {
+          const matchIdx = state.annotations.findIndex(a => a.run_id === runId);
+          if (matchIdx >= 0) colorIdx = matchIdx;
+        }
+        const color = RUN_COLORS[colorIdx % RUN_COLORS.length];
+
+        const x1 = tStart / state.totalFrames * W;
+        const x2 = tEnd / state.totalFrames * W;
+        const alpha = Math.round(Math.min(conf, 1.0) * 200).toString(16).padStart(2, '0');
+        tlCtx.fillStyle = color + alpha;
+        tlCtx.fillRect(x1, predTop, Math.max(x2 - x1, 2), predH);
+      }
+    }
+  }
+
+  // Separator labels
+  if (hasPreds) {
+    tlCtx.font = '8px Inter';
+    tlCtx.fillStyle = '#666';
+    tlCtx.textAlign = 'left';
+    tlCtx.fillText('GT', 2, 8);
+    tlCtx.fillText('Pred', 2, H / 2 + 9);
   }
 
   // Current frame indicator
@@ -1031,6 +1533,62 @@ $('#btn-annotations').addEventListener('click', () => {
 });
 $('#btn-annotations').classList.add('active'); // default on
 
+// Predictions toggle
+async function togglePredictions() {
+  state.showPredictions = !state.showPredictions;
+  $('#btn-predictions').classList.toggle('active', state.showPredictions);
+  $('#pred-controls').style.display = state.showPredictions ? 'flex' : 'none';
+
+  if (state.showPredictions && state.currentVideo && !state.predictions) {
+    await fetchPredictions();
+  }
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+}
+
+async function fetchPredictions() {
+  if (!state.currentVideo) return;
+  state.predictionsLoading = true;
+  $('#pred-loading').style.display = 'inline';
+
+  try {
+    const data = await api(`/api/predictions/${state.currentVideo}`);
+    state.predictions = { raw: data.raw, postprocessed: data.postprocessed };
+    state.checkpointInfo = data.checkpoint;
+    updateCheckpointBadge();
+    console.log(`Predictions loaded: ${data.raw.length} raw, ${data.postprocessed.length} post-processed (${data.n_windows} windows)`);
+  } catch (err) {
+    console.error('Failed to fetch predictions:', err);
+    state.predictions = null;
+    $('#ckpt-badge').textContent = 'No model';
+  } finally {
+    state.predictionsLoading = false;
+    $('#pred-loading').style.display = 'none';
+  }
+}
+
+function updateCheckpointBadge() {
+  if (state.checkpointInfo) {
+    const info = state.checkpointInfo;
+    $('#ckpt-badge').textContent = `${info.filename} (ep${info.epoch})`;
+    $('#ckpt-badge').title = info.path || '';
+  }
+}
+
+$('#btn-predictions').addEventListener('click', togglePredictions);
+
+$('#pred-mode-select').addEventListener('change', (e) => {
+  state.predictionMode = e.target.value;
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+  renderTimeline();
+});
+
+$('#pred-conf-slider').addEventListener('input', (e) => {
+  state.predConfThreshold = parseFloat(e.target.value);
+  $('#pred-conf-label').textContent = `≥ ${Math.round(state.predConfThreshold * 100)}%`;
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+  renderTimeline();
+});
+
 function cycleZoom() {
   const idx = ZOOM_LEVELS.indexOf(state.zoomLevel);
   state.zoomLevel = ZOOM_LEVELS[(idx + 1) % ZOOM_LEVELS.length];
@@ -1069,6 +1627,9 @@ document.addEventListener('keydown', (e) => {
       $('#btn-annotations').classList.toggle('active', state.showAnnotations);
       if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
       break;
+    case 'KeyP':
+      togglePredictions();
+      break;
     case 'KeyR':
       loadRandom();
       break;
@@ -1077,6 +1638,9 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'KeyM':
       toggleModelView();
+      break;
+    case 'KeyI':
+      togglePipeline();
       break;
     default:
       // Number keys 1-9 → jump to waggle run
@@ -1329,12 +1893,431 @@ loadAndRenderFrame = async function(frameIdx) {
 // (patched into existing keydown handler below)
 
 // ==========================================================================
+//  Pipeline Inspector (with video player)
+// ==========================================================================
+
+const piCanvas = $('#pi-player-canvas');
+const piCtx = piCanvas.getContext('2d');
+let piFrameImages = [];  // preloaded Image objects
+let piCurrentFrame = 0;
+let piPlayInterval = null;
+
+function togglePipeline() {
+  state.showPipeline = !state.showPipeline;
+  $('#pipeline-panel').classList.toggle('open', state.showPipeline);
+  $('#btn-pipeline').classList.toggle('active', state.showPipeline);
+  if (state.showPipeline && state.showModelView) {
+    state.showModelView = false;
+    $('#model-view-panel').classList.remove('open');
+    $('#btn-model-view').classList.remove('active');
+  }
+  if (state.showPipeline && state.currentVideo) {
+    piLoadRows();
+  }
+}
+
+$('#btn-pipeline').addEventListener('click', togglePipeline);
+
+// Crop mode toggle
+$('#pi-crop-mode').addEventListener('change', () => {
+  state.pipelineCache = {};
+  piLoadStage(state.pipelineStage);
+});
+
+function piGetCropMode() {
+  return $('#pi-crop-mode').checked ? 'training' : 'inference';
+}
+
+async function piLoadRows() {
+  if (!state.currentVideo) return;
+  try {
+    const data = await api(`/api/pipeline/rows/${state.currentVideo}`);
+    state.pipelineRows = data.rows;
+    state.pipelineRowIdx = 0;
+    state.pipelineCache = {};
+    piUpdateRowSelect();
+    piLoadStage(state.pipelineStage);
+  } catch (err) {
+    console.error('Pipeline rows failed:', err);
+  }
+}
+
+function piUpdateRowSelect() {
+  const sel = $('#pi-row-select');
+  sel.innerHTML = '';
+  state.pipelineRows.forEach((r, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    const label = r.waggle ? `\u2705 Run ${r.run_id}` : `\u274c Neg`;
+    opt.textContent = `#${i}: ${label} [${r.start_frame}-${r.end_frame}]`;
+    sel.appendChild(opt);
+  });
+  sel.value = state.pipelineRowIdx;
+  piUpdateRowInfo();
+}
+
+function piUpdateRowInfo() {
+  const row = state.pipelineRows[state.pipelineRowIdx];
+  if (!row) { $('#pi-row-info').textContent = ''; return; }
+  const dur = row.end_frame - row.start_frame;
+  $('#pi-row-info').textContent = `${dur} frames, pos=(${row.x.toFixed(0)}, ${row.y.toFixed(0)})`;
+}
+
+$('#pi-row-select').addEventListener('change', (e) => {
+  state.pipelineRowIdx = parseInt(e.target.value);
+  state.pipelineCache = {};
+  piUpdateRowInfo();
+  piLoadStage(state.pipelineStage);
+});
+
+document.querySelectorAll('.pi-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.pi-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.pipelineStage = tab.dataset.stage;
+    piLoadStage(state.pipelineStage);
+  });
+});
+
+// Play/Pause
+$('#pi-play-btn').addEventListener('click', () => {
+  piPlayInterval ? piStopPlayback() : piStartPlayback();
+});
+
+function piStartPlayback() {
+  if (piFrameImages.length === 0) return;
+  $('#pi-play-btn').textContent = '\u23f8';
+  piPlayInterval = setInterval(() => {
+    piCurrentFrame = (piCurrentFrame + 1) % piFrameImages.length;
+    piDrawCurrentFrame();
+    piUpdateScrubber();
+  }, 100);
+}
+
+function piStopPlayback() {
+  if (piPlayInterval) { clearInterval(piPlayInterval); piPlayInterval = null; }
+  $('#pi-play-btn').textContent = '\u25b6';
+}
+
+$('#pi-scrubber').addEventListener('input', (e) => {
+  piCurrentFrame = parseInt(e.target.value);
+  piDrawCurrentFrame();
+  piUpdateScrubber();
+});
+
+function piUpdateScrubber() {
+  $('#pi-scrubber').value = piCurrentFrame;
+  const total = piFrameImages.length || 1;
+  const cKey = `${state.currentVideo}:${state.pipelineRowIdx}:${state.pipelineStage}:${piGetCropMode()}`;
+  const meta = state.pipelineCache[cKey]?.metadata;
+  let label = `${piCurrentFrame + 1}/${total}`;
+  if (state.pipelineStage === 'raw' && meta) {
+    label = `f${meta.start_frame + piCurrentFrame} (${piCurrentFrame + 1}/${total})`;
+  } else if (state.pipelineStage === 'sample' && meta?.sampled_indices) {
+    label = `src=${meta.sampled_indices[piCurrentFrame]} (${piCurrentFrame + 1}/${total})`;
+  }
+  $('#pi-frame-info').textContent = label;
+}
+
+function piDrawCurrentFrame() {
+  if (piCurrentFrame >= piFrameImages.length) return;
+  const img = piFrameImages[piCurrentFrame];
+  if (!img || !img.complete) return;
+
+  const panelW = piCanvas.parentElement?.offsetWidth || 480;
+  const aspect = img.naturalHeight / img.naturalWidth;
+  const drawW = Math.min(panelW, img.naturalWidth);
+  const drawH = Math.round(drawW * aspect);
+  piCanvas.width = drawW;
+  piCanvas.height = drawH;
+  piCtx.drawImage(img, 0, 0, drawW, drawH);
+
+  const cKey = `${state.currentVideo}:${state.pipelineRowIdx}:${state.pipelineStage}:${piGetCropMode()}`;
+  const data = state.pipelineCache[cKey];
+  if (!data) return;
+  const meta = data.metadata;
+
+  // Overlays
+  if (state.pipelineStage === 'raw' && meta.crop_box) {
+    const cb = meta.crop_box;
+    const sx = drawW / meta.video_resolution[0];
+    const sy = drawH / meta.video_resolution[1];
+    piCtx.strokeStyle = '#22c55e';
+    piCtx.lineWidth = 2;
+    piCtx.strokeRect(cb.x_min * sx, cb.y_min * sy,
+                     (cb.x_max - cb.x_min) * sx, (cb.y_max - cb.y_min) * sy);
+    piCtx.beginPath();
+    piCtx.arc(meta.gt_position[0] * sx, meta.gt_position[1] * sy, 4, 0, Math.PI * 2);
+    piCtx.fillStyle = '#ef4444';
+    piCtx.fill();
+  }
+
+  if (state.pipelineStage === 'crop' && meta.bee_in_crop) {
+    const sx = drawW / meta.crop_size[0];
+    const sy = drawH / meta.crop_size[1];
+    const bx = meta.bee_in_crop[0] * sx;
+    const by = meta.bee_in_crop[1] * sy;
+    piCtx.beginPath();
+    piCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    piCtx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+    piCtx.fill();
+    const arrowLen = 30;
+    piCtx.beginPath();
+    piCtx.moveTo(bx, by);
+    piCtx.lineTo(bx + meta.gt_direction[0] * arrowLen, by + meta.gt_direction[1] * arrowLen);
+    piCtx.strokeStyle = '#ef4444';
+    piCtx.lineWidth = 2;
+    piCtx.stroke();
+  }
+}
+
+async function piLoadStage(stage) {
+  if (!state.currentVideo) return;
+  piStopPlayback();
+
+  const cropMode = piGetCropMode();
+  const cacheKey = `${state.currentVideo}:${state.pipelineRowIdx}:${stage}:${cropMode}`;
+  if (state.pipelineCache[cacheKey]) {
+    piRenderStage(stage, state.pipelineCache[cacheKey]);
+    return;
+  }
+
+  $('#pi-loading').style.display = '';
+  $('#pi-empty').style.display = 'none';
+  $('#pi-player-wrap').style.display = 'none';
+
+  try {
+    const data = await api(`/api/pipeline/${state.currentVideo}?stage=${stage}&row_idx=${state.pipelineRowIdx}&crop_mode=${cropMode}`);
+    state.pipelineCache[cacheKey] = data;
+    piRenderStage(stage, data);
+  } catch (err) {
+    console.error('Pipeline stage failed:', err);
+    $('#pi-loading').style.display = 'none';
+    $('#pi-empty').style.display = '';
+    $('#pi-empty').textContent = `Error: ${err.message}`;
+  }
+}
+
+function piRenderStage(stage, data) {
+  $('#pi-loading').style.display = 'none';
+  $('#pi-empty').style.display = 'none';
+  piStopPlayback();
+
+  const meta = data.metadata || {};
+  const frames = data.frames || [];
+  const playerWrap = $('#pi-player-wrap');
+
+  if (frames.length > 0) {
+    playerWrap.style.display = '';
+    piFrameImages = frames.map(b64 => {
+      const img = new Image();
+      img.src = `data:image/jpeg;base64,${b64}`;
+      return img;
+    });
+    piCurrentFrame = 0;
+    $('#pi-scrubber').max = frames.length - 1;
+    $('#pi-scrubber').value = 0;
+
+    piFrameImages[0].onload = () => {
+      piDrawCurrentFrame();
+      piUpdateScrubber();
+    };
+
+    const stageLabels = {
+      raw: `Raw (${frames.length} \u00d7 ${meta.video_resolution?.[0]}\u00d7${meta.video_resolution?.[1]})`,
+      crop: `Cropped (${frames.length} \u00d7 ${meta.crop_size?.[0]}\u00d7${meta.crop_size?.[1]}) \u2014 ${meta.crop_mode || 'inference'}`,
+      transform: `After Transform (${frames.length} frames)`,
+      normalize: `After Normalize \u2014 de-normalized for display (${frames.length} frames)`,
+      sample: `Sampled ${meta.n_frames_sampled} from ${meta.n_frames_loaded} (${meta.sampling_method})`,
+    };
+    $('#pi-player-label').textContent = stageLabels[stage] || `${stage} \u2014 ${frames.length} frames`;
+  } else {
+    playerWrap.style.display = 'none';
+    piFrameImages = [];
+  }
+
+  // Render metadata
+  const metaDiv = $('#pi-metadata');
+  let html = '';
+
+  if (stage === 'raw') {
+    html += piMeta('Video', meta.video_name);
+    html += piMeta('Resolution', `${meta.video_resolution?.[0]}\u00d7${meta.video_resolution?.[1]}`);
+    html += piMeta('Frames', `${meta.start_frame} \u2192 ${meta.end_frame} (${meta.n_frames_loaded} loaded)`);
+    html += piMeta('GT Position', `(${meta.gt_position?.[0]?.toFixed(1)}, ${meta.gt_position?.[1]?.toFixed(1)})`);
+    html += piMeta('GT Direction', `(${meta.gt_direction?.[0]?.toFixed(3)}, ${meta.gt_direction?.[1]?.toFixed(3)})`);
+    if (meta.crop_box) {
+      const cb = meta.crop_box;
+      html += piMeta('Crop Box', `(${cb.x_min}, ${cb.y_min}) \u2192 (${cb.x_max}, ${cb.y_max})`);
+      html += piMeta('Crop/Video', `${(meta.crop_size?.[0] / Math.max(meta.video_resolution?.[0], 1)).toFixed(3)}`);
+    }
+  }
+
+  else if (stage === 'crop') {
+    const modeColor = meta.crop_mode === 'training' ? 'var(--amber)' : 'var(--accent)';
+    html += `<div><span class="meta-key">Crop Mode: </span><span class="meta-val" style="color:${modeColor};">${meta.crop_mode || 'inference'}</span></div>`;
+    html += piMeta('Crop Origin', `(${meta.crop_origin?.[0]}, ${meta.crop_origin?.[1]})`);
+    if (meta.crop_offset) html += piMeta('Random Offset', `(${meta.crop_offset[0]}, ${meta.crop_offset[1]})`);
+    html += piMeta('Bee in Crop', `(${meta.bee_in_crop?.[0]}, ${meta.bee_in_crop?.[1]})`);
+    html += piMeta('Frames', meta.n_frames);
+  }
+
+  else if (stage === 'transform') {
+    html += piMeta('Pipeline', (meta.transform_pipeline || []).join(' \u2192 '));
+    if (meta.pixel_stats?.length > 0) {
+      html += `<div style="margin-top:6px"><span class="meta-key">Pixel Stats:</span></div>`;
+      html += '<table><tr><th>#</th><th>Min</th><th>Max</th><th>Mean</th></tr>';
+      meta.pixel_stats.forEach((s, i) => {
+        html += `<tr><td>${i}</td><td>${s.min}</td><td>${s.max}</td><td>${s.mean}</td></tr>`;
+      });
+      html += '</table>';
+    }
+  }
+
+  else if (stage === 'normalize') {
+    const n = meta.normalization || {};
+    html += piMeta('Mean', `[${(n.mean || []).map(v => v.toFixed(3)).join(', ')}]`);
+    html += piMeta('Std', `[${(n.std || []).map(v => v.toFixed(3)).join(', ')}]`);
+    if (meta.pixel_stats_pre_norm && meta.pixel_stats_post_norm) {
+      html += `<div style="margin-top:6px"><span class="meta-key">Pre/Post Norm:</span></div>`;
+      html += '<table><tr><th>#</th><th>Pre Min</th><th>Pre Max</th><th>Post Min</th><th>Post Max</th><th>Post Mean</th></tr>';
+      for (let i = 0; i < meta.pixel_stats_pre_norm.length; i++) {
+        const pre = meta.pixel_stats_pre_norm[i];
+        const post = meta.pixel_stats_post_norm[i];
+        html += `<tr><td>${i}</td><td>${pre.min}</td><td>${pre.max}</td><td>${post.min}</td><td>${post.max}</td><td>${post.mean}</td></tr>`;
+      }
+      html += '</table>';
+    }
+  }
+
+  else if (stage === 'sample') {
+    html += piMeta('Method', meta.sampling_method);
+    html += piMeta('Loaded', `${meta.n_frames_loaded} frames`);
+    html += piMeta('Sampled', `${meta.n_frames_sampled} frames`);
+    html += piMeta('Indices', `[${(meta.sampled_indices || []).join(', ')}]`);
+  }
+
+  else if (stage === 'target') {
+    const t = meta.target || {};
+    html += piMeta('Objectness', t.objectness);
+    if (t.objectness === 1.0) {
+      html += piMeta('Grid Cell', `[${t.grid_cell?.[0]}, ${t.grid_cell?.[1]}] of ${meta.grid_size}\u00d7${meta.grid_size}`);
+      html += piMeta('Cell Coords', `(${t.cell_coords?.[0]}, ${t.cell_coords?.[1]})`);
+      html += piMeta('Pos Norm', `(${t.position_norm?.[0]}, ${t.position_norm?.[1]})`);
+      html += piMeta('Direction', `(${t.direction?.[0]}, ${t.direction?.[1]})`);
+      html += piMeta('Temporal', `[${t.temporal_norm?.[0]}, ${t.temporal_norm?.[1]}]`);
+      html += piMeta('Waggle in Win', `${t.waggle_start_in_window} \u2192 ${t.waggle_end_in_window}`);
+    } else {
+      html += `<div><span class="meta-val">${t.note || 'Non-waggle'}</span></div>`;
+    }
+    html += piMeta('Bee in Crop', `(${meta.bee_in_crop?.[0]}, ${meta.bee_in_crop?.[1]})`);
+
+    if (t.objectness === 1.0 && meta.grid_size) {
+      const gs = meta.grid_size;
+      const cs = Math.max(4, Math.floor(200 / gs));
+      const sz = gs * cs;
+      html += `<canvas id="pi-target-grid" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas>`;
+      setTimeout(() => {
+        const c = document.getElementById('pi-target-grid');
+        if (!c) return;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, sz, sz);
+        ctx.strokeStyle = '#2a2a4e';
+        for (let i = 0; i <= gs; i++) {
+          ctx.beginPath();
+          ctx.moveTo(i * cs, 0); ctx.lineTo(i * cs, sz);
+          ctx.moveTo(0, i * cs); ctx.lineTo(sz, i * cs);
+          ctx.stroke();
+        }
+        const [gy, gx] = t.grid_cell;
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.6)';
+        ctx.fillRect(gx * cs, gy * cs, cs, cs);
+        const px = t.position_norm[0] * sz;
+        const py = t.position_norm[1] * sz;
+        ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444'; ctx.fill();
+        ctx.beginPath(); ctx.moveTo(px, py);
+        ctx.lineTo(px + t.direction[0] * 15, py + t.direction[1] * 15);
+        ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.stroke();
+      }, 50);
+    }
+  }
+
+  else if (stage === 'output') {
+    if (meta.error) {
+      html += `<div style="color: var(--amber);">\u26a0\ufe0f ${meta.error}</div>`;
+    } else {
+      html += piMeta('Checkpoint', `${meta.checkpoint?.filename} (epoch ${meta.checkpoint?.epoch})`);
+      html += piMeta('Predictions', meta.n_predictions);
+      html += piMeta('Crop Origin', `(${meta.crop_origin?.[0]}, ${meta.crop_origin?.[1]})`);
+
+      if (meta.predictions?.length > 0) {
+        html += '<div class="pi-pred-list">';
+        meta.predictions.forEach((p, i) => {
+          html += `<div class="pi-pred-item"><span>#${i}: ${(p.confidence * 100).toFixed(1)}%</span>`;
+          html += `<span>pos=(${p.position[0].toFixed(1)}, ${p.position[1].toFixed(1)})</span>`;
+          html += `<span>dir=(${p.direction[0].toFixed(2)}, ${p.direction[1].toFixed(2)})</span></div>`;
+        });
+        html += '</div>';
+      }
+
+      if (meta.confidence_heatmap && meta.grid_size) {
+        const gs = meta.grid_size;
+        const cs = Math.max(4, Math.floor(200 / gs));
+        const sz = gs * cs;
+        html += `<div style="margin-top:8px"><span class="meta-key">Confidence Heatmap:</span></div>`;
+        html += `<canvas id="pi-output-heatmap" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas>`;
+        setTimeout(() => {
+          const c = document.getElementById('pi-output-heatmap');
+          if (!c) return;
+          const ctx = c.getContext('2d');
+          for (let y = 0; y < gs; y++) {
+            for (let x = 0; x < gs; x++) {
+              const v = meta.confidence_heatmap[y][x];
+              const intensity = Math.min(255, Math.floor(v * 255));
+              ctx.fillStyle = v > 0.5
+                ? `rgb(${255 - intensity}, ${intensity}, 50)`
+                : `rgb(${30 + intensity * 0.3}, ${30 + intensity * 0.3}, ${50 + intensity * 0.5})`;
+              ctx.fillRect(x * cs, y * cs, cs, cs);
+            }
+          }
+        }, 50);
+      }
+    }
+  }
+
+  metaDiv.innerHTML = html;
+}
+
+function piMeta(key, val) {
+  return `<div><span class="meta-key">${key}: </span><span class="meta-val">${val}</span></div>`;
+
+}
+
+// ==========================================================================
 //  Init
 // ==========================================================================
 (async function init() {
   await loadRecordingList();
   updateFrameInfo();
   renderTimeline();
+
+  // Check if a model checkpoint is loaded
+  try {
+    const ckptInfo = await api('/api/checkpoint/info');
+    if (ckptInfo.loaded) {
+      state.checkpointInfo = ckptInfo;
+      updateCheckpointBadge();
+      console.log(`Model loaded: ${ckptInfo.filename} (epoch ${ckptInfo.epoch})`);
+    } else {
+      // No model — disable predictions button
+      $('#btn-predictions').style.opacity = '0.4';
+      $('#btn-predictions').title = 'No checkpoint loaded (start server with --checkpoint)';
+    }
+  } catch (e) {
+    console.log('No checkpoint endpoint available');
+  }
 })();
 </script>
 </body>
