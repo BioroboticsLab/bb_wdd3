@@ -202,6 +202,23 @@ print("Building recording index …")
 recording_index = build_recording_index(annotations_df)
 print(f"  {len(recording_index)} base recordings")
 
+# Compute train/val split (replicate main.py exactly)
+print("Computing train/val split …")
+from src.utils.video_utils import get_video_category
+with open(CONFIG_PATH) as _f:
+    _config = yaml.safe_load(_f)
+_SEED = 42
+_train_ratio = _config['data']['train_ratio']
+_video_df = pd.DataFrame({'video_name': annotations_df['video_name'].unique()})
+_video_df['category'] = _video_df['video_name'].apply(get_video_category)
+train_videos = set()
+for _cat, _group in _video_df.groupby('category'):
+    _vids = np.random.RandomState(_SEED).permutation(_group['video_name'].values)
+    _n_train = int(_train_ratio * len(_vids))
+    train_videos.update(_vids[:_n_train])
+val_videos = set(_video_df['video_name'].values) - train_videos
+print(f"  {len(train_videos)} train / {len(val_videos)} val videos")
+
 
 # ---------------------------------------------------------------------------
 # Prediction Engine — model loading, inference, caching
@@ -468,9 +485,15 @@ def api_recordings():
         rec = recording_index[base_id]
         # Count unique waggle_run_ids across all variants
         run_ids = set(r["run_id"] for r in rec["waggle_runs"].values())
+        # Tag each variant with train/val split
+        variants_with_split = []
+        for v in rec["variants"]:
+            vc = dict(v)
+            vc["split"] = "train" if v["video_name"] in train_videos else "val"
+            variants_with_split.append(vc)
         result.append({
             "base_id": base_id,
-            "variants": rec["variants"],
+            "variants": variants_with_split,
             "waggle_count": len(run_ids),
         })
     return jsonify(result)
@@ -673,9 +696,12 @@ def api_pipeline(video_name):
             _, buf = cv2.imencode('.jpg', f_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
             frame_images.append(base64.b64encode(buf).decode('ascii'))
 
+
+        n_loaded = len(frames)
         meta.update({
             'video_resolution': [orig_w, orig_h],
-            'n_frames_loaded': len(frames),
+            'n_frames_loaded': n_loaded,
+            'needs_sampling': n_loaded != window_size,
             'crop_box': {
                 'x_min': x_min, 'y_min': y_min,
                 'x_max': x_min + crop_w, 'y_max': y_min + crop_h,

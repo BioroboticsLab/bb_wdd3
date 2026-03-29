@@ -114,6 +114,27 @@ main { display: flex; flex: 1; overflow: hidden; }
   background: var(--bg-card); padding: 2px 7px;
   border-radius: 10px;
 }
+/* Train/Val split badges */
+.split-badge {
+  font-size: 9px; font-weight: 700;
+  width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+.split-train {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.split-val {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+.split-train-border { border-bottom: 2px solid rgba(34, 197, 94, 0.4); }
+.split-val-border { border-bottom: 2px solid rgba(251, 191, 36, 0.4); }
 
 /* Viewer */
 #viewer {
@@ -795,18 +816,36 @@ async function loadRecordingList() {
   renderRecordingList();
 }
 
+function getRecSplit(rec) {
+  // Determine split from first variant that has split info
+  const v = rec.variants.find(v => v.split);
+  return v ? v.split : 'unknown';
+}
+
 function renderRecordingList(filter = '') {
   const list = $('#rec-list');
   const lowerFilter = filter.toLowerCase();
+  // Support special filters: :train, :val
+  const splitFilter = lowerFilter === ':train' ? 'train' : lowerFilter === ':val' ? 'val' : null;
   list.innerHTML = state.recordings
-    .filter(r => !filter || r.base_id.toLowerCase().includes(lowerFilter))
-    .map(r => `
+    .filter(r => {
+      if (splitFilter) return getRecSplit(r) === splitFilter;
+      return !filter || r.base_id.toLowerCase().includes(lowerFilter);
+    })
+    .map(r => {
+      const split = getRecSplit(r);
+      const badge = split === 'train'
+        ? '<span class="split-badge split-train" title="Training set">T</span>'
+        : '<span class="split-badge split-val" title="Validation set">V</span>';
+      return `
       <div class="rec-item ${r.base_id === state.currentBaseId ? 'selected' : ''}"
            data-base="${r.base_id}">
+        ${badge}
         <span class="name">${r.base_id}</span>
-        <span class="count">${r.waggle_count} waggles</span>
+        <span class="count">${r.waggle_count}</span>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
   list.querySelectorAll('.rec-item').forEach(el => {
     el.addEventListener('click', () => selectRecording(el.dataset.base));
@@ -833,7 +872,8 @@ async function selectRecording(baseId) {
       ? `${v.width}×${v.height}${v.fps_tag !== '15fps' ? ' ' + v.fps_tag : ''}`
       : v.video_name;
     const cls = v.exists ? 'variant-tab' : 'variant-tab unavailable';
-    return `<div class="${cls}" data-video="${v.video_name}" title="${v.video_name}">${label}</div>`;
+    const splitCls = v.split === 'train' ? 'split-train-border' : 'split-val-border';
+    return `<div class="${cls} ${splitCls}" data-video="${v.video_name}" title="${v.video_name} (${v.split})">${label}</div>`;
   }).join('');
 
   tabs.querySelectorAll('.variant-tab:not(.unavailable)').forEach(el => {
@@ -2144,6 +2184,9 @@ function piRenderStage(stage, data) {
     html += piMeta('Video', meta.video_name);
     html += piMeta('Resolution', `${meta.video_resolution?.[0]}\u00d7${meta.video_resolution?.[1]}`);
     html += piMeta('Frames', `${meta.start_frame} \u2192 ${meta.end_frame} (${meta.n_frames_loaded} loaded)`);
+    if (meta.needs_sampling) {
+      html += `<div style="color: var(--amber); margin-top:4px;">\u26a0\ufe0f Only ${meta.n_frames_loaded} frames loaded \u2014 model pads/samples to ${meta.window_size}. See "5. Sample" tab.</div>`;
+    }
     html += piMeta('GT Position', `(${meta.gt_position?.[0]?.toFixed(1)}, ${meta.gt_position?.[1]?.toFixed(1)})`);
     html += piMeta('GT Direction', `(${meta.gt_direction?.[0]?.toFixed(3)}, ${meta.gt_direction?.[1]?.toFixed(3)})`);
     if (meta.crop_box) {
