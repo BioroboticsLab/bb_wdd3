@@ -808,6 +808,8 @@ class EvaluationEngine:
     Runs in a background thread with progress tracking.
     """
 
+    CACHE_PATH = os.path.join(os.path.dirname(__file__), '.eval_cache.pkl')
+
     def __init__(self):
         self._results = None          # cached final results dict
         self._results_ckpt = None     # checkpoint path of cached results
@@ -825,6 +827,44 @@ class EvaluationEngine:
         self._cached_gts = None       # decoded per-window ground truths
         self._cached_video_names = None  # video name per window
         self._cached_config = None    # eval config used
+        self._load_disk_cache()
+
+    def _load_disk_cache(self):
+        """Load cached decoded predictions from disk if available."""
+        import pickle
+        if os.path.exists(self.CACHE_PATH):
+            try:
+                with open(self.CACHE_PATH, 'rb') as f:
+                    cache = pickle.load(f)
+                self._cached_preds = cache['preds']
+                self._cached_gts = cache['gts']
+                self._cached_video_names = cache['video_names']
+                self._cached_config = cache['config']
+                self._results_ckpt = cache.get('ckpt_path')
+                self._results = cache.get('results')
+                if self._results:
+                    self._progress = {'stage': 'done', 'batch_current': 0,
+                                      'batch_total': 0, 'message': 'Loaded from cache.'}
+                print(f"  ✅ Loaded eval cache from disk: {len(self._cached_preds)} windows"
+                      f" (results={'yes' if self._results else 'preds only'})", flush=True)
+            except Exception as e:
+                print(f"  ⚠️ Failed to load eval cache: {e}", flush=True)
+
+    def _save_disk_cache(self, ckpt_path=None):
+        """Save decoded predictions + results to disk for persistence across restarts."""
+        import pickle
+        cache = {
+            'preds': self._cached_preds,
+            'gts': self._cached_gts,
+            'video_names': self._cached_video_names,
+            'config': self._cached_config,
+            'ckpt_path': ckpt_path,
+            'results': self._results,
+        }
+        with open(self.CACHE_PATH, 'wb') as f:
+            pickle.dump(cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+        mb = os.path.getsize(self.CACHE_PATH) / (1024 * 1024)
+        print(f"  💾 Saved eval cache to disk ({mb:.1f} MB)", flush=True)
 
     @property
     def is_running(self):
@@ -1036,6 +1076,7 @@ class EvaluationEngine:
             self._cached_video_names = all_video_names
             self._cached_config = config
             print(f"  Eval: cached {len(test_preds)} decoded windows for re-clustering", flush=True)
+            self._save_disk_cache(ckpt_path=pred_engine.checkpoint_path)
 
             # ── 4. Post-process ──
             self._progress['message'] = 'Running post-processing (DBSCAN clustering)…'
@@ -1142,6 +1183,8 @@ class EvaluationEngine:
                 self._results = results
                 self._results_ckpt = pred_engine.checkpoint_path
 
+            self._save_disk_cache(ckpt_path=pred_engine.checkpoint_path)
+
             self._progress = {
                 'stage': 'done',
                 'batch_current': n_batches,
@@ -1167,7 +1210,7 @@ class EvaluationEngine:
         """Check if decoded predictions are cached for re-clustering."""
         return self._cached_preds is not None
 
-    def recluster(self, post_params):
+    def recluster(self, post_params, eval_config=None):
         """Re-run post-processing + metrics with new clustering params.
 
         This is very fast (~seconds) since it reuses cached decoded
@@ -1176,6 +1219,9 @@ class EvaluationEngine:
         Args:
             post_params: dict with keys like spatial_threshold, temporal_threshold,
                         confidence_threshold, strategy, mode, min_samples, etc.
+            eval_config: optional dict to override eval thresholds (pos_thresholds,
+                        iou_thresholds, angular_thresholds, match_pairs).
+                        If None, uses the config cached from the original eval run.
         Returns:
             Updated results dict (same shape as full eval results).
         """
@@ -1187,6 +1233,10 @@ class EvaluationEngine:
             raise RuntimeError("No cached predictions. Run full evaluation first.")
 
         config = self._cached_config
+        # Allow overriding eval thresholds with live config
+        if eval_config:
+            config = dict(config)  # shallow copy
+            config['eval'] = {**config.get('eval', {}), **eval_config}
         test_preds = self._cached_preds
         test_gts = self._cached_gts
         all_video_names = self._cached_video_names
@@ -1698,7 +1748,7 @@ def api_eval_recluster():
         pp['clustering_method'] = str(params['clustering_method'])
 
     try:
-        results = evaluation_engine.recluster(pp)
+        results = evaluation_engine.recluster(pp, eval_config=_config['eval'])
         return jsonify(results)
     except Exception as e:
         import traceback

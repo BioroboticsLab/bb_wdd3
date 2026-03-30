@@ -691,11 +691,28 @@ def get_eval_metrics(
         'duration_accuracy': np.mean(temp_dur_accs) if temp_dur_accs else 0.0,
     }
 
+    # Detection coverage: simple TP/FP/FN at the median threshold combo
+    # Answers: "how many GTs are matched?" and "how many predictions are correct?"
+    total_preds = sum(len(b) for b in preds)
+    total_gts = sum(len(b) for b in gts)
+    mid_idx = len(matched_pairs_per_combo) // 2
+    mid_pairs = matched_pairs_per_combo[mid_idx] if matched_pairs_per_combo else []
+    tp = len(mid_pairs)
+    coverage = {
+        'true_positives': tp,
+        'false_positives': total_preds - tp,
+        'false_negatives': total_gts - tp,
+        'gt_recall': tp / total_gts if total_gts > 0 else 0.0,
+        'pred_precision': tp / total_preds if total_preds > 0 else 0.0,
+        'threshold_combo_index': mid_idx,
+    }
+
     metrics = {
         'comprehensive': comprehensive_metrics,
         'spatial': position_metrics,
         'temporal': temporal_metrics,
         'directional': directional_metrics,
+        'detection_coverage': coverage,
         'counts': {
             'predictions': position_metrics['total_predictions'],
             'ground_truths': position_metrics['total_ground_truths']

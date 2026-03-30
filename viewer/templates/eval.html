@@ -471,6 +471,18 @@ header h1 span { font-size: 20px; margin-right: 4px; }
       </div>
     </div>
 
+    <!-- Detection Coverage -->
+    <div class="section" id="section-coverage">
+      <div class="section-header" onclick="toggleSection('coverage')">
+        <span class="section-icon">🎯</span>
+        <h3>Detection Coverage</h3>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="section-body" id="body-coverage">
+        <div id="coverage-content" style="display:flex;gap:24px;flex-wrap:wrap;"></div>
+      </div>
+    </div>
+
     <!-- Per-Video Breakdown -->
     <div class="section" id="section-per-video">
       <div class="section-header" onclick="toggleSection('per-video')">
@@ -696,6 +708,53 @@ function buildMetricTables(data) {
     metricsRow('Mean Angular Error (°)', pre.directional.mean_error, post.directional.mean_error, 'f1', false) +
     metricsRow('Mean Cosine Similarity', pre.directional.mean_cosine_similarity, post.directional.mean_cosine_similarity) +
     '</tbody>';
+
+  // Detection Coverage
+  function coverageBlock(label, cov, counts) {
+    if (!cov) return `<div style="color:var(--text-muted)">No coverage data</div>`;
+    const tp = cov.true_positives;
+    const fp = cov.false_positives;
+    const fn = cov.false_negatives;
+    const recPct = (cov.gt_recall * 100).toFixed(1);
+    const precPct = (cov.pred_precision * 100).toFixed(1);
+    return `
+      <div style="flex:1;min-width:280px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;">
+        <h4 style="margin:0 0 12px;color:var(--text-primary);font-size:14px;">${label}</h4>
+        <div style="display:flex;gap:16px;margin-bottom:12px;">
+          <div style="text-align:center;flex:1;">
+            <div style="font-size:28px;font-weight:700;color:#4ade80;">${tp}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Matched (TP)</div>
+          </div>
+          <div style="text-align:center;flex:1;">
+            <div style="font-size:28px;font-weight:700;color:#f87171;">${fp}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">False Pos</div>
+          </div>
+          <div style="text-align:center;flex:1;">
+            <div style="font-size:28px;font-weight:700;color:#fbbf24;">${fn}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Missed (FN)</div>
+          </div>
+        </div>
+        <div style="margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+            <span>GT Recall</span><span style="color:#4ade80;font-weight:600;">${recPct}%</span>
+          </div>
+          <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden;">
+            <div style="width:${recPct}%;height:100%;background:#4ade80;border-radius:4px;"></div>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+            <span>Pred Precision</span><span style="color:#60a5fa;font-weight:600;">${precPct}%</span>
+          </div>
+          <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden;">
+            <div style="width:${precPct}%;height:100%;background:#60a5fa;border-radius:4px;"></div>
+          </div>
+        </div>
+      </div>`;
+  }
+  const cc = document.getElementById('coverage-content');
+  cc.innerHTML = coverageBlock('Pre Post-Processing', pre.detection_coverage, pre.counts) +
+                 coverageBlock('Post Post-Processing', post.detection_coverage, post.counts);
 }
 
 // ─── Build per-video table ──────────────────────────────────────────────────

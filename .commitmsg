@@ -1,0 +1,8 @@
+fix: persist eval results in disk cache + detection coverage metric
+
+- Save _results dict alongside decoded predictions in .eval_cache.pkl
+- On startup, restore results from cache so dashboard shows data immediately
+- Set progress stage to 'done' when results loaded from cache
+- Fix NameError: use _config (module-level) not config in recluster endpoint
+- Add detection_coverage metrics: simple TP/FP/FN counts at median threshold
+- Add Detection Coverage panel to dashboard UI with visual progress bars
