@@ -8,6 +8,7 @@ Usage:
     python3 viewer/server.py                                        # localhost:5050
     python3 viewer/server.py --checkpoint ./ckpt/run/best.pth       # with model predictions
     python3 viewer/server.py --host 0.0.0.0 --checkpoint ./ckpt/run/best.pth
+    python3 viewer/server.py --checkpoint ./ckpt/run/best.pth --external-videos /path/to/videos/
 """
 
 import argparse
@@ -36,11 +37,16 @@ VIDEO_DIR = os.path.join(DATA_DIR, "videos")
 ANNOTATIONS_PATH = os.path.join(DATA_DIR, "annotations", "fps_multires_clean.csv")
 CONFIG_PATH = os.path.join(BASE_DIR, "configs", "config.yaml")
 CROP_SIZE = 224  # must match config
+EXTERNAL_VIDEO_DIR = None  # set via --external-videos CLI arg
+
+# Registry: video_name → absolute path (for videos outside VIDEO_DIR)
+_external_video_paths = {}
 
 FRAME_CACHE_SIZE = 512   # max decoded JPEG frames in memory
 JPEG_QUALITY = 85
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +146,7 @@ class FrameServer:
         """Return (VideoCapture, Lock) for a given video, creating if needed."""
         with self._global_lock:
             if video_name not in self._caps:
-                path = os.path.join(VIDEO_DIR, video_name)
+                path = resolve_video_path(video_name)
                 cap = cv2.VideoCapture(path)
                 if not cap.isOpened():
                     raise FileNotFoundError(f"Cannot open video: {path}")
@@ -382,8 +388,10 @@ class PredictionEngine:
             # Process in batches
             if len(batch_tensors) >= BATCH_SIZE or idx == len(video_rows) - 1:
                 batch = torch.stack(batch_tensors).to(self.device)  # (B, C, T, H, W)
+                dev_type = self.device.type  # 'cuda' or 'cpu'
+                amp_dtype = torch.float16 if dev_type == 'cuda' else torch.bfloat16
                 with torch.no_grad():
-                    with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+                    with torch.amp.autocast(device_type=dev_type, dtype=amp_dtype):
                         outputs = self.model(batch)
                 all_outputs.append(outputs.cpu())
                 batch_tensors = []
@@ -472,6 +480,846 @@ prediction_engine = PredictionEngine()
 
 
 # ---------------------------------------------------------------------------
+# Video path resolution — supports both annotated and external videos
+# ---------------------------------------------------------------------------
+
+def resolve_video_path(video_name: str) -> str:
+    """Resolve a video name to its absolute path.
+    Checks: external registry → VIDEO_DIR → EXTERNAL_VIDEO_DIR.
+    """
+    # Check external registry first
+    if video_name in _external_video_paths:
+        return _external_video_paths[video_name]
+    # Check standard video directory
+    path = os.path.join(VIDEO_DIR, video_name)
+    if os.path.exists(path):
+        return path
+    # Check external directory
+    if EXTERNAL_VIDEO_DIR:
+        path = os.path.join(EXTERNAL_VIDEO_DIR, video_name)
+        if os.path.exists(path):
+            return path
+    raise FileNotFoundError(f"Video not found: {video_name}")
+
+
+def scan_external_videos():
+    """Scan EXTERNAL_VIDEO_DIR (recursively) for video files not in the annotation CSV."""
+    global _external_video_paths
+    if not EXTERNAL_VIDEO_DIR or not os.path.isdir(EXTERNAL_VIDEO_DIR):
+        return []
+
+    annotated_names = set(annotations_df['video_name'].unique()) if 'annotations_df' in globals() else set()
+    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.MP4', '.AVI', '.MOV'}
+    external = []
+
+    for root, dirs, files in os.walk(EXTERNAL_VIDEO_DIR):
+        dirs.sort()
+        for fname in sorted(files):
+            _, ext = os.path.splitext(fname)
+            if ext not in video_extensions:
+                continue
+            full_path = os.path.join(root, fname)
+            # Use relative path from EXTERNAL_VIDEO_DIR as the key
+            # e.g. "100fps/18_08_2008-1436-SINGLE.mp4"
+            rel_path = os.path.relpath(full_path, EXTERNAL_VIDEO_DIR)
+            if rel_path in annotated_names or fname in annotated_names:
+                continue
+            _external_video_paths[rel_path] = full_path
+            external.append(rel_path)
+
+    return external
+
+
+# ---------------------------------------------------------------------------
+# Sliding Window Inference — full-frame fully-convolutional inference
+# ---------------------------------------------------------------------------
+
+class SlidingWindowInference:
+    """Run model inference on unannotated videos via temporal sliding window.
+
+    The model is fully convolutional, so we feed full-resolution frames
+    directly — no spatial tiling or cropping needed. The output grid
+    scales proportionally with input resolution.
+    """
+
+    def __init__(self, prediction_engine):
+        self.engine = prediction_engine
+        self._cache = {}  # video_name → result dict
+        self._lock = threading.Lock()
+        self._progress = {}  # video_name → (current, total)
+
+    def get_results(self, video_name):
+        """Get cached results, or None."""
+        with self._lock:
+            return self._cache.get(video_name)
+
+    def get_progress(self, video_name):
+        """Get inference progress as (current, total)."""
+        return self._progress.get(video_name, (0, 0))
+
+    def run_inference(self, video_name, temporal_stride=8):
+        """Run full-frame sliding-window inference on a video."""
+        import torch
+        import torch.nn.functional as F
+        import torchvision.transforms as T
+        from torchvision.transforms import ToTensor
+
+        if not self.engine.is_loaded:
+            raise RuntimeError("No model checkpoint loaded")
+
+        video_path = resolve_video_path(video_name)
+        config = self.engine.config
+
+        # Get video info
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        vid_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        vid_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        vid_fps = float(cap.get(cv2.CAP_PROP_FPS))
+        cap.release()
+
+        window_size = config['data']['window_size']
+
+        # Transform: same as training eval but WITHOUT Resize (keep native resolution)
+        # The training pipeline does: ToTensor → ToPILImage → Resize(224) → Grayscale(3) → ToTensor → Normalize
+        # Resize is a no-op for 224x224 crops, so we skip it for full-frame.
+        to_tensor = ToTensor()
+        full_frame_transform = T.Compose([
+            T.ToPILImage(),
+            T.Grayscale(num_output_channels=3),
+            T.ToTensor(),
+            T.Normalize(mean=config['augmentations']['mean'],
+                        std=config['augmentations']['std']),
+        ])
+
+        # Compute temporal windows
+        starts = list(range(0, max(1, total_frames - window_size + 1), temporal_stride))
+        if not starts:
+            starts = [0]
+        total_windows = len(starts)
+        self._progress[video_name] = (0, total_windows)
+
+        all_detections = []
+
+        print(f"  Inference: {video_name} ({vid_width}×{vid_height}, {total_frames} frames, "
+              f"{vid_fps:.0f}fps) → {total_windows} windows")
+
+        for win_idx, start_frame in enumerate(starts):
+            end_frame = min(start_frame + window_size, total_frames)
+
+            # Load frames
+            cap = cv2.VideoCapture(video_path)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            frames = []
+            for _ in range(end_frame - start_frame):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frames.append(frame)  # BGR numpy
+            cap.release()
+
+            if not frames:
+                continue
+
+            # Transform: BGR numpy → same pipeline as training
+            # (ToTensor on BGR numpy keeps channel order; training does the same)
+            frame_tensors = []
+            for f in frames:
+                t = to_tensor(f)  # HWC uint8 → CHW float [0,1]
+                t = full_frame_transform(t)  # ToPIL → Grayscale(3) → ToTensor → Normalize
+                frame_tensors.append(t)
+
+            # Pad/sample to window_size
+            n = len(frame_tensors)
+            if n >= window_size:
+                idxs = np.linspace(0, n - 1, window_size, dtype=int)
+                frame_tensors = [frame_tensors[i] for i in idxs]
+            else:
+                reps = frame_tensors * (window_size // n + 1)
+                frame_tensors = reps[:window_size]
+
+            # Stack: (C, T, H, W) → batch: (1, C, T, H, W)
+            video_tensor = torch.stack(frame_tensors).permute(1, 0, 2, 3)
+            batch = video_tensor.unsqueeze(0).to(self.engine.device)
+
+            # Pad spatial dims to be divisible by 8 (backbone stride)
+            _, _, _, h, w = batch.shape
+            pad_h = (8 - h % 8) % 8
+            pad_w = (8 - w % 8) % 8
+            if pad_h or pad_w:
+                batch = F.pad(batch, (0, pad_w, 0, pad_h), mode='reflect')
+
+            # Run model
+            dev_type = self.engine.device.type  # 'cuda' or 'cpu'
+            amp_dtype = torch.float16 if dev_type == 'cuda' else torch.bfloat16
+            with torch.no_grad():
+                with torch.amp.autocast(device_type=dev_type, dtype=amp_dtype):
+                    output = self.engine.model(batch)
+
+            # Decode output grid → pixel-space detections
+            dets = self._decode_output(
+                output, start_frame, end_frame,
+                frame_width=vid_width, frame_height=vid_height,
+                pad_h=pad_h, pad_w=pad_w,
+                window_size=window_size,
+                confidence_threshold=config['eval']['confidence_threshold'],
+                max_dets=config['eval']['max_dets'],
+            )
+            all_detections.extend(dets)
+            self._progress[video_name] = (win_idx + 1, total_windows)
+
+            if (win_idx + 1) % 50 == 0 or win_idx == total_windows - 1:
+                print(f"    Window {win_idx + 1}/{total_windows} — {len(all_detections)} raw detections")
+
+        # Post-process: cluster all detections across windows
+        from src.utils.postprocess import postprocess_predictions
+        post_result = postprocess_predictions(
+            all_detections,
+            spatial_threshold=config['post_process']['spatial_threshold'],
+            temporal_threshold=config['post_process']['temporal_threshold'],
+            confidence_threshold=config['post_process']['confidence_threshold'],
+            strategy=config['post_process']['strategy'],
+            mode=config['post_process']['mode'],
+            remove_outliers=config['post_process'].get('outlier_detection', False),
+            outlier_method='isolation_forest',
+        )
+        post_preds = post_result['filtered_predictions']
+
+        # Ensure JSON serializable
+        def _to_native(obj):
+            if isinstance(obj, dict):
+                return {k: _to_native(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [_to_native(v) for v in obj]
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            return obj
+
+        all_detections = [_to_native(d) for d in all_detections]
+        post_preds = [_to_native(d) for d in post_preds]
+
+        result = {
+            'raw': all_detections,
+            'postprocessed': post_preds,
+            'n_windows': total_windows,
+            'video_info': {
+                'width': vid_width, 'height': vid_height,
+                'total_frames': total_frames, 'fps': vid_fps,
+            },
+        }
+
+        print(f"  {video_name}: {len(all_detections)} raw → {len(post_preds)} post-processed")
+
+        with self._lock:
+            self._cache[video_name] = result
+        del self._progress[video_name]
+
+        return result
+
+    def _decode_output(self, output, start_frame, end_frame,
+                       frame_width, frame_height, pad_h, pad_w,
+                       window_size, confidence_threshold=0.001, max_dets=200):
+        """Decode model output grid to pixel-space detections.
+
+        Handles non-square grids (grid_h ≠ grid_w) for full-frame inference.
+        The padded pixels are excluded by limiting decoded coordinates
+        to the original frame dimensions.
+        """
+        import torch
+
+        det = output[0]  # (grid_h, grid_w, max_det, 7)
+        grid_h, grid_w = det.shape[0], det.shape[1]
+
+        # Padded dimensions that were fed to the model
+        padded_w = frame_width + pad_w
+        padded_h = frame_height + pad_h
+
+        cell_w = padded_w / grid_w
+        cell_h = padded_h / grid_h
+
+        detections = []
+        for i in range(grid_h):
+            for j in range(grid_w):
+                for k in range(det.shape[2]):
+                    d = det[i, j, k].detach().cpu()
+                    conf = torch.sigmoid(d[0]).item()
+
+                    if conf > confidence_threshold:
+                        norm_x = d[1].item()
+                        norm_y = d[2].item()
+                        dir_x = d[3].item()
+                        dir_y = d[4].item()
+                        t_start = d[5].item()
+                        t_end = d[6].item()
+
+                        # Map grid cell to pixel coordinates
+                        pos_x = (j + norm_x) * cell_w
+                        pos_y = (i + norm_y) * cell_h
+
+                        # Skip detections in the padded region
+                        if pos_x >= frame_width or pos_y >= frame_height:
+                            continue
+
+                        pos_x = max(0.0, min(float(pos_x), frame_width - 1))
+                        pos_y = max(0.0, min(float(pos_y), frame_height - 1))
+
+                        # Temporal offsets → absolute frame indices
+                        abs_start = int(t_start * window_size + start_frame)
+                        abs_end = int(t_end * window_size + start_frame)
+                        abs_start = max(start_frame, min(abs_start, end_frame))
+                        abs_end = max(abs_start, min(abs_end, end_frame))
+
+                        detections.append({
+                            'confidence': float(conf),
+                            'position': [pos_x, pos_y],
+                            'direction': [float(dir_x), float(dir_y)],
+                            'grid_cell': [i, j, k],
+                            'temporal_offsets': [abs_start, abs_end],
+                            'window_start': int(start_frame),
+                            'window_end': int(end_frame),
+                        })
+
+        # Keep top-N by confidence per window
+        detections.sort(key=lambda x: x['confidence'], reverse=True)
+        return detections[:max_dets]
+
+
+sliding_inference = SlidingWindowInference(prediction_engine)
+
+
+# ---------------------------------------------------------------------------
+# Evaluation Engine — full STD-mAP evaluation on the validation set
+# ---------------------------------------------------------------------------
+
+class EvaluationEngine:
+    """Runs the complete evaluation pipeline (STD-mAP) on the validation set.
+
+    Replicates exactly the evaluation loop from ckpt_eval.py / main.py:
+      1. Build val DataLoader from val split
+      2. get_preds_gt() → raw logits + ground truth
+      3. yolo_to_img_space() / yolo_to_img_space_gt() → decoded detections
+      4. batch_postprocess_predictions() → clustered predictions
+      5. get_eval_metrics() → comprehensive metrics (pre + post)
+
+    Runs in a background thread with progress tracking.
+    """
+
+    def __init__(self):
+        self._results = None          # cached final results dict
+        self._results_ckpt = None     # checkpoint path of cached results
+        self._lock = threading.Lock()
+        self._running = False
+        self._progress = {            # progress state
+            'stage': 'idle',          # idle | loading | inference | postprocess | metrics | done | error
+            'batch_current': 0,
+            'batch_total': 0,
+            'message': '',
+        }
+        self._error = None
+        # Cached intermediate results for fast re-clustering
+        self._cached_preds = None     # decoded per-window predictions (list of lists)
+        self._cached_gts = None       # decoded per-window ground truths
+        self._cached_video_names = None  # video name per window
+        self._cached_config = None    # eval config used
+
+    @property
+    def is_running(self):
+        return self._running
+
+    def get_progress(self):
+        return dict(self._progress)
+
+    def get_results(self):
+        with self._lock:
+            return self._results
+
+    def run_async(self, prediction_engine, config):
+        """Start evaluation in a background thread."""
+        if self._running:
+            return False  # already running
+
+        # Check if results are cached for this checkpoint
+        ckpt_path = prediction_engine.checkpoint_path
+        if self._results and self._results_ckpt == ckpt_path:
+            return True  # results already available
+
+        self._running = True
+        self._error = None
+        self._progress = {
+            'stage': 'loading',
+            'batch_current': 0,
+            'batch_total': 0,
+            'message': 'Building validation DataLoader…',
+        }
+
+        thread = threading.Thread(
+            target=self._run_evaluation,
+            args=(prediction_engine, config),
+            daemon=True,
+        )
+        thread.start()
+        return True
+
+    def _run_evaluation(self, pred_engine, config):
+        """Full evaluation pipeline (runs in background thread)."""
+        import torch
+        import torchvision.transforms as T
+        from src.data.dataset import VideoYoloDataset
+        from src.utils.eval_utils import (
+            get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt,
+            get_eval_metrics, print_evaluation_results,
+        )
+        from src.utils.postprocess import batch_postprocess_predictions
+
+        try:
+            # ── 1. Build val DataLoader ──
+            self._progress['stage'] = 'loading'
+            self._progress['message'] = 'Building validation dataset…'
+
+            test_df = annotations_df[
+                ~annotations_df['video_name'].isin(train_videos)
+            ].reset_index(drop=True)
+
+            test_transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize((config['augmentations']['width'],
+                          config['augmentations']['height'])),
+                T.Grayscale(num_output_channels=3),
+                T.ToTensor(),
+                T.Normalize(mean=config['augmentations']['mean'],
+                            std=config['augmentations']['std']),
+            ])
+
+            test_dataset = VideoYoloDataset(
+                test_df,
+                config['data']['data_dir'],
+                test_transform,
+                width=config['data']['width'],
+                height=config['data']['height'],
+                window_size=config['data']['window_size'],
+                grid_size=config['model']['grid_size'],
+                max_detections_per_cell=config['model']['max_detections_per_cell'],
+                n_classes=config['model']['n_classes'],
+                augment=None,
+                is_training=False,
+            )
+
+            # ── 2. Inference — manual batching (no DataLoader) ──
+            # DataLoader deadlocks in daemon threads even with num_workers=0
+            # due to GIL contention with Flask's request threads.
+            # Manual iteration avoids this entirely.
+            model = pred_engine.model
+            device = pred_engine.device
+            model.eval()
+
+            eval_batch_size = min(config['eval'].get('batch_size', 64), 8)
+            n_samples = len(test_dataset)
+            n_batches = (n_samples + eval_batch_size - 1) // eval_batch_size
+
+            self._progress.update({
+                'stage': 'inference',
+                'batch_total': n_batches,
+                'message': f'Running inference on {n_samples} val windows (bs={eval_batch_size})…',
+            })
+
+            import time as _time
+            import sys as _sys
+            print(f"  Eval: {n_samples} val windows, {n_batches} batches (bs={eval_batch_size})", flush=True)
+
+            # Quick sanity test: can we load any sample at all?
+            print(f"  Eval: loading sample 0 from dataset...", flush=True)
+            _t = _time.time()
+            _s = test_dataset[0]
+            print(f"  Eval: sample 0 OK ({_time.time()-_t:.2f}s, video={_s['metadata']['video_name']})", flush=True)
+            del _s
+
+            all_outputs = []
+            all_targets = []
+            all_starts = []
+            all_ends = []
+            all_video_names = []
+            all_original_res = []
+
+            t0 = _time.time()
+
+            for batch_start in range(0, n_samples, eval_batch_size):
+                t_batch = _time.time()
+                batch_end = min(batch_start + eval_batch_size, n_samples)
+                batch_idx = batch_start // eval_batch_size
+
+                # Load samples one by one — yield GIL between samples
+                videos = []
+                targets = []
+                for i in range(batch_start, batch_end):
+                    if i < 3:
+                        print(f"  Eval: loading sample {i}...", flush=True)
+                    try:
+                        sample = test_dataset[i]
+                    except Exception as e:
+                        print(f"  Eval: SKIP sample {i}: {e}", flush=True)
+                        continue
+                    videos.append(sample['video'])
+                    targets.append(sample['targets'])
+                    meta = sample['metadata']
+                    all_starts.append(meta['start_frame'])
+                    all_ends.append(meta['end_frame'])
+                    all_video_names.append(meta['video_name'])
+                    all_original_res.append(meta['res'])
+                    _time.sleep(0)  # yield GIL to Flask threads
+
+                if not videos:
+                    continue
+
+                inputs = torch.stack(videos).to(device)
+                targets_t = torch.stack(targets)
+
+                dev_type = device.type
+                amp_dtype = torch.float16 if dev_type == 'cuda' else torch.bfloat16
+                with torch.no_grad():
+                    with torch.amp.autocast(device_type=dev_type, dtype=amp_dtype):
+                        outputs = model(inputs)
+
+                all_outputs.append(outputs.cpu())
+                all_targets.append(targets_t.cpu())
+                del inputs, outputs, videos, targets, targets_t
+
+                elapsed = _time.time() - t0
+                batch_time = _time.time() - t_batch
+                eta = (elapsed / (batch_idx + 1)) * (n_batches - batch_idx - 1)
+
+                self._progress['batch_current'] = batch_idx + 1
+                self._progress['message'] = (
+                    f'Inference: {batch_idx + 1}/{n_batches} '
+                    f'({batch_time:.1f}s/batch, ETA {eta:.0f}s)'
+                )
+                if (batch_idx + 1) % 10 == 0 or batch_idx == 0:
+                    print(f"  Eval batch {batch_idx+1}/{n_batches} "
+                          f"({batch_time:.1f}s, ETA {eta/60:.1f}min)", flush=True)
+
+            all_outputs = torch.cat(all_outputs, dim=0)
+            all_targets = torch.cat(all_targets, dim=0)
+            all_starts = np.array(all_starts)
+            all_ends = np.array(all_ends)
+            all_video_names = np.array(all_video_names)
+
+            # ── 3. Decode to image space ──
+            self._progress['stage'] = 'postprocess'
+            self._progress['message'] = 'Decoding predictions to image space…'
+
+            test_gts = yolo_to_img_space_gt(
+                all_targets,
+                all_starts=all_starts,
+                all_ends=all_ends,
+                window_size=config['data']['window_size'],
+                original_size=(config['data']['width'],
+                               config['data']['height']),
+            )
+
+            test_preds = yolo_to_img_space(
+                all_outputs,
+                all_starts=all_starts,
+                all_ends=all_ends,
+                confidence_threshold=config['eval']['confidence_threshold'],
+                window_size=config['data']['window_size'],
+                original_size=(config['data']['width'],
+                               config['data']['height']),
+                max_dets=config['eval']['max_dets'],
+            )
+
+            # Cache decoded predictions for fast re-clustering
+            self._cached_preds = test_preds
+            self._cached_gts = test_gts
+            self._cached_video_names = all_video_names
+            self._cached_config = config
+            print(f"  Eval: cached {len(test_preds)} decoded windows for re-clustering", flush=True)
+
+            # ── 4. Post-process ──
+            self._progress['message'] = 'Running post-processing (DBSCAN clustering)…'
+
+            post_test_preds = batch_postprocess_predictions(
+                test_preds,
+                spatial_threshold=config['post_process']['spatial_threshold'],
+                temporal_threshold=config['post_process']['temporal_threshold'],
+                confidence_threshold=config['post_process']['confidence_threshold'],
+                strategy=config['post_process']['strategy'],
+                mode=config['post_process']['mode'],
+                remove_outliers=config['post_process'].get('outlier_detection', False),
+                outlier_method='isolation_forest',
+            )
+
+            # ── 5. Compute metrics ──
+            self._progress['stage'] = 'metrics'
+            self._progress['message'] = 'Computing STD-mAP metrics…'
+
+            test_metrics = get_eval_metrics(
+                test_preds, test_gts,
+                pos_thresholds=config['eval']['pos_thresholds'],
+                iou_threshold_range=config['eval']['iou_thresholds'],
+                angular_thresholds=config['eval']['angular_thresholds'],
+                match_pairs=config['eval']['match_pairs'],
+            )
+
+            post_test_metrics = get_eval_metrics(
+                post_test_preds, test_gts,
+                pos_thresholds=config['eval']['pos_thresholds'],
+                iou_threshold_range=config['eval']['iou_thresholds'],
+                angular_thresholds=config['eval']['angular_thresholds'],
+                match_pairs=config['eval']['match_pairs'],
+            )
+
+            # ── 6. Per-video breakdown ──
+            self._progress['message'] = 'Computing per-video breakdown…'
+            per_video = {}
+            unique_videos = sorted(set(all_video_names))
+            for vname in unique_videos:
+                mask = all_video_names == vname
+                indices = np.where(mask)[0]
+                if len(indices) == 0:
+                    continue
+
+                v_preds = [test_preds[i] for i in indices]
+                v_post = [post_test_preds[i] for i in indices]
+                v_gts = [test_gts[i] for i in indices]
+
+                v_metrics = get_eval_metrics(
+                    v_preds, v_gts,
+                    pos_thresholds=config['eval']['pos_thresholds'],
+                    iou_threshold_range=config['eval']['iou_thresholds'],
+                    angular_thresholds=config['eval']['angular_thresholds'],
+                    match_pairs=config['eval']['match_pairs'],
+                )
+                v_post_metrics = get_eval_metrics(
+                    v_post, v_gts,
+                    pos_thresholds=config['eval']['pos_thresholds'],
+                    iou_threshold_range=config['eval']['iou_thresholds'],
+                    angular_thresholds=config['eval']['angular_thresholds'],
+                    match_pairs=config['eval']['match_pairs'],
+                )
+
+                per_video[vname] = {
+                    'pre': _eval_metrics_to_native(v_metrics),
+                    'post': _eval_metrics_to_native(v_post_metrics),
+                    'n_windows': int(len(indices)),
+                }
+
+            # Print to console (same as training)
+            print_evaluation_results(test_metrics, post_test_metrics)
+
+            # ── Store results ──
+            import time
+            results = {
+                'pre': _eval_metrics_to_native(test_metrics),
+                'post': _eval_metrics_to_native(post_test_metrics),
+                'per_video': per_video,
+                'checkpoint': pred_engine.checkpoint_meta,
+                'config': {
+                    'eval': {
+                        'pos_thresholds': config['eval']['pos_thresholds'],
+                        'iou_thresholds': config['eval']['iou_thresholds'],
+                        'angular_thresholds': config['eval']['angular_thresholds'],
+                        'match_pairs': config['eval']['match_pairs'],
+                        'confidence_threshold': config['eval']['confidence_threshold'],
+                        'max_dets': config['eval']['max_dets'],
+                    },
+                    'post_process': {
+                        'spatial_threshold': config['post_process']['spatial_threshold'],
+                        'temporal_threshold': config['post_process']['temporal_threshold'],
+                        'confidence_threshold': config['post_process']['confidence_threshold'],
+                        'strategy': config['post_process']['strategy'],
+                        'mode': config['post_process']['mode'],
+                    },
+                },
+                'n_val_windows': int(len(test_df)),
+                'n_val_videos': int(len(unique_videos)),
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+
+            with self._lock:
+                self._results = results
+                self._results_ckpt = pred_engine.checkpoint_path
+
+            self._progress = {
+                'stage': 'done',
+                'batch_current': n_batches,
+                'batch_total': n_batches,
+                'message': 'Evaluation complete.',
+            }
+            print(f"  ✅ Evaluation complete. Results cached.")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._error = str(e)
+            self._progress = {
+                'stage': 'error',
+                'batch_current': 0,
+                'batch_total': 0,
+                'message': f'Error: {e}',
+            }
+        finally:
+            self._running = False
+
+    def has_cached_preds(self):
+        """Check if decoded predictions are cached for re-clustering."""
+        return self._cached_preds is not None
+
+    def recluster(self, post_params):
+        """Re-run post-processing + metrics with new clustering params.
+
+        This is very fast (~seconds) since it reuses cached decoded
+        predictions and skips the expensive inference step entirely.
+
+        Args:
+            post_params: dict with keys like spatial_threshold, temporal_threshold,
+                        confidence_threshold, strategy, mode, min_samples, etc.
+        Returns:
+            Updated results dict (same shape as full eval results).
+        """
+        from src.utils.postprocess import batch_postprocess_predictions
+        from src.utils.eval_utils import get_eval_metrics, print_evaluation_results
+        import time as _time
+
+        if self._cached_preds is None:
+            raise RuntimeError("No cached predictions. Run full evaluation first.")
+
+        config = self._cached_config
+        test_preds = self._cached_preds
+        test_gts = self._cached_gts
+        all_video_names = self._cached_video_names
+
+        # Merge defaults with provided params
+        pp = {
+            'spatial_threshold': config['post_process']['spatial_threshold'],
+            'temporal_threshold': config['post_process']['temporal_threshold'],
+            'confidence_threshold': config['post_process']['confidence_threshold'],
+            'strategy': config['post_process']['strategy'],
+            'mode': config['post_process']['mode'],
+            'min_samples': 1,
+        }
+        pp.update(post_params)
+
+        t0 = _time.time()
+
+        # Re-run post-processing
+        post_test_preds = batch_postprocess_predictions(
+            test_preds,
+            spatial_threshold=pp['spatial_threshold'],
+            temporal_threshold=pp['temporal_threshold'],
+            confidence_threshold=pp['confidence_threshold'],
+            strategy=pp['strategy'],
+            mode=pp['mode'],
+            remove_outliers=pp.get('remove_outliers', False),
+            outlier_method=pp.get('outlier_method', 'isolation_forest'),
+            min_samples=pp.get('min_samples', 1),
+        )
+
+        # Re-compute metrics
+        test_metrics = get_eval_metrics(
+            test_preds, test_gts,
+            pos_thresholds=config['eval']['pos_thresholds'],
+            iou_threshold_range=config['eval']['iou_thresholds'],
+            angular_thresholds=config['eval']['angular_thresholds'],
+            match_pairs=config['eval']['match_pairs'],
+        )
+
+        post_test_metrics = get_eval_metrics(
+            post_test_preds, test_gts,
+            pos_thresholds=config['eval']['pos_thresholds'],
+            iou_threshold_range=config['eval']['iou_thresholds'],
+            angular_thresholds=config['eval']['angular_thresholds'],
+            match_pairs=config['eval']['match_pairs'],
+        )
+
+        # Per-video breakdown
+        per_video = {}
+        unique_videos = sorted(set(all_video_names))
+        for vname in unique_videos:
+            mask = all_video_names == vname
+            indices = np.where(mask)[0]
+            if len(indices) == 0:
+                continue
+            v_preds = [test_preds[i] for i in indices]
+            v_post = [post_test_preds[i] for i in indices]
+            v_gts = [test_gts[i] for i in indices]
+            v_metrics = get_eval_metrics(
+                v_preds, v_gts,
+                pos_thresholds=config['eval']['pos_thresholds'],
+                iou_threshold_range=config['eval']['iou_thresholds'],
+                angular_thresholds=config['eval']['angular_thresholds'],
+                match_pairs=config['eval']['match_pairs'],
+            )
+            v_post_metrics = get_eval_metrics(
+                v_post, v_gts,
+                pos_thresholds=config['eval']['pos_thresholds'],
+                iou_threshold_range=config['eval']['iou_thresholds'],
+                angular_thresholds=config['eval']['angular_thresholds'],
+                match_pairs=config['eval']['match_pairs'],
+            )
+            per_video[vname] = {
+                'pre': _eval_metrics_to_native(v_metrics),
+                'post': _eval_metrics_to_native(v_post_metrics),
+                'n_windows': int(len(indices)),
+            }
+
+        elapsed = _time.time() - t0
+        print_evaluation_results(test_metrics, post_test_metrics)
+        print(f"  ✅ Re-clustered in {elapsed:.1f}s with params: {pp}", flush=True)
+
+        # Build results dict
+        results = {
+            'pre': _eval_metrics_to_native(test_metrics),
+            'post': _eval_metrics_to_native(post_test_metrics),
+            'per_video': per_video,
+            'checkpoint': self._results.get('checkpoint') if self._results else {},
+            'config': {
+                'eval': {
+                    'pos_thresholds': config['eval']['pos_thresholds'],
+                    'iou_thresholds': config['eval']['iou_thresholds'],
+                    'angular_thresholds': config['eval']['angular_thresholds'],
+                    'match_pairs': config['eval']['match_pairs'],
+                    'confidence_threshold': config['eval']['confidence_threshold'],
+                    'max_dets': config['eval']['max_dets'],
+                },
+                'post_process': pp,
+            },
+            'n_val_windows': int(len(test_preds)),
+            'n_val_videos': int(len(unique_videos)),
+            'timestamp': _time.strftime('%Y-%m-%d %H:%M:%S'),
+            'recluster_time': round(elapsed, 1),
+        }
+
+        # Update cached results
+        with self._lock:
+            self._results = results
+
+        return results
+
+
+def _eval_metrics_to_native(metrics):
+    """Recursively convert numpy types to JSON-serializable Python types."""
+    if isinstance(metrics, dict):
+        return {k: _eval_metrics_to_native(v) for k, v in metrics.items()}
+    elif isinstance(metrics, (list, tuple)):
+        return [_eval_metrics_to_native(v) for v in metrics]
+    elif isinstance(metrics, np.integer):
+        return int(metrics)
+    elif isinstance(metrics, np.floating):
+        return float(metrics)
+    elif isinstance(metrics, np.ndarray):
+        return metrics.tolist()
+    elif isinstance(metrics, float) and (np.isnan(metrics) or np.isinf(metrics)):
+        return None  # JSON doesn't support nan/inf
+    return metrics
+
+
+evaluation_engine = EvaluationEngine()
+
+
+# ---------------------------------------------------------------------------
 # API Routes
 # ---------------------------------------------------------------------------
 
@@ -502,7 +1350,7 @@ def api_recordings():
     return jsonify(result)
 
 
-@app.route("/api/video/<video_name>/info")
+@app.route("/api/video/<path:video_name>/info")
 def api_video_info(video_name):
     """Get video file metadata (resolution, fps, frame count)."""
     try:
@@ -512,12 +1360,15 @@ def api_video_info(video_name):
         return jsonify({"error": f"Video not found: {video_name}"}), 404
 
 
-@app.route("/api/video/<video_name>/annotations")
+@app.route("/api/video/<path:video_name>/annotations")
 def api_video_annotations(video_name):
-    """Get deduplicated waggle runs for a specific video file."""
+    """Get deduplicated waggle runs for a specific video file.
+    Returns empty list for external/unannotated videos.
+    """
     base, *_ = get_base_and_variant(video_name)
     if base not in recording_index:
-        return jsonify({"error": "Recording not found"}), 404
+        # External video — no annotations, return empty list (not 404)
+        return jsonify([])
 
     runs = [
         r for r in recording_index[base]["waggle_runs"].values()
@@ -527,7 +1378,7 @@ def api_video_annotations(video_name):
     return jsonify(runs)
 
 
-@app.route("/api/frame/<video_name>/<int:frame_idx>")
+@app.route("/api/frame/<path:video_name>/<int:frame_idx>")
 def api_frame(video_name, frame_idx):
     """Serve a single decoded video frame as JPEG."""
     try:
@@ -558,7 +1409,7 @@ def api_random():
     return jsonify({"base_id": random.choice(candidates)})
 
 
-@app.route("/api/predictions/<video_name>")
+@app.route("/api/predictions/<path:video_name>")
 def api_predictions(video_name):
     """Get model predictions for a video. Runs inference if not cached."""
     if not prediction_engine.is_loaded:
@@ -574,6 +1425,90 @@ def api_predictions(video_name):
         "n_windows": result['n_windows'],
         "checkpoint": prediction_engine.checkpoint_meta,
     })
+
+
+@app.route("/api/cluster/<path:video_name>", methods=["POST"])
+def api_cluster(video_name):
+    """Re-cluster raw predictions with custom parameters.
+
+    Accepts JSON body with clustering parameters and returns consolidated
+    predictions plus the raw→cluster mapping (which raw detection belongs
+    to which cluster). This powers the "Clustered" view mode and the
+    interactive parameter sliders in the Pipeline Inspector.
+    """
+    from src.utils.postprocess import cluster_and_consolidate_waggles
+
+    # Get raw predictions from whichever cache has them
+    raw_preds = None
+    cached = prediction_engine._cache.get(video_name)
+    if cached:
+        raw_preds = cached.get('raw')
+    if raw_preds is None:
+        sw_cached = sliding_inference.get_results(video_name)
+        if sw_cached:
+            raw_preds = sw_cached.get('raw')
+    if raw_preds is None:
+        return jsonify({"error": "No cached predictions for this video. Run inference first."}), 404
+
+    # Parse clustering parameters from request body
+    params = request.get_json() or {}
+    spatial_threshold = float(params.get('spatial_threshold', 30.0))
+    temporal_threshold = int(params.get('temporal_threshold', 8))
+    confidence_threshold = float(params.get('confidence_threshold', 0.0))
+    remove_outliers = bool(params.get('remove_outliers', False))
+    outlier_method = params.get('outlier_method', 'density')
+    outlier_min_neighbors = int(params.get('outlier_min_neighbors', 2))
+    clustering_method = params.get('clustering_method', 'dbscan')
+    min_samples = int(params.get('min_samples', 1))
+    mode = params.get('mode', 'median')
+
+    # Run clustering with mapping
+    result = cluster_and_consolidate_waggles(
+        raw_preds,
+        spatial_threshold=spatial_threshold,
+        temporal_threshold=temporal_threshold,
+        min_confidence=confidence_threshold,
+        mode=mode,
+        remove_outliers=remove_outliers,
+        outlier_method=outlier_method,
+        outlier_min_neighbors=outlier_min_neighbors,
+        clustering_method=clustering_method,
+        return_mapping=True,
+        min_samples=min_samples,
+    )
+
+    # Convert numpy types for JSON serialization
+    def _to_native(obj):
+        if isinstance(obj, dict):
+            return {k: _to_native(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [_to_native(v) for v in obj]
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
+    return jsonify(_to_native({
+        'raw': raw_preds,
+        'consolidated': result['consolidated'],
+        'labels': result['labels'],
+        'filtered_indices': result['filtered_indices'],
+        'outlier_indices': result['outlier_indices'],
+        'n_clusters': result['n_clusters'],
+        'n_noise': result['n_noise'],
+        'params': {
+            'spatial_threshold': spatial_threshold,
+            'temporal_threshold': temporal_threshold,
+            'confidence_threshold': confidence_threshold,
+            'remove_outliers': remove_outliers,
+            'clustering_method': clustering_method,
+            'min_samples': min_samples,
+            'mode': mode,
+        },
+    }))
 
 
 @app.route("/api/checkpoint/info")
@@ -599,6 +1534,279 @@ def api_checkpoint_load():
         return jsonify({"success": True, **prediction_engine.checkpoint_meta})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/device", methods=["GET"])
+def api_device_get():
+    """Return the current inference device."""
+    import torch
+    device_str = str(prediction_engine.device) if prediction_engine.device else "none"
+    cuda_available = torch.cuda.is_available()
+    cuda_name = torch.cuda.get_device_name(0) if cuda_available else None
+    return jsonify({
+        "device": device_str,
+        "cuda_available": cuda_available,
+        "cuda_name": cuda_name,
+    })
+
+
+@app.route("/api/device", methods=["POST"])
+def api_device_set():
+    """Switch inference device at runtime (e.g. 'cpu' ↔ 'cuda:0').
+
+    Moves the model to the new device and clears prediction caches.
+    """
+    import torch
+
+    if not prediction_engine.is_loaded:
+        return jsonify({"error": "No model loaded"}), 400
+
+    data = request.get_json() or {}
+    new_device_str = data.get('device', 'cpu')
+
+    # Validate
+    try:
+        new_device = torch.device(new_device_str)
+        if 'cuda' in new_device_str and not torch.cuda.is_available():
+            return jsonify({"error": "CUDA is not available on this machine"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Invalid device: {e}"}), 400
+
+    old_device = str(prediction_engine.device)
+    if str(new_device) == old_device:
+        return jsonify({"device": old_device, "changed": False})
+
+    try:
+        with prediction_engine._lock:
+            # Ensure model is float32 before moving (avoids half-precision
+            # residue from prior autocast causing device mismatches)
+            prediction_engine.model = prediction_engine.model.float().to(new_device)
+            prediction_engine.device = new_device
+            prediction_engine._cache.clear()
+            # Verify the move actually worked
+            p = next(prediction_engine.model.parameters())
+            assert str(p.device) == str(new_device), \
+                f"Model param on {p.device}, expected {new_device}"
+        # Also clear sliding inference cache
+        with sliding_inference._lock:
+            sliding_inference._cache.clear()
+
+        print(f"  Device switched: {old_device} → {new_device}")
+        return jsonify({
+            "device": str(new_device),
+            "changed": True,
+            "previous": old_device,
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to switch device: {e}"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Evaluation API  — run full STD-mAP on the validation set
+# ---------------------------------------------------------------------------
+
+@app.route("/eval")
+def eval_page():
+    """Serve the evaluation dashboard page."""
+    return render_template("eval.html")
+
+
+@app.route("/api/eval/run", methods=["POST"])
+def api_eval_run():
+    """Trigger evaluation on the validation split (async)."""
+    if not prediction_engine.is_loaded:
+        return jsonify({"error": "No checkpoint loaded. Start with --checkpoint."}), 503
+
+    # Check if already running
+    if evaluation_engine.is_running:
+        return jsonify({"status": "already_running", **evaluation_engine.get_progress()})
+
+    # Check if results already cached for this checkpoint
+    cached = evaluation_engine.get_results()
+    if cached and evaluation_engine._results_ckpt == prediction_engine.checkpoint_path:
+        return jsonify({"status": "cached", "message": "Results already available."})
+
+    # Load config
+    with open(CONFIG_PATH) as f:
+        config = yaml.safe_load(f)
+
+    ok = evaluation_engine.run_async(prediction_engine, config)
+    if ok:
+        return jsonify({"status": "started", "message": "Evaluation started."})
+    else:
+        return jsonify({"status": "error", "message": "Could not start evaluation."}), 500
+
+
+@app.route("/api/eval/status")
+def api_eval_status():
+    """Poll evaluation progress."""
+    progress = evaluation_engine.get_progress()
+    progress['running'] = evaluation_engine.is_running
+    progress['has_results'] = evaluation_engine.get_results() is not None
+    progress['has_cached_preds'] = evaluation_engine.has_cached_preds()
+    progress['model_loaded'] = prediction_engine.is_loaded
+    if prediction_engine.is_loaded:
+        progress['checkpoint'] = prediction_engine.checkpoint_meta
+    return jsonify(progress)
+
+
+@app.route("/api/eval/results")
+def api_eval_results():
+    """Get cached evaluation results."""
+    results = evaluation_engine.get_results()
+    if results is None:
+        return jsonify({"error": "No evaluation results. Run evaluation first."}), 404
+    return jsonify(results)
+
+
+@app.route("/api/eval/recluster", methods=["POST"])
+def api_eval_recluster():
+    """Re-run post-processing + metrics with new clustering parameters.
+
+    Reuses cached decoded predictions from the last eval run, so this
+    is very fast (~seconds).  Accepts JSON body with clustering params:
+      spatial_threshold, temporal_threshold, confidence_threshold,
+      strategy, mode, min_samples, remove_outliers, outlier_method
+    """
+    if not evaluation_engine.has_cached_preds():
+        return jsonify({"error": "No cached predictions. Run full evaluation first."}), 400
+
+    if evaluation_engine.is_running:
+        return jsonify({"error": "Evaluation is currently running."}), 409
+
+    params = request.get_json(force=True, silent=True) or {}
+
+    # Coerce types
+    pp = {}
+    if 'spatial_threshold' in params:
+        pp['spatial_threshold'] = float(params['spatial_threshold'])
+    if 'temporal_threshold' in params:
+        pp['temporal_threshold'] = int(params['temporal_threshold'])
+    if 'confidence_threshold' in params:
+        pp['confidence_threshold'] = float(params['confidence_threshold'])
+    if 'strategy' in params:
+        pp['strategy'] = str(params['strategy'])
+    if 'mode' in params:
+        pp['mode'] = str(params['mode'])
+    if 'min_samples' in params:
+        pp['min_samples'] = int(params['min_samples'])
+    if 'remove_outliers' in params:
+        pp['remove_outliers'] = bool(params['remove_outliers'])
+    if 'outlier_method' in params:
+        pp['outlier_method'] = str(params['outlier_method'])
+    if 'clustering_method' in params:
+        pp['clustering_method'] = str(params['clustering_method'])
+
+    try:
+        results = evaluation_engine.recluster(pp)
+        return jsonify(results)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# ---------------------------------------------------------------------------
+# External Video & Inference API
+# ---------------------------------------------------------------------------
+
+@app.route("/api/external_videos")
+def api_external_videos():
+    """List external (unannotated) videos available for inference."""
+    videos = []
+    for vname in sorted(_external_video_paths.keys()):
+        vpath = _external_video_paths[vname]
+        try:
+            cap = cv2.VideoCapture(vpath)
+            info = {
+                'video_name': vname,
+                'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                'total_frames': int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+                'fps': float(cap.get(cv2.CAP_PROP_FPS)),
+                'has_results': vname in sliding_inference._cache,
+            }
+            duration_s = info['total_frames'] / max(info['fps'], 1)
+            info['duration'] = f"{int(duration_s // 60)}:{int(duration_s % 60):02d}"
+            cap.release()
+            videos.append(info)
+        except Exception:
+            videos.append({'video_name': vname, 'error': 'Cannot read video'})
+    return jsonify({
+        'videos': videos,
+        'directory': EXTERNAL_VIDEO_DIR or '',
+        'model_loaded': prediction_engine.is_loaded,
+    })
+
+
+@app.route("/api/infer/<path:video_name>", methods=["POST"])
+def api_infer(video_name):
+    """Run sliding-window inference on an external video.
+    Returns results synchronously (may take minutes for long videos).
+    """
+    if not prediction_engine.is_loaded:
+        return jsonify({"error": "No model checkpoint loaded. Start with --checkpoint."}), 503
+
+    # Check video exists
+    try:
+        resolve_video_path(video_name)
+    except FileNotFoundError:
+        return jsonify({"error": f"Video not found: {video_name}"}), 404
+
+    data = request.get_json() or {}
+    temporal_stride = int(data.get('temporal_stride', 8))
+
+    try:
+        result = sliding_inference.run_inference(video_name, temporal_stride=temporal_stride)
+        return jsonify({
+            'raw': result['raw'],
+            'postprocessed': result['postprocessed'],
+            'n_windows': result['n_windows'],
+            'video_info': result['video_info'],
+            'checkpoint': prediction_engine.checkpoint_meta,
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/infer/<path:video_name>/status")
+def api_infer_status(video_name):
+    """Poll inference progress."""
+    # Check if results are cached
+    cached = sliding_inference.get_results(video_name)
+    if cached:
+        return jsonify({
+            'status': 'done',
+            'n_raw': len(cached['raw']),
+            'n_postprocessed': len(cached['postprocessed']),
+        })
+
+    current, total = sliding_inference.get_progress(video_name)
+    if total > 0:
+        return jsonify({
+            'status': 'running',
+            'current': current,
+            'total': total,
+            'progress': round(current / total * 100, 1),
+        })
+
+    return jsonify({'status': 'idle'})
+
+
+@app.route("/api/infer/<path:video_name>/results")
+def api_infer_results(video_name):
+    """Get cached inference results."""
+    cached = sliding_inference.get_results(video_name)
+    if not cached:
+        return jsonify({"error": "No results. Run inference first."}), 404
+    return jsonify({
+        'raw': cached['raw'],
+        'postprocessed': cached['postprocessed'],
+        'n_windows': cached['n_windows'],
+        'video_info': cached['video_info'],
+        'checkpoint': prediction_engine.checkpoint_meta,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -650,7 +1858,7 @@ def _tensor_to_jpeg(t, greyscale=False, quality=90):
     return base64.b64encode(buf).decode('ascii')
 
 
-@app.route("/api/pipeline/<video_name>")
+@app.route("/api/pipeline/<path:video_name>")
 def api_pipeline(video_name):
     """Return one stage of the data pipeline for a specific annotation window.
 
@@ -969,8 +2177,10 @@ def api_pipeline(video_name):
         video_tensor = torch.stack(normalized).permute(1, 0, 2, 3)  # (C, T, H, W)
         batch = video_tensor.unsqueeze(0).to(prediction_engine.device)
 
+        dev_type = prediction_engine.device.type  # 'cuda' or 'cpu'
+        amp_dtype = torch.float16 if dev_type == 'cuda' else torch.bfloat16
         with torch.no_grad():
-            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+            with torch.amp.autocast(device_type=dev_type, dtype=amp_dtype):
                 output = prediction_engine.model(batch)
 
         from src.utils.eval_utils import yolo_to_img_space
@@ -1027,7 +2237,7 @@ def api_pipeline(video_name):
         return jsonify({"error": f"Unknown stage: {stage}"}), 400
 
 
-@app.route("/api/pipeline/rows/<video_name>")
+@app.route("/api/pipeline/rows/<path:video_name>")
 def api_pipeline_rows(video_name):
     """Return list of annotation rows for a video, for the inspector row selector."""
     video_rows = annotations_df[annotations_df['video_name'] == video_name]
@@ -1105,7 +2315,7 @@ def _frame_to_tensor(frame_bgr):
 
 
 
-@app.route("/api/model_view/<video_name>")
+@app.route("/api/model_view/<path:video_name>")
 def api_model_view(video_name):
     """Compute and return the model's view for a given frame + bee position.
 
@@ -1238,7 +2448,15 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default=None,
                         help="Device for model inference: 'cpu', 'cuda:0', etc. "
                              "Default: auto (GPU if available, else CPU)")
+    parser.add_argument("--external-videos", type=str, default=None,
+                        help="Path to directory with unannotated videos for inference")
     args = parser.parse_args()
+
+    # Set up external videos directory
+    if args.external_videos:
+        EXTERNAL_VIDEO_DIR = os.path.abspath(args.external_videos)
+        ext_videos = scan_external_videos()
+        print(f"\nExternal videos: {len(ext_videos)} found in {EXTERNAL_VIDEO_DIR}")
 
     # Load checkpoint if provided
     if args.checkpoint:
@@ -1258,7 +2476,8 @@ if __name__ == "__main__":
         print(f"  Model:   {meta['filename']} (epoch {meta['epoch']})")
     else:
         print(f"  Model:   None (start with --checkpoint to enable predictions)")
+    if EXTERNAL_VIDEO_DIR:
+        print(f"  Videos:  {EXTERNAL_VIDEO_DIR} ({len(_external_video_paths)} external)")
     print(f"{'=' * 60}\n")
 
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
-

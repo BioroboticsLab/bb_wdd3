@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waggle Dance Annotation Viewer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -688,7 +689,7 @@ kbd {
   font-size: 10px; color: var(--text-muted);
   background: var(--bg-card);
   padding: 2px 8px; border-radius: 10px;
-  max-width: 200px; overflow: hidden;
+  max-width: 160px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .pred-loading {
@@ -698,6 +699,224 @@ kbd {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+/* External Videos Section */
+#ext-section {
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  max-height: 40%;
+}
+#ext-header {
+  padding: 10px 14px 6px;
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: color 0.15s;
+}
+#ext-header:hover { color: var(--text-secondary); }
+#ext-header .ext-count {
+  font-size: 10px; font-weight: 400;
+  background: var(--bg-card); padding: 1px 7px;
+  border-radius: 10px;
+}
+#ext-list {
+  flex: 1; overflow-y: auto;
+  padding: 2px 0;
+}
+.ext-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 14px;
+  cursor: pointer; transition: background 0.1s;
+  font-size: 12px;
+  border-left: 3px solid transparent;
+}
+.ext-item:hover { background: var(--bg-tertiary); }
+.ext-item.selected {
+  background: var(--bg-tertiary);
+  border-left-color: #8b5cf6;
+}
+.ext-item .ext-name {
+  font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 130px;
+}
+.ext-item .ext-info {
+  font-size: 10px; color: var(--text-muted);
+  white-space: nowrap;
+}
+.ext-badge {
+  font-size: 9px; font-weight: 700;
+  width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; flex-shrink: 0; margin-right: 6px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+/* Infer button in controls area */
+#infer-controls {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+#btn-infer {
+  padding: 5px 14px; border-radius: 6px;
+  border: 1px solid #8b5cf6;
+  background: rgba(139, 92, 246, 0.15);
+  color: #c4b5fd;
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s;
+  white-space: nowrap;
+}
+#btn-infer:hover {
+  background: #8b5cf6; color: #fff;
+}
+#btn-infer:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+#btn-infer.running {
+  animation: pulse 1.5s ease-in-out infinite;
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #f59e0b;
+  color: #f59e0b;
+  cursor: wait;
+}
+#infer-progress {
+  display: none;
+  align-items: center; gap: 6px;
+}
+#infer-progress-bar {
+  width: 100px; height: 6px;
+  background: var(--bg-card); border-radius: 3px;
+  overflow: hidden;
+}
+#infer-progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #8b5cf6, #c084fc);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+#infer-progress-text {
+  font-size: 10px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+}
+
+/* Cluster Inspector Controls */
+.cluster-params {
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.cluster-slider-group {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.cluster-slider-label {
+  font-size: 10px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.3px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.cluster-slider-val {
+  color: var(--accent); font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.cluster-slider {
+  width: 100%; height: 4px;
+  -webkit-appearance: none; appearance: none;
+  background: var(--bg-tertiary); border-radius: 2px;
+  outline: none; cursor: pointer;
+}
+.cluster-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%; background: var(--accent);
+  cursor: pointer; transition: transform 0.1s;
+}
+.cluster-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+.cluster-toggle-row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px;
+}
+.cluster-method-select {
+  padding: 3px 8px; border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 10px; cursor: pointer; outline: none;
+}
+.cluster-method-select:focus { border-color: var(--accent); }
+.cluster-action-row {
+  display: flex; gap: 6px; margin-top: 2px;
+}
+.cluster-apply-btn {
+  flex: 1; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid rgba(139, 92, 246, 0.5);
+  background: rgba(139, 92, 246, 0.15);
+  color: #c4b5fd; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s;
+}
+.cluster-apply-btn:hover {
+  background: #8b5cf6; color: #fff;
+}
+.cluster-apply-btn:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+.cluster-reset-btn {
+  padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary); font-size: 11px;
+  cursor: pointer; transition: all 0.15s;
+}
+.cluster-reset-btn:hover {
+  border-color: var(--text-muted); color: var(--text-primary);
+}
+.cluster-stats {
+  margin-top: 8px; padding: 8px 10px;
+  background: var(--bg-card); border-radius: 6px;
+  font-size: 11px; color: var(--text-secondary);
+  line-height: 1.8;
+  font-variant-numeric: tabular-nums;
+}
+.cluster-stats .stat-highlight {
+  color: #c4b5fd; font-weight: 600;
+}
+.cluster-stats .stat-muted {
+  color: var(--text-muted);
+}
+.cluster-legend {
+  margin-top: 8px;
+  display: flex; flex-wrap: wrap; gap: 4px;
+  max-height: 120px; overflow-y: auto;
+}
+.cluster-legend-item {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 10px;
+  font-size: 9px; font-weight: 500;
+  background: var(--bg-card);
+  cursor: pointer; transition: all 0.15s;
+  border: 1px solid transparent;
+}
+.cluster-legend-item:hover {
+  border-color: var(--border);
+  filter: brightness(1.2);
+}
+.cluster-legend-swatch {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
 }
 </style>
 </head>
@@ -715,6 +934,7 @@ kbd {
       <select class="pred-mode-select" id="pred-mode-select" title="Prediction view mode">
         <option value="postprocessed">Post-processed</option>
         <option value="raw">Raw (per-window)</option>
+        <option value="clustered">🔗 Clustered</option>
       </select>
       <div class="pred-conf-group">
         <input type="range" class="pred-conf-slider" id="pred-conf-slider"
@@ -722,11 +942,13 @@ kbd {
         <span class="pred-conf-label" id="pred-conf-label">≥ 50%</span>
       </div>
       <span class="ckpt-badge" id="ckpt-badge"></span>
+      <button class="btn device-toggle" id="btn-device" title="Toggle inference device (GPU ↔ CPU)" style="display:none;">⚡ GPU</button>
       <span class="pred-loading" id="pred-loading" style="display:none;">⏳ Computing...</span>
     </div>
     <button class="btn" id="btn-zoom" title="Cycle zoom: 1× → 2× → 4× → 8× (Z)">🔍 1×</button>
     <button class="btn" id="btn-model-view" title="Toggle model view panel (M)" style="display:none;">🤖 Model View</button>
     <button class="btn" id="btn-pipeline" title="Toggle pipeline inspector (I)">🔬 Inspector</button>
+    <button class="btn" id="btn-eval" title="Open evaluation dashboard" onclick="window.open('/eval', '_blank')" style="background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.3);color:#22c55e;">📊 Evaluate</button>
   </div>
 </header>
 
@@ -734,6 +956,13 @@ kbd {
   <aside id="sidebar">
     <div id="sidebar-header">Recordings</div>
     <div id="rec-list"></div>
+    <div id="ext-section" style="display:none;">
+      <div id="ext-header">
+        <span>📁 External Videos</span>
+        <span class="ext-count" id="ext-count">0</span>
+      </div>
+      <div id="ext-list"></div>
+    </div>
   </aside>
 
   <section id="viewer">
@@ -763,6 +992,15 @@ kbd {
       <input type="range" id="speed-slider" min="0.25" max="4" step="0.25" value="1">
       <div id="kbd-hint">
       <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>A</kbd> annotations &nbsp;<kbd>P</kbd> predictions &nbsp;<kbd>Z</kbd> zoom &nbsp;<kbd>M</kbd> model &nbsp;<kbd>R</kbd> random
+      </div>
+      <div id="infer-controls">
+        <button id="btn-infer" title="Run full-frame inference on this video">🔬 Run Inference</button>
+        <div id="infer-progress">
+          <div id="infer-progress-bar">
+            <div id="infer-progress-fill"></div>
+          </div>
+          <span id="infer-progress-text">0%</span>
+        </div>
       </div>
     </div>
 
@@ -816,6 +1054,7 @@ kbd {
       <button class="pi-tab" data-stage="sample">5. Sample</button>
       <button class="pi-tab" data-stage="target">6. Target</button>
       <button class="pi-tab" data-stage="output">7. Output</button>
+      <button class="pi-tab" data-stage="cluster" style="border-color:rgba(139,92,246,0.4);color:#c4b5fd;">🔗 Cluster</button>
     </div>
     <div class="pi-options">
       <label class="pi-toggle" title="Training mode uses random crop offset (position varies). Inference mode centers crop on bee (always grid 14,14).">
@@ -840,6 +1079,60 @@ kbd {
         </div>
       </div>
       <div class="pi-metadata" id="pi-metadata"></div>
+      <!-- Cluster Inspector Panel -->
+      <div id="pi-cluster-panel" style="display:none;">
+        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.6;">
+          Visualise how raw per-window detections are merged into consolidated waggle events via DBSCAN clustering.
+          Adjust parameters below and press <b>Apply</b> to re-cluster.
+        </div>
+        <div class="cluster-params">
+          <div class="cluster-slider-group">
+            <label class="cluster-slider-label">
+              Spatial ε <span class="cluster-slider-val" id="cl-spatial-val">30</span>px
+            </label>
+            <input type="range" class="cluster-slider" id="cl-spatial"
+                   min="5" max="150" step="1" value="30">
+          </div>
+          <div class="cluster-slider-group">
+            <label class="cluster-slider-label">
+              Temporal ε <span class="cluster-slider-val" id="cl-temporal-val">8</span> frames
+            </label>
+            <input type="range" class="cluster-slider" id="cl-temporal"
+                   min="1" max="60" step="1" value="8">
+          </div>
+          <div class="cluster-slider-group">
+            <label class="cluster-slider-label">
+              Min confidence <span class="cluster-slider-val" id="cl-conf-val">0.0</span>
+            </label>
+            <input type="range" class="cluster-slider" id="cl-conf"
+                   min="0" max="1" step="0.01" value="0">
+          </div>
+          <div class="cluster-slider-group">
+            <label class="cluster-slider-label">
+              Min samples <span class="cluster-slider-val" id="cl-minsamp-val">1</span>
+            </label>
+            <input type="range" class="cluster-slider" id="cl-minsamp"
+                   min="1" max="10" step="1" value="1">
+            <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">1 = all core · higher = noise filter</span>
+          </div>
+          <div class="cluster-toggle-row">
+            <label class="pi-toggle">
+              <input type="checkbox" id="cl-outliers">
+              <span>Remove outliers (density)</span>
+            </label>
+            <select class="cluster-method-select" id="cl-method">
+              <option value="dbscan">DBSCAN</option>
+              <option value="hdbscan">HDBSCAN</option>
+            </select>
+          </div>
+          <div class="cluster-action-row">
+            <button class="cluster-apply-btn" id="cl-apply" title="Re-run clustering with current parameters">🔄 Apply</button>
+            <button class="cluster-reset-btn" id="cl-reset" title="Reset to config defaults">↩ Reset</button>
+          </div>
+        </div>
+        <div class="cluster-stats" id="cl-stats" style="display:none;"></div>
+        <div class="cluster-legend" id="cl-legend"></div>
+      </div>
     </div>
   </aside>
 </main>
@@ -870,10 +1163,12 @@ const state = {
   annotations: [],        // waggle runs for current video
   showAnnotations: true,
   showPredictions: false,
-  predictionMode: 'postprocessed', // 'raw' or 'postprocessed'
+  predictionMode: 'postprocessed', // 'raw', 'postprocessed', or 'clustered'
   predConfThreshold: 0.5, // confidence threshold for display
   predictions: null,      // { raw: [...], postprocessed: [...] }
   predictionsLoading: false,
+  clusterData: null,      // { raw, consolidated, labels, filtered_indices, ... }
+  clusterParams: { spatial_threshold: 30, temporal_threshold: 8, confidence_threshold: 0.0, min_samples: 1, remove_outliers: false, clustering_method: 'dbscan', mode: 'median' },
   checkpointInfo: null,
   showModelView: false,
   showPipeline: false,
@@ -891,6 +1186,10 @@ const state = {
   modelViewSeed: 42,
   showAugmented: false,
   lastModelView: null,    // cached model view response
+  // External video inference
+  isExternalVideo: false,  // true when viewing an external (unannotated) video
+  externalVideos: [],      // [{video_name, width, height, ...}]
+  inferenceRunning: false, // true while inference is in progress
 };
 
 const PREFETCH_AHEAD = 24;
@@ -994,9 +1293,10 @@ async function selectRecording(baseId) {
 // ==========================================================================
 //  Select video → load info + annotations + frame
 // ==========================================================================
-async function selectVideo(videoName) {
+async function selectVideo(videoName, isExternal = false) {
   stopPlayback();
   state.currentVideo = videoName;
+  state.isExternalVideo = isExternal;
   state.frameCache.clear();
   state.pendingLoads.clear();
   state.focusedRunIdx = -1; // reset zoom focus
@@ -1011,6 +1311,7 @@ async function selectVideo(videoName) {
 
   // Reset predictions for new video
   state.predictions = null;
+  state.clusterData = null;
 
   try {
     const [info, annotations] = await Promise.all([
@@ -1042,12 +1343,34 @@ async function selectVideo(videoName) {
     await loadAndRenderFrame(state.currentFrame);
     prefetchAround(state.currentFrame);
 
-    // Auto-fetch predictions if toggle is on
-    if (state.showPredictions) {
+    // Auto-fetch predictions if toggle is on (only for annotated videos)
+    if (state.showPredictions && !state.isExternalVideo) {
       fetchPredictions().then(() => {
         if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
         renderTimeline();
       });
+    }
+
+    // Show/hide inference controls for external videos  
+    updateInferControls();
+
+    // If external video has cached results, load them automatically
+    if (state.isExternalVideo) {
+      try {
+        const cached = await fetch(`/api/infer/${videoName}/results`);
+        if (cached.ok) {
+          const data = await cached.json();
+          state.predictions = { raw: data.raw, postprocessed: data.postprocessed };
+          state.showPredictions = true;
+          state.checkpointInfo = data.checkpoint;
+          $('#btn-predictions').classList.add('active');
+          $('#pred-controls').style.display = 'flex';
+          updateCheckpointBadge();
+          loadAndRenderFrame(state.currentFrame);
+          renderTimeline();
+          console.log(`Loaded cached inference: ${data.raw.length} raw, ${data.postprocessed.length} post-processed`);
+        }
+      } catch (e) { /* no cached results yet */ }
     }
 
     // Auto-refresh pipeline inspector if open
@@ -1313,6 +1636,9 @@ function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
 }
 
 function drawPredictions(ctx, frameIdx, zoomLevel) {
+  if (state.predictionMode === 'clustered') {
+    return drawClusteredPredictions(ctx, frameIdx, zoomLevel);
+  }
   if (!state.predictions) return;
   const s = 1 / zoomLevel;
 
@@ -1516,7 +1842,7 @@ function renderTimeline() {
   const pad = Math.round(fps);
 
   // Split timeline: top half for GT, bottom half for predictions (if active)
-  const hasPreds = state.showPredictions && state.predictions;
+  const hasPreds = state.showPredictions && (state.predictions || (state.predictionMode === 'clustered' && state.clusterData));
   const gtTop = hasPreds ? 0 : 2;
   const gtH = hasPreds ? H / 2 - 1 : H - 4;
   const predTop = H / 2 + 1;
@@ -1542,36 +1868,53 @@ function renderTimeline() {
 
   // Draw prediction temporal spans
   if (hasPreds) {
-    const preds = state.predictionMode === 'raw'
-      ? state.predictions.raw
-      : state.predictions.postprocessed;
-
-    if (preds) {
+    // Clustered mode uses cluster data with cluster-specific colors
+    if (state.predictionMode === 'clustered' && state.clusterData && state.clusterData.consolidated) {
       // Divider line
       tlCtx.fillStyle = '#333';
       tlCtx.fillRect(0, H / 2 - 0.5, W, 1);
 
-      for (const pred of preds) {
-        const [tStart, tEnd] = pred.temporal_offsets;
-        const conf = pred.confidence;
-
-        // Skip below threshold
-        if (conf < state.predConfThreshold) continue;
-
-        // Color by run ID match
-        const runId = pred.waggle_run_id;
-        let colorIdx = 0;
-        if (runId !== undefined && runId >= 0) {
-          const matchIdx = state.annotations.findIndex(a => a.run_id === runId);
-          if (matchIdx >= 0) colorIdx = matchIdx;
-        }
-        const color = RUN_COLORS[colorIdx % RUN_COLORS.length];
-
+      for (let ci = 0; ci < state.clusterData.consolidated.length; ci++) {
+        const c = state.clusterData.consolidated[ci];
+        const [tStart, tEnd] = c.temporal_offsets;
+        const color = CLUSTER_COLORS[ci % CLUSTER_COLORS.length];
         const x1 = tStart / state.totalFrames * W;
         const x2 = tEnd / state.totalFrames * W;
-        const alpha = Math.round(Math.min(conf, 1.0) * 200).toString(16).padStart(2, '0');
-        tlCtx.fillStyle = color + alpha;
+        tlCtx.fillStyle = color + 'aa';
         tlCtx.fillRect(x1, predTop, Math.max(x2 - x1, 2), predH);
+      }
+    } else {
+      const preds = state.predictionMode === 'raw'
+        ? state.predictions.raw
+        : state.predictions.postprocessed;
+
+      if (preds) {
+        // Divider line
+        tlCtx.fillStyle = '#333';
+        tlCtx.fillRect(0, H / 2 - 0.5, W, 1);
+
+        for (const pred of preds) {
+          const [tStart, tEnd] = pred.temporal_offsets;
+          const conf = pred.confidence;
+
+          // Skip below threshold
+          if (conf < state.predConfThreshold) continue;
+
+          // Color by run ID match
+          const runId = pred.waggle_run_id;
+          let colorIdx = 0;
+          if (runId !== undefined && runId >= 0) {
+            const matchIdx = state.annotations.findIndex(a => a.run_id === runId);
+            if (matchIdx >= 0) colorIdx = matchIdx;
+          }
+          const color = RUN_COLORS[colorIdx % RUN_COLORS.length];
+
+          const x1 = tStart / state.totalFrames * W;
+          const x2 = tEnd / state.totalFrames * W;
+          const alpha = Math.round(Math.min(conf, 1.0) * 200).toString(16).padStart(2, '0');
+          tlCtx.fillStyle = color + alpha;
+          tlCtx.fillRect(x1, predTop, Math.max(x2 - x1, 2), predH);
+        }
       }
     }
   }
@@ -1720,10 +2063,71 @@ function updateCheckpointBadge() {
   }
 }
 
+// Device toggle
+let currentDevice = 'unknown';
+let cudaAvailable = false;
+
+async function fetchDeviceInfo() {
+  try {
+    const info = await api('/api/device');
+    currentDevice = info.device;
+    cudaAvailable = info.cuda_available;
+    updateDeviceButton();
+  } catch (e) {
+    console.log('Device API not available');
+  }
+}
+
+function updateDeviceButton() {
+  const btn = $('#btn-device');
+  const isGpu = currentDevice.startsWith('cuda');
+  btn.textContent = isGpu ? '⚡ GPU' : '🖥 CPU';
+  btn.title = `Inference on ${currentDevice}` + (cudaAvailable ? ' — click to toggle' : ' (no GPU available)');
+  btn.classList.toggle('active', isGpu);
+  btn.style.display = '';
+  if (!cudaAvailable) {
+    btn.style.opacity = '0.5';
+    btn.style.cursor = 'default';
+  }
+}
+
+async function toggleDevice() {
+  if (!cudaAvailable) return;
+  const newDevice = currentDevice.startsWith('cuda') ? 'cpu' : 'cuda:0';
+  const btn = $('#btn-device');
+  btn.textContent = '⏳ …';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/device', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({device: newDevice}),
+    });
+    const result = await resp.json();
+    if (result.error) {
+      console.error('Device switch failed:', result.error);
+    } else {
+      currentDevice = result.device || currentDevice;
+      console.log(`Device switched to ${currentDevice}`);
+    }
+  } catch (e) {
+    console.error('Device switch error:', e);
+  } finally {
+    btn.disabled = false;
+    updateDeviceButton();
+  }
+}
+
+$('#btn-device').addEventListener('click', toggleDevice);
+
 $('#btn-predictions').addEventListener('click', togglePredictions);
 
 $('#pred-mode-select').addEventListener('change', (e) => {
   state.predictionMode = e.target.value;
+  // Auto-fetch cluster data when switching to clustered mode
+  if (state.predictionMode === 'clustered' && !state.clusterData && state.predictions) {
+    fetchClusterData();
+  }
   if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
   renderTimeline();
 });
@@ -2257,6 +2661,16 @@ async function piLoadStage(stage) {
   if (!state.currentVideo) return;
   piStopPlayback();
 
+  // Special handling for cluster tab — uses its own panel
+  if (stage === 'cluster') {
+    $('#pi-cluster-panel').style.display = 'block';
+    piShowCluster();
+    return;
+  }
+  // Hide cluster panel when switching to other tabs
+  $('#pi-cluster-panel').style.display = 'none';
+  $('#pi-metadata').style.display = '';
+
   const cropMode = piGetCropMode();
   const cacheKey = `${state.currentVideo}:${state.pipelineRowIdx}:${stage}:${cropMode}`;
   if (state.pipelineCache[cacheKey]) {
@@ -2620,6 +3034,460 @@ function piMeta(key, val) {
 }
 
 // ==========================================================================
+//  External Videos — sidebar, loading, inference
+// ==========================================================================
+
+async function loadExternalVideos() {
+  try {
+    const data = await api('/api/external_videos');
+    state.externalVideos = data.videos || [];
+    if (state.externalVideos.length > 0) {
+      $('#ext-section').style.display = 'flex';
+      $('#ext-count').textContent = state.externalVideos.length;
+      renderExternalVideoList();
+    }
+  } catch (e) {
+    // No external videos endpoint — that's fine
+  }
+}
+
+function renderExternalVideoList() {
+  const list = $('#ext-list');
+  list.innerHTML = state.externalVideos.map(v => {
+    const label = v.video_name.replace('.mp4', '');
+    const info = v.error ? 'Error' : `${v.width}×${v.height} · ${v.duration}`;
+    const hasResults = v.has_results ? ' · ✓' : '';
+    const sel = v.video_name === state.currentVideo && state.isExternalVideo ? 'selected' : '';
+    return `
+      <div class="ext-item ${sel}" data-video="${v.video_name}">
+        <span class="ext-badge" title="External">E</span>
+        <span class="ext-name" title="${v.video_name}">${label}</span>
+        <span class="ext-info">${info}${hasResults}</span>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.ext-item').forEach(el => {
+    el.addEventListener('click', () => {
+      // Deselect recording sidebar
+      state.currentBaseId = null;
+      renderRecordingList($('#search-box').value);
+      // Select external video
+      selectExternalVideo(el.dataset.video);
+    });
+  });
+}
+
+async function selectExternalVideo(videoName) {
+  // Clear variant tabs — external videos don't have variants
+  $('#variant-tabs').innerHTML = `
+    <div class="variant-tab selected" style="border-bottom: 2px solid #8b5cf6;">
+      ${videoName.replace('.mp4', '')} <span style="color:var(--text-muted);font-size:10px;">(external)</span>
+    </div>
+  `;
+
+  // Use the shared selectVideo flow (it handles frame loading, annotations, etc.)
+  await selectVideo(videoName, true);
+
+  // Re-render external list to highlight selection  
+  renderExternalVideoList();
+}
+
+function updateInferControls() {
+  const show = state.isExternalVideo && state.currentVideo;
+  $('#infer-controls').style.display = show ? 'flex' : 'none';
+  if (show) {
+    const hasResults = state.predictions !== null;
+    const btn = $('#btn-infer');
+    if (hasResults && !state.inferenceRunning) {
+      btn.textContent = '🔬 Re-run Inference';
+    } else if (state.inferenceRunning) {
+      btn.textContent = '⏳ Running...';
+    } else {
+      btn.textContent = '🔬 Run Inference';
+    }
+  }
+}
+
+async function runInference() {
+  if (!state.currentVideo || state.inferenceRunning) return;
+
+  const btn = $('#btn-infer');
+  btn.classList.add('running');
+  btn.textContent = '⏳ Running...';
+  btn.disabled = true;
+  state.inferenceRunning = true;
+
+  $('#infer-progress').style.display = 'flex';
+  $('#infer-progress-fill').style.width = '0%';
+  $('#infer-progress-text').textContent = '0%';
+
+  try {
+    // Start inference (synchronous — will block until done)
+    // Poll progress concurrently
+    const videoName = state.currentVideo;
+    const pollId = setInterval(async () => {
+      try {
+        const status = await api(`/api/infer/${videoName}/status`);
+        if (status.status === 'running') {
+          const pct = status.progress || 0;
+          $('#infer-progress-fill').style.width = pct + '%';
+          $('#infer-progress-text').textContent = `${Math.round(pct)}%`;
+        }
+      } catch (e) { /* ignore poll errors */ }
+    }, 1000);
+
+    const resp = await fetch(`/api/infer/${videoName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ temporal_stride: 8 }),
+    });
+
+    clearInterval(pollId);
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || 'Inference failed');
+    }
+
+    const data = await resp.json();
+    state.predictions = { raw: data.raw, postprocessed: data.postprocessed };
+    state.checkpointInfo = data.checkpoint;
+    state.showPredictions = true;
+    $('#btn-predictions').classList.add('active');
+    $('#pred-controls').style.display = 'flex';
+    updateCheckpointBadge();
+
+    // Update progress to 100%
+    $('#infer-progress-fill').style.width = '100%';
+    $('#infer-progress-text').textContent = '100%';
+
+    console.log(`Inference complete: ${data.raw.length} raw → ${data.postprocessed.length} post-processed (${data.n_windows} windows)`);
+
+    // Refresh display
+    loadAndRenderFrame(state.currentFrame);
+    renderTimeline();
+
+    // Update external video list (show ✓)
+    loadExternalVideos();
+
+  } catch (err) {
+    console.error('Inference failed:', err);
+    alert(`Inference failed: ${err.message}`);
+  } finally {
+    btn.classList.remove('running');
+    btn.disabled = false;
+    state.inferenceRunning = false;
+    updateInferControls();
+
+    // Hide progress after a delay
+    setTimeout(() => {
+      $('#infer-progress').style.display = 'none';
+    }, 2000);
+  }
+}
+
+$('#btn-infer').addEventListener('click', runInference);
+
+
+// ==========================================================================
+//  Cluster Visualization
+// ==========================================================================
+const CLUSTER_COLORS = [
+  '#8b5cf6', '#ec4899', '#06b6d4', '#f59e0b', '#22c55e',
+  '#ef4444', '#3b82f6', '#14b8a6', '#f97316', '#a3e635',
+  '#e879f9', '#38bdf8', '#fb923c', '#84cc16', '#f472b6',
+  '#2dd4bf', '#facc15', '#818cf8', '#fb7185', '#34d399',
+];
+
+async function fetchClusterData(params) {
+  if (!state.currentVideo) return;
+  const p = params || state.clusterParams;
+  try {
+    const resp = await fetch(`/api/cluster/${state.currentVideo}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(p),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      console.error('Cluster API error:', err.error);
+      return;
+    }
+    state.clusterData = await resp.json();
+    console.log(`Cluster data: ${state.clusterData.raw.length} raw → ${state.clusterData.n_clusters} clusters (${state.clusterData.n_noise} noise)`);
+
+    // Update stats and legend in the inspector panel
+    updateClusterStats();
+    buildClusterLegend();
+
+    // Refresh canvas if in clustered mode
+    if (state.predictionMode === 'clustered' && state.currentVideo) {
+      loadAndRenderFrame(state.currentFrame);
+      renderTimeline();
+    }
+  } catch (e) {
+    console.error('Failed to fetch cluster data:', e);
+  }
+}
+
+function updateClusterStats() {
+  const d = state.clusterData;
+  if (!d) return;
+  const statsEl = $('#cl-stats');
+  const totalRaw = d.raw.length;
+  const filtered = d.filtered_indices.length;
+  const outliers = d.outlier_indices.length;
+  const belowConf = totalRaw - filtered - outliers;
+  statsEl.innerHTML = `
+    <span class="stat-highlight">${totalRaw}</span> raw detections →
+    <span class="stat-highlight">${d.n_clusters}</span> clusters${d.n_noise > 0 ? ` · <span style="color:#ef4444;">${d.n_noise} noise</span>` : ''}<br>
+    <span class="stat-muted">${filtered} used · ${outliers > 0 ? outliers + ' outliers removed · ' : ''}${belowConf > 0 ? belowConf + ' below confidence' : ''}</span>
+    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold}px · t=${d.params.temporal_threshold}f · min_samples=${d.params.min_samples || 1} · ${d.params.clustering_method}</span>` : ''}
+  `;
+  statsEl.style.display = 'block';
+}
+
+function buildClusterLegend() {
+  const d = state.clusterData;
+  if (!d || !d.consolidated) return;
+  const legendEl = $('#cl-legend');
+  legendEl.innerHTML = d.consolidated.map((c, i) => {
+    const color = CLUSTER_COLORS[i % CLUSTER_COLORS.length];
+    const n = c.num_original_detections;
+    const tRange = `${c.temporal_offsets[0]}–${c.temporal_offsets[1]}`;
+    return `<span class="cluster-legend-item" title="Cluster ${c.cluster_id}: ${n} detections, frames ${tRange}, conf=${(c.confidence*100).toFixed(0)}%">
+      <span class="cluster-legend-swatch" style="background:${color}"></span>
+      C${c.cluster_id} (${n})
+    </span>`;
+  }).join('');
+}
+
+function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
+  const d = state.clusterData;
+  if (!d || !d.raw || !d.consolidated) return;
+  const s = 1 / zoomLevel;
+  const pad = Math.round(state.videoFps);
+
+  // Build a map: raw_index → cluster_index (into consolidated array)
+  const rawToCluster = {};
+  d.consolidated.forEach((c, ci) => {
+    if (c.member_indices) {
+      c.member_indices.forEach(ri => { rawToCluster[ri] = ci; });
+    }
+  });
+
+  // Also build a set of outlier indices for distinct rendering
+  const outlierSet = new Set(d.outlier_indices || []);
+
+  // Pass 1: draw spider lines from raw detections to their centroids
+  for (let ri = 0; ri < d.raw.length; ri++) {
+    const pred = d.raw[ri];
+    const [tStart, tEnd] = pred.temporal_offsets;
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+    if (!isActive && !isGhost) continue;
+
+    const ci = rawToCluster[ri];
+    if (ci === undefined) continue; // noise or not in any cluster
+
+    const centroid = d.consolidated[ci];
+    const color = CLUSTER_COLORS[ci % CLUSTER_COLORS.length];
+    const alpha = isActive ? 0.4 : 0.12;
+
+    const [px, py] = pred.position;
+    const [cx, cy] = centroid.position;
+
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(cx, cy);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1 * s, 0.3);
+    ctx.setLineDash([Math.max(3 * s, 1), Math.max(3 * s, 1)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Pass 2: draw raw detection dots
+  for (let ri = 0; ri < d.raw.length; ri++) {
+    const pred = d.raw[ri];
+    const [tStart, tEnd] = pred.temporal_offsets;
+    const conf = pred.confidence;
+    if (conf < state.predConfThreshold) continue;
+
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+    if (!isActive && !isGhost) continue;
+
+    const [px, py] = pred.position;
+    const isOutlier = outlierSet.has(ri);
+    const ci = rawToCluster[ri];
+    const color = isOutlier ? '#666' : (ci !== undefined ? CLUSTER_COLORS[ci % CLUSTER_COLORS.length] : '#888');
+    const alpha = isActive ? 0.85 : 0.25;
+
+    const dotR = Math.max(3.5 * s, 1.2);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(px, py, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = Math.max(0.8 * s, 0.3);
+    ctx.stroke();
+  }
+
+  // Pass 3: draw centroid diamonds with direction arrows
+  for (let ci = 0; ci < d.consolidated.length; ci++) {
+    const c = d.consolidated[ci];
+    const [tStart, tEnd] = c.temporal_offsets;
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+    if (!isActive && !isGhost) continue;
+
+    const [cx, cy] = c.position;
+    const [dx, dy] = c.direction;
+    const color = CLUSTER_COLORS[ci % CLUSTER_COLORS.length];
+    const alpha = isActive ? 1.0 : 0.3;
+    const diamondR = Math.max(7 * s, 2.5);
+
+    // Diamond shape
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - diamondR);
+    ctx.lineTo(cx + diamondR, cy);
+    ctx.lineTo(cx, cy + diamondR);
+    ctx.lineTo(cx - diamondR, cy);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = Math.max(1.5 * s, 0.6);
+    ctx.stroke();
+
+    // Direction arrow from centroid
+    if (isActive) {
+      const arrowLen = Math.max(35 * s, 10);
+      const endX = cx + dx * arrowLen;
+      const endY = cy + dy * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2.5 * s, 1);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = Math.max(8 * s, 3);
+      const angle = Math.atan2(dy, dx);
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2 * s, 0.7);
+      ctx.stroke();
+
+      // Label: cluster ID + member count
+      const fontSize = Math.max(10 * s, 4);
+      const label = `C${c.cluster_id} (${c.num_original_detections})`;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = cx + 10 * s;
+      const ly = cy - 10 * s;
+      const m = ctx.measureText(label);
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.fillRect(lx - 2 * s, ly - 10 * s, m.width + 6 * s, 14 * s);
+      ctx.fillStyle = color;
+      ctx.fillText(label, lx, ly);
+    }
+  }
+
+  ctx.globalAlpha = 1.0;
+}
+
+// --- Cluster tab in Pipeline Inspector ---
+function piShowCluster() {
+  const panel = $('#pi-cluster-panel');
+  panel.style.display = 'block';
+  // Hide other content
+  $('#pi-player-wrap').style.display = 'none';
+  $('#pi-metadata').style.display = 'none';
+  $('#pi-empty').style.display = 'none';
+  $('#pi-loading').style.display = 'none';
+
+  // If we have predictions but no cluster data yet, fetch it
+  if (state.predictions && !state.clusterData) {
+    fetchClusterData();
+  } else if (state.clusterData) {
+    updateClusterStats();
+    buildClusterLegend();
+  }
+}
+
+// Live slider value display
+$('#cl-spatial').addEventListener('input', (e) => {
+  $('#cl-spatial-val').textContent = e.target.value;
+});
+$('#cl-temporal').addEventListener('input', (e) => {
+  $('#cl-temporal-val').textContent = e.target.value;
+});
+$('#cl-conf').addEventListener('input', (e) => {
+  $('#cl-conf-val').textContent = parseFloat(e.target.value).toFixed(2);
+});
+$('#cl-minsamp').addEventListener('input', (e) => {
+  $('#cl-minsamp-val').textContent = e.target.value;
+});
+
+// Apply button — re-cluster with current slider values
+$('#cl-apply').addEventListener('click', async () => {
+  const btn = $('#cl-apply');
+  btn.disabled = true;
+  btn.textContent = '⏳ …';
+
+  state.clusterParams = {
+    spatial_threshold: parseFloat($('#cl-spatial').value),
+    temporal_threshold: parseInt($('#cl-temporal').value),
+    confidence_threshold: parseFloat($('#cl-conf').value),
+    min_samples: parseInt($('#cl-minsamp').value),
+    remove_outliers: $('#cl-outliers').checked,
+    clustering_method: $('#cl-method').value,
+    mode: 'median',
+  };
+
+  await fetchClusterData(state.clusterParams);
+
+  // Also switch view to clustered mode
+  state.predictionMode = 'clustered';
+  $('#pred-mode-select').value = 'clustered';
+  state.showPredictions = true;
+  $('#btn-predictions').classList.add('active');
+  $('#pred-controls').style.display = 'flex';
+
+  if (state.currentVideo) {
+    loadAndRenderFrame(state.currentFrame);
+    renderTimeline();
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🔄 Apply';
+});
+
+// Reset button
+$('#cl-reset').addEventListener('click', () => {
+  $('#cl-spatial').value = 30; $('#cl-spatial-val').textContent = '30';
+  $('#cl-temporal').value = 8; $('#cl-temporal-val').textContent = '8';
+  $('#cl-conf').value = 0; $('#cl-conf-val').textContent = '0.00';
+  $('#cl-minsamp').value = 1; $('#cl-minsamp-val').textContent = '1';
+  $('#cl-outliers').checked = false;
+  $('#cl-method').value = 'dbscan';
+  state.clusterParams = { spatial_threshold: 30, temporal_threshold: 8, confidence_threshold: 0.0, min_samples: 1, remove_outliers: false, clustering_method: 'dbscan', mode: 'median' };
+});
+
+
+// ==========================================================================
 //  Init
 // ==========================================================================
 (async function init() {
@@ -2627,12 +3495,16 @@ function piMeta(key, val) {
   updateFrameInfo();
   renderTimeline();
 
+  // Load external videos list
+  await loadExternalVideos();
+
   // Check if a model checkpoint is loaded
   try {
     const ckptInfo = await api('/api/checkpoint/info');
     if (ckptInfo.loaded) {
       state.checkpointInfo = ckptInfo;
       updateCheckpointBadge();
+      await fetchDeviceInfo();
       console.log(`Model loaded: ${ckptInfo.filename} (epoch ${ckptInfo.epoch})`);
     } else {
       // No model — disable predictions button

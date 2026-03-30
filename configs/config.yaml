@@ -112,9 +112,9 @@ eval:
   batch_size: 64
   confidence_threshold: 0.001
   consolidation_strategy: 'cluster_consolidate'
-  pos_thresholds: [20]
-  iou_thresholds: [0.5]
-  angular_thresholds: [15]
+  pos_thresholds: [10, 15, 20, 25, 30]
+  iou_thresholds: [0.25, 0.75]
+  angular_thresholds: [10, 15, 20]
   metric: loss # support for loss and spatio-tempral-direction mAP or in short std_map
   match_pairs: hungarian # match pred to gt using either geedy or hungarian algo
   max_dets: 5 # maximal number of prediciton per frame/window
