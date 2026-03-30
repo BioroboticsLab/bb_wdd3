@@ -240,7 +240,7 @@ class PredictionEngine:
     def is_loaded(self):
         return self.model is not None
 
-    def load_checkpoint(self, checkpoint_path):
+    def load_checkpoint(self, checkpoint_path, device_override=None):
         """Load (or reload) a model checkpoint."""
         import torch
         from src.utils.model_utils import load_pretrained_model, EMA
@@ -249,7 +249,10 @@ class PredictionEngine:
         with self._lock:
             config = load_config(CONFIG_PATH)
             self.config = config
-            device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+            if device_override:
+                device = torch.device(device_override)
+            else:
+                device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
             self.device = device
 
             print(f"  Loading checkpoint: {checkpoint_path}")
@@ -658,12 +661,18 @@ def api_pipeline(video_name):
         stage: 'raw' | 'crop' | 'transform' | 'sample' | 'target' | 'output'
         row_idx: index into this video's annotation rows (default: 0)
         crop_mode: 'inference' (centered) or 'training' (random offset)
+        n_variance: number of additional random crop samples to show (crop stage only)
+        augment: 'true' to apply full augmentation pipeline (transform stage only)
+        aug_seed: random seed for augmentation (default: random)
     """
     import torch
 
     stage = request.args.get('stage', 'raw')
     row_idx = int(request.args.get('row_idx', 0))
     crop_mode = request.args.get('crop_mode', 'inference')
+    n_variance = int(request.args.get('n_variance', 0))
+    do_augment = request.args.get('augment', 'false').lower() == 'true'
+    aug_seed = int(request.args.get('aug_seed', 42))
 
     # Find the global index for this video + row_idx
     video_mask = annotations_df['video_name'] == video_name
@@ -709,75 +718,236 @@ def api_pipeline(video_name):
             'crop_origin': [cp['x_min'], cp['y_min']],
             'crop_offset': [cp['offset_x'], cp['offset_y']],
         })
-        return jsonify({'stage': 'crop', 'frames': frame_images, 'metadata': meta})
+
+        # Variance crops: show multiple random crop positions
+        # Uses the same get_item_debug with 'training' mode but different seeds
+        variance_crops = []
+        if n_variance > 0:
+            raw_frames = dbg['raw_frames']
+            first_frame = raw_frames[0]
+            if isinstance(first_frame, np.ndarray):
+                original_h, original_w = first_frame.shape[:2]
+            else:
+                original_h, original_w = first_frame.shape[-2:]
+
+            gt_x = meta['gt_position'][0]
+            gt_y = meta['gt_position'][1]
+            crop_h, crop_w = _insp_config['data']['height'], _insp_config['data']['width']
+
+            for vi in range(n_variance):
+                # Same random crop logic as dataset.py __getitem__ L142-156
+                rng = np.random.RandomState(seed=global_idx * 1000 + vi + 1)
+                margin_x = int(crop_w * 0.2)
+                margin_y = int(crop_h * 0.2)
+                max_offset_x = (crop_w // 2) - margin_x
+                max_offset_y = (crop_h // 2) - margin_y
+                v_off_x = rng.randint(-max_offset_x, max_offset_x + 1)
+                v_off_y = rng.randint(-max_offset_y, max_offset_y + 1)
+
+                x_min_v = max(0, min(original_w - crop_w, int(gt_x - crop_w / 2) + v_off_x))
+                y_min_v = max(0, min(original_h - crop_h, int(gt_y - crop_h / 2) + v_off_y))
+
+                # Crop first frame only (enough to show spatial variance)
+                cropped_v = raw_frames[0][y_min_v:y_min_v + crop_h, x_min_v:x_min_v + crop_w]
+                bee_in_crop_x = gt_x - x_min_v
+                bee_in_crop_y = gt_y - y_min_v
+
+                variance_crops.append({
+                    'image': _np_to_jpeg(cropped_v),
+                    'offset_x': int(v_off_x),
+                    'offset_y': int(v_off_y),
+                    'bee_in_crop': [round(bee_in_crop_x, 1), round(bee_in_crop_y, 1)],
+                })
+
+        return jsonify({
+            'stage': 'crop', 'frames': frame_images, 'metadata': meta,
+            'variance_crops': variance_crops,
+        })
 
     # ── Stage: TRANSFORM ────────────────────────────────────────────────
     elif stage == 'transform':
-        frame_images = [_tensor_to_jpeg(t, greyscale=True) for t in dbg['transformed']]
+        frames_to_show = list(dbg['transformed'])
+
+        frame_images = [_tensor_to_jpeg(t, greyscale=True) for t in frames_to_show]
         pixel_stats = [{
             'min': round(float(t.min()), 4),
             'max': round(float(t.max()), 4),
             'mean': round(float(t.mean()), 4),
-        } for t in dbg['transformed']]
+        } for t in frames_to_show]
         meta.update({
             'n_frames': len(frame_images),
             'pixel_stats': pixel_stats,
         })
         return jsonify({'stage': 'transform', 'frames': frame_images, 'metadata': meta})
 
-    # ── Stage: NORMALIZE ────────────────────────────────────────────────
-    elif stage == 'normalize':
+    # ── Stage: AUGMENT ──────────────────────────────────────────────────
+    # Applies the full WaggleAugmentations pipeline (spatial + photometric
+    # transforms + normalization) — exactly as in training.
+    # Frames are de-normalized for display.
+    elif stage == 'augment':
         config = _insp_config
         mean = config['augmentations']['mean']
         std = config['augmentations']['std']
         mean_t = torch.tensor(mean).view(3, 1, 1)
         std_t = torch.tensor(std).view(3, 1, 1)
-        norm = T.Normalize(mean=mean, std=std)
 
+        augmenter = _load_augmenter()
+        aug_info_list = []
+
+        if augmenter and do_augment:
+            import random as _random
+            _random.seed(aug_seed)
+            np.random.seed(aug_seed)
+
+            cp = dbg['crop_params']
+            gt_x = meta['gt_position'][0]
+            gt_y = meta['gt_position'][1]
+            target_dict = {
+                'x': gt_x - cp['x_min'],
+                'y': gt_y - cp['y_min'],
+                'dir_x': meta['gt_direction'][0],
+                'dir_y': meta['gt_direction'][1],
+            }
+            aug_frames, target_dict, aug_info_list = augmenter(
+                [t.clone() for t in dbg['transformed']], target_dict
+            )
+            meta['augmented_target'] = {
+                'x': round(float(target_dict['x']), 1),
+                'y': round(float(target_dict['y']), 1),
+                'dir_x': round(float(target_dict['dir_x']), 3),
+                'dir_y': round(float(target_dict['dir_y']), 3),
+            }
+        else:
+            # Fallback: just normalize without augmentation
+            norm = T.Normalize(mean=mean, std=std)
+            aug_frames = [norm(t.clone()) for t in dbg['transformed']]
+
+        # De-normalize for human-readable display
         frame_images = []
-        pixel_stats_pre = []
-        pixel_stats_post = []
-        for t in dbg['transformed']:
-            pixel_stats_pre.append({
+        pixel_stats = []
+        for t in aug_frames:
+            pixel_stats.append({
                 'min': round(float(t.min()), 4),
                 'max': round(float(t.max()), 4),
                 'mean': round(float(t.mean()), 4),
             })
-            t_norm = norm(t)
-            pixel_stats_post.append({
-                'min': round(float(t_norm.min()), 4),
-                'max': round(float(t_norm.max()), 4),
-                'mean': round(float(t_norm.mean()), 4),
-            })
-            # De-normalize for display
-            t_denorm = t_norm * std_t + mean_t
-            frame_images.append(_tensor_to_jpeg(t_denorm, greyscale=True))
+            t_denorm = t * std_t + mean_t
+            frame_images.append(_tensor_to_jpeg(t_denorm.clamp(0, 1), greyscale=True))
 
         meta.update({
             'n_frames': len(frame_images),
             'normalization': {'mean': mean, 'std': std},
-            'pixel_stats_pre_norm': pixel_stats_pre,
-            'pixel_stats_post_norm': pixel_stats_post,
+            'pixel_stats': pixel_stats,
+            'aug_info': aug_info_list,
         })
-        return jsonify({'stage': 'normalize', 'frames': frame_images, 'metadata': meta})
+        return jsonify({'stage': 'augment', 'frames': frame_images, 'metadata': meta})
 
     # ── Stage: SAMPLE ───────────────────────────────────────────────────
+    # In training: augment → sample.  We apply augmentation + normalize first,
+    # then show only the sampled subset of frames.
     elif stage == 'sample':
-        frame_images = [_tensor_to_jpeg(t, greyscale=True) for t in dbg['sampled']]
+        config = _insp_config
+        mean = config['augmentations']['mean']
+        std = config['augmentations']['std']
+        mean_t = torch.tensor(mean).view(3, 1, 1)
+        std_t = torch.tensor(std).view(3, 1, 1)
+
+        # Apply augmentation to transformed frames (same as augment stage)
+        augmenter = _load_augmenter()
+        if augmenter and do_augment:
+            import random as _random
+            _random.seed(aug_seed)
+            np.random.seed(aug_seed)
+
+            cp = dbg['crop_params']
+            target_dict = {
+                'x': meta['gt_position'][0] - cp['x_min'],
+                'y': meta['gt_position'][1] - cp['y_min'],
+                'dir_x': meta['gt_direction'][0],
+                'dir_y': meta['gt_direction'][1],
+            }
+            aug_frames, _, _ = augmenter(
+                [t.clone() for t in dbg['transformed']], target_dict
+            )
+        else:
+            norm = T.Normalize(mean=mean, std=std)
+            aug_frames = [norm(t.clone()) for t in dbg['transformed']]
+
+        # Subsample using the same indices the dataset chose
+        sampled_indices = dbg['sampled_indices']
+        sampled = [aug_frames[i] for i in sampled_indices if i < len(aug_frames)]
+
+        # De-normalize for display
+        frame_images = []
+        for t in sampled:
+            t_denorm = t * std_t + mean_t
+            frame_images.append(_tensor_to_jpeg(t_denorm.clamp(0, 1), greyscale=True))
+
         meta.update({
             'n_frames_loaded': meta['n_frames_loaded'],
             'n_frames_sampled': meta['window_size'],
-            'sampled_indices': dbg['sampled_indices'],
+            'sampled_indices': sampled_indices,
             'sampling_method': dbg['sampling_method'],
         })
         return jsonify({'stage': 'sample', 'frames': frame_images, 'metadata': meta})
 
     # ── Stage: TARGET ───────────────────────────────────────────────────
     elif stage == 'target':
+        grid_size = _insp_config['model']['grid_size']
         meta.update({
-            'grid_size': _insp_config['model']['grid_size'],
+            'grid_size': grid_size,
             'target': dbg['target_info'],
         })
+
+        # Compute augmented target grid if augmentation requested
+        if do_augment and dbg['target_info'].get('objectness', 0) == 1.0:
+            augmenter = _load_augmenter()
+            if augmenter:
+                import random as _random
+                _random.seed(aug_seed)
+                np.random.seed(aug_seed)
+
+                cp = dbg['crop_params']
+                gt_x = meta['gt_position'][0]
+                gt_y = meta['gt_position'][1]
+                target_dict = {
+                    'x': gt_x - cp['x_min'],
+                    'y': gt_y - cp['y_min'],
+                    'dir_x': meta['gt_direction'][0],
+                    'dir_y': meta['gt_direction'][1],
+                }
+                _, aug_target, aug_info_list = augmenter(
+                    [t.clone() for t in dbg['transformed']], target_dict
+                )
+
+                # Encode augmented coords into grid (same logic as dataset.py)
+                W = _insp_config['data']['width']
+                H = _insp_config['data']['height']
+                ax = float(aug_target['x'])
+                ay = float(aug_target['y'])
+                x_norm = ax / W
+                y_norm = ay / H
+                dir_x_n = float(aug_target['dir_x'])
+                dir_y_n = float(aug_target['dir_y'])
+                d_norm = np.sqrt(dir_x_n**2 + dir_y_n**2)
+                if d_norm > 0:
+                    dir_x_n /= d_norm
+                    dir_y_n /= d_norm
+
+                grid_x = max(0, min(grid_size - 1, int(x_norm * grid_size)))
+                grid_y = max(0, min(grid_size - 1, int(y_norm * grid_size)))
+                cell_x = (x_norm * grid_size) - grid_x
+                cell_y = (y_norm * grid_size) - grid_y
+
+                meta['augmented_target_info'] = {
+                    'objectness': 1.0,
+                    'grid_cell': [grid_y, grid_x],
+                    'cell_coords': [round(cell_x, 4), round(cell_y, 4)],
+                    'position_norm': [round(x_norm, 4), round(y_norm, 4)],
+                    'direction': [round(dir_x_n, 4), round(dir_y_n, 4)],
+                    'aug_info': aug_info_list,
+                }
+
         return jsonify({'stage': 'target', 'frames': [], 'metadata': meta})
 
     # ── Stage: OUTPUT ───────────────────────────────────────────────────
@@ -916,7 +1086,7 @@ def _load_augmenter():
                 prob_posterize=aug_cfg['prob_posterize'],
                 posterize_bits=aug_cfg['posterize_bits'],
                 prob_greyscale=aug_cfg['prob_greyscale'],
-                normalize=False,  # Don't normalize — we want visible pixels
+                normalize=True,  # Normalize — augment stage will de-normalize for display
                 mean=aug_cfg['mean'], std=aug_cfg['std'],
             )
             print("  Loaded augmenter from config")
@@ -1033,9 +1203,12 @@ def api_model_view(video_name):
             aug_frames, aug_target, aug_info = augmenter(
                 [crop_transformed.clone()], target_dict
             )
-            # Undo normalization for display if it was applied
+            # De-normalize for display (augmenter now normalizes)
             aug_frame = aug_frames[0]
-            result["augmented_image"] = _tensor_to_jpeg(aug_frame, greyscale=True)
+            mean_t = torch.tensor(config['augmentations']['mean']).view(3, 1, 1)
+            std_t = torch.tensor(config['augmentations']['std']).view(3, 1, 1)
+            aug_frame_display = (aug_frame * std_t + mean_t).clamp(0, 1)
+            result["augmented_image"] = _tensor_to_jpeg(aug_frame_display, greyscale=True)
             result["augmented_target"] = {
                 "x": round(float(aug_target["x"]), 1),
                 "y": round(float(aug_target["y"]), 1),
@@ -1062,12 +1235,15 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to model checkpoint (.pth) for prediction overlay")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Device for model inference: 'cpu', 'cuda:0', etc. "
+                             "Default: auto (GPU if available, else CPU)")
     args = parser.parse_args()
 
     # Load checkpoint if provided
     if args.checkpoint:
         print(f"\nLoading model checkpoint...")
-        prediction_engine.load_checkpoint(args.checkpoint)
+        prediction_engine.load_checkpoint(args.checkpoint, device_override=args.device)
 
     print(f"\n{'=' * 60}")
     print("  🐝  Waggle Dance Annotation Viewer")

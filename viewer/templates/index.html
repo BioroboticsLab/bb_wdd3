@@ -33,6 +33,14 @@ body {
   overflow: hidden;
   user-select: none;
 }
+/* Allow text selection in pipeline inspector metadata */
+.pi-metadata, .pi-metadata * {
+  user-select: text;
+  cursor: text;
+}
+.pi-metadata .meta-val {
+  cursor: text;
+}
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
@@ -498,6 +506,25 @@ kbd {
   min-width: 40px; text-align: right;
   font-variant-numeric: tabular-nums;
 }
+.pi-redraw-overlay {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: rgba(30, 30, 40, 0.85);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.15s;
+  z-index: 5;
+}
+.pi-redraw-overlay:hover {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: #f59e0b;
+  color: #fff;
+}
 .pi-metadata {
   margin-top: 6px;
   font-size: 11px;
@@ -550,6 +577,76 @@ kbd {
   margin-bottom: 3px;
   font-size: 10px;
   display: flex; justify-content: space-between;
+}
+
+/* Crop variance grid */
+.pi-variance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+.pi-variance-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  position: relative;
+}
+.pi-variance-item canvas {
+  width: 100%;
+  display: block;
+}
+.pi-variance-label {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.7);
+  font-size: 9px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* Augmented transform controls */
+.pi-aug-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.pi-aug-controls .pi-aug-btn {
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pi-aug-controls .pi-aug-btn:hover {
+  border-color: var(--accent);
+  background: var(--bg-card);
+}
+.pi-aug-controls .pi-aug-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.pi-aug-info-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 6px;
+}
+.pi-aug-info-list span {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--bg-card);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
 }
 
 /* Prediction controls */
@@ -715,7 +812,7 @@ kbd {
       <button class="pi-tab active" data-stage="raw">1. Raw</button>
       <button class="pi-tab" data-stage="crop">2. Crop</button>
       <button class="pi-tab" data-stage="transform">3. Transform</button>
-      <button class="pi-tab" data-stage="normalize">4. Normalize</button>
+      <button class="pi-tab" data-stage="augment">4. Augment</button>
       <button class="pi-tab" data-stage="sample">5. Sample</button>
       <button class="pi-tab" data-stage="target">6. Target</button>
       <button class="pi-tab" data-stage="output">7. Output</button>
@@ -732,7 +829,10 @@ kbd {
       <!-- Video player for frames -->
       <div class="pi-player-wrap" id="pi-player-wrap" style="display:none;">
         <div class="pi-player-label" id="pi-player-label">Frames</div>
-        <canvas id="pi-player-canvas" width="480" height="480"></canvas>
+        <div style="position:relative; width:100%;">
+          <canvas id="pi-player-canvas" width="480" height="480" style="width:100%; display:block;"></canvas>
+          <button class="pi-redraw-overlay" id="pi-aug-redraw" title="Re-roll augmentations with a new random seed" style="display:none;">🎲 Re-draw</button>
+        </div>
         <div class="pi-player-controls">
           <button class="pi-play-btn" id="pi-play-btn" title="Play/Pause">▶</button>
           <input type="range" class="pi-scrubber" id="pi-scrubber" min="0" max="15" value="0">
@@ -2115,6 +2215,42 @@ function piDrawCurrentFrame() {
     piCtx.lineWidth = 2;
     piCtx.stroke();
   }
+
+  // Draw augmented target position/direction on augment frames
+  if (state.pipelineStage === 'augment' && meta.augmented_target) {
+    const at = meta.augmented_target;
+    // Transform canvas shows 224x224 frames scaled to drawW x drawH
+    const sx = drawW / 224;
+    const sy = drawH / 224;
+    const bx = at.x * sx;
+    const by = at.y * sy;
+    piCtx.beginPath();
+    piCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    piCtx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+    piCtx.fill();
+    piCtx.strokeStyle = '#fff';
+    piCtx.lineWidth = 1.5;
+    piCtx.stroke();
+    const arrowLen = 30;
+    piCtx.beginPath();
+    piCtx.moveTo(bx, by);
+    piCtx.lineTo(bx + at.dir_x * arrowLen * sx, by + at.dir_y * arrowLen * sy);
+    piCtx.strokeStyle = '#f59e0b';
+    piCtx.lineWidth = 2;
+    piCtx.stroke();
+    // Arrowhead
+    const endX = bx + at.dir_x * arrowLen * sx;
+    const endY = by + at.dir_y * arrowLen * sy;
+    const angle = Math.atan2(at.dir_y, at.dir_x);
+    piCtx.beginPath();
+    piCtx.moveTo(endX, endY);
+    piCtx.lineTo(endX - 8 * Math.cos(angle - 0.4), endY - 8 * Math.sin(angle - 0.4));
+    piCtx.moveTo(endX, endY);
+    piCtx.lineTo(endX - 8 * Math.cos(angle + 0.4), endY - 8 * Math.sin(angle + 0.4));
+    piCtx.strokeStyle = '#f59e0b';
+    piCtx.lineWidth = 2;
+    piCtx.stroke();
+  }
 }
 
 async function piLoadStage(stage) {
@@ -2133,7 +2269,22 @@ async function piLoadStage(stage) {
   $('#pi-player-wrap').style.display = 'none';
 
   try {
-    const data = await api(`/api/pipeline/${state.currentVideo}?stage=${stage}&row_idx=${state.pipelineRowIdx}&crop_mode=${cropMode}`);
+    let url = `/api/pipeline/${state.currentVideo}?stage=${stage}&row_idx=${state.pipelineRowIdx}&crop_mode=${cropMode}`;
+    // For augment, sample, and target stages, apply augmentation with a shared seed
+    // (in training: augment → sample → target encoding all use the same augmented data)
+    if (stage === 'augment') {
+      state.piAugSeed = Math.floor(Math.random() * 100000);
+      url += `&augment=true&aug_seed=${state.piAugSeed}`;
+    } else if (stage === 'sample' || stage === 'target') {
+      // Reuse the seed from the augment stage (or generate if not yet set)
+      if (!state.piAugSeed) state.piAugSeed = Math.floor(Math.random() * 100000);
+      url += `&augment=true&aug_seed=${state.piAugSeed}`;
+    }
+    // For crop stage, also request variance samples
+    if (stage === 'crop') {
+      url += `&n_variance=${4}`;
+    }
+    const data = await api(url);
     state.pipelineCache[cacheKey] = data;
     piRenderStage(stage, data);
   } catch (err) {
@@ -2173,10 +2324,28 @@ function piRenderStage(stage, data) {
       raw: `Raw (${frames.length} \u00d7 ${meta.video_resolution?.[0]}\u00d7${meta.video_resolution?.[1]})`,
       crop: `Cropped (${frames.length} \u00d7 ${meta.crop_size?.[0]}\u00d7${meta.crop_size?.[1]}) \u2014 ${meta.crop_mode || 'inference'}`,
       transform: `After Transform (${frames.length} frames)`,
-      normalize: `After Normalize \u2014 de-normalized for display (${frames.length} frames)`,
+      augment: `After Augment+Normalize (${frames.length} frames)`,
       sample: `Sampled ${meta.n_frames_sampled} from ${meta.n_frames_loaded} (${meta.sampling_method})`,
     };
     $('#pi-player-label').textContent = stageLabels[stage] || `${stage} \u2014 ${frames.length} frames`;
+
+    // Show/hide the re-draw overlay button
+    const redrawBtn = $('#pi-aug-redraw');
+    if (stage === 'augment') {
+      redrawBtn.style.display = '';
+      redrawBtn.onclick = () => {
+        // Clear both augment and sample caches so they re-roll together
+        const base = `${state.currentVideo}:${state.pipelineRowIdx}:`;
+        Object.keys(state.pipelineCache).forEach(k => {
+          if (k.startsWith(base + 'augment:') || k.startsWith(base + 'sample:'))
+            delete state.pipelineCache[k];
+        });
+        state.piAugSeed = null; // force new seed
+        piLoadStage('augment');
+      };
+    } else {
+      redrawBtn.style.display = 'none';
+    }
   } else {
     playerWrap.style.display = 'none';
     piFrameImages = [];
@@ -2209,6 +2378,43 @@ function piRenderStage(stage, data) {
     if (meta.crop_offset) html += piMeta('Random Offset', `(${meta.crop_offset[0]}, ${meta.crop_offset[1]})`);
     html += piMeta('Bee in Crop', `(${meta.bee_in_crop?.[0]}, ${meta.bee_in_crop?.[1]})`);
     html += piMeta('Frames', meta.n_frames);
+
+    // Variance grid: show multiple random crops
+    if (data.variance_crops && data.variance_crops.length > 0) {
+      html += `<div style="margin-top:10px"><span class="meta-key">Crop Variance (${data.variance_crops.length} random samples):</span></div>`;
+      html += '<div class="pi-variance-grid" id="pi-variance-grid">';
+      data.variance_crops.forEach((vc, i) => {
+        html += `<div class="pi-variance-item">`;
+        html += `<canvas id="pi-var-canvas-${i}" width="224" height="224"></canvas>`;
+        html += `<div class="pi-variance-label">offset=(${vc.offset_x}, ${vc.offset_y})</div>`;
+        html += `</div>`;
+      });
+      html += '</div>';
+
+      // Draw variance crops after DOM update
+      setTimeout(() => {
+        data.variance_crops.forEach((vc, i) => {
+          const c = document.getElementById(`pi-var-canvas-${i}`);
+          if (!c) return;
+          const vCtx = c.getContext('2d');
+          const img = new Image();
+          img.onload = () => {
+            vCtx.drawImage(img, 0, 0, 224, 224);
+            // Draw bee position
+            if (vc.bee_in_crop) {
+              vCtx.beginPath();
+              vCtx.arc(vc.bee_in_crop[0], vc.bee_in_crop[1], 4, 0, Math.PI * 2);
+              vCtx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+              vCtx.fill();
+              vCtx.strokeStyle = '#fff';
+              vCtx.lineWidth = 1;
+              vCtx.stroke();
+            }
+          };
+          img.src = `data:image/jpeg;base64,${vc.image}`;
+        });
+      }, 30);
+    }
   }
 
   else if (stage === 'transform') {
@@ -2223,18 +2429,39 @@ function piRenderStage(stage, data) {
     }
   }
 
-  else if (stage === 'normalize') {
+  else if (stage === 'augment') {
+    // Show augmentation info
+    if (meta.aug_info && meta.aug_info.length > 0) {
+      html += `<div><span class="meta-key">Augmentations Applied:</span></div>`;
+      html += '<div class="pi-aug-info-list">';
+      meta.aug_info.forEach(a => {
+        html += `<span>${a}</span>`;
+      });
+      html += '</div>';
+    } else {
+      html += `<div style="color: var(--text-muted);"><span class="meta-key">Augmentations: </span>None triggered this roll</div>`;
+    }
+
+    // Normalization info (always applied as last step of augmenter)
     const n = meta.normalization || {};
-    html += piMeta('Mean', `[${(n.mean || []).map(v => v.toFixed(3)).join(', ')}]`);
-    html += piMeta('Std', `[${(n.std || []).map(v => v.toFixed(3)).join(', ')}]`);
-    if (meta.pixel_stats_pre_norm && meta.pixel_stats_post_norm) {
-      html += `<div style="margin-top:6px"><span class="meta-key">Pre/Post Norm:</span></div>`;
-      html += '<table><tr><th>#</th><th>Pre Min</th><th>Pre Max</th><th>Post Min</th><th>Post Max</th><th>Post Mean</th></tr>';
-      for (let i = 0; i < meta.pixel_stats_pre_norm.length; i++) {
-        const pre = meta.pixel_stats_pre_norm[i];
-        const post = meta.pixel_stats_post_norm[i];
-        html += `<tr><td>${i}</td><td>${pre.min}</td><td>${pre.max}</td><td>${post.min}</td><td>${post.max}</td><td>${post.mean}</td></tr>`;
-      }
+    html += piMeta('Normalize Mean', `[${(n.mean || []).map(v => v.toFixed(3)).join(', ')}]`);
+    html += piMeta('Normalize Std', `[${(n.std || []).map(v => v.toFixed(3)).join(', ')}]`);
+
+    // Augmented target position
+    if (meta.augmented_target) {
+      const at = meta.augmented_target;
+      html += piMeta('Bee Position (aug)', `(${at.x}, ${at.y})`);
+      html += piMeta('Direction (aug)', `(${at.dir_x}, ${at.dir_y})`);
+    }
+
+    // Re-draw button is in the canvas overlay, show/hide handled in piRenderStage player setup
+
+    if (meta.pixel_stats?.length > 0) {
+      html += `<div style="margin-top:6px"><span class="meta-key">Pixel Stats (post augment+norm, de-normed for display):</span></div>`;
+      html += '<table><tr><th>#</th><th>Min</th><th>Max</th><th>Mean</th></tr>';
+      meta.pixel_stats.forEach((s, i) => {
+        html += `<tr><td>${i}</td><td>${s.min}</td><td>${s.max}</td><td>${s.mean}</td></tr>`;
+      });
       html += '</table>';
     }
   }
@@ -2265,30 +2492,78 @@ function piRenderStage(stage, data) {
       const gs = meta.grid_size;
       const cs = Math.max(4, Math.floor(200 / gs));
       const sz = gs * cs;
-      html += `<canvas id="pi-target-grid" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas>`;
+      html += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;">`;
+      html += `<div><div class="meta-key" style="margin-bottom:4px;">Original Target</div>`;
+      html += `<canvas id="pi-target-grid" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas></div>`;
+
+      // Augmented target grid (if available)
+      const at = meta.augmented_target_info;
+      if (at && at.objectness === 1.0) {
+        html += `<div><div class="meta-key" style="margin-bottom:4px;">Augmented Target</div>`;
+        html += `<canvas id="pi-target-grid-aug" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas></div>`;
+      }
+      html += `</div>`;
+
+      // Show augmentation info if present
+      if (at && at.aug_info && at.aug_info.length > 0) {
+        html += `<div style="margin-top:6px"><span class="meta-key">Augmentations:</span></div>`;
+        html += '<div class="pi-aug-info-list">';
+        at.aug_info.forEach(a => { html += `<span>${a}</span>`; });
+        html += '</div>';
+      }
+
       setTimeout(() => {
+        // Draw original grid
         const c = document.getElementById('pi-target-grid');
-        if (!c) return;
-        const ctx = c.getContext('2d');
-        ctx.fillStyle = '#1a1a2e';
-        ctx.fillRect(0, 0, sz, sz);
-        ctx.strokeStyle = '#2a2a4e';
-        for (let i = 0; i <= gs; i++) {
-          ctx.beginPath();
-          ctx.moveTo(i * cs, 0); ctx.lineTo(i * cs, sz);
-          ctx.moveTo(0, i * cs); ctx.lineTo(sz, i * cs);
-          ctx.stroke();
+        if (c) {
+          const ctx = c.getContext('2d');
+          ctx.fillStyle = '#1a1a2e';
+          ctx.fillRect(0, 0, sz, sz);
+          ctx.strokeStyle = '#2a2a4e';
+          for (let i = 0; i <= gs; i++) {
+            ctx.beginPath();
+            ctx.moveTo(i * cs, 0); ctx.lineTo(i * cs, sz);
+            ctx.moveTo(0, i * cs); ctx.lineTo(sz, i * cs);
+            ctx.stroke();
+          }
+          const [gy, gx] = t.grid_cell;
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.6)';
+          ctx.fillRect(gx * cs, gy * cs, cs, cs);
+          const px = t.position_norm[0] * sz;
+          const py = t.position_norm[1] * sz;
+          ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2);
+          ctx.fillStyle = '#ef4444'; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(px, py);
+          ctx.lineTo(px + t.direction[0] * 15, py + t.direction[1] * 15);
+          ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.stroke();
         }
-        const [gy, gx] = t.grid_cell;
-        ctx.fillStyle = 'rgba(34, 197, 94, 0.6)';
-        ctx.fillRect(gx * cs, gy * cs, cs, cs);
-        const px = t.position_norm[0] * sz;
-        const py = t.position_norm[1] * sz;
-        ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2);
-        ctx.fillStyle = '#ef4444'; ctx.fill();
-        ctx.beginPath(); ctx.moveTo(px, py);
-        ctx.lineTo(px + t.direction[0] * 15, py + t.direction[1] * 15);
-        ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.stroke();
+
+        // Draw augmented grid
+        if (at && at.objectness === 1.0) {
+          const c2 = document.getElementById('pi-target-grid-aug');
+          if (c2) {
+            const ctx2 = c2.getContext('2d');
+            ctx2.fillStyle = '#1a1a2e';
+            ctx2.fillRect(0, 0, sz, sz);
+            ctx2.strokeStyle = '#2a2a4e';
+            for (let i = 0; i <= gs; i++) {
+              ctx2.beginPath();
+              ctx2.moveTo(i * cs, 0); ctx2.lineTo(i * cs, sz);
+              ctx2.moveTo(0, i * cs); ctx2.lineTo(sz, i * cs);
+              ctx2.stroke();
+            }
+            const [agy, agx] = at.grid_cell;
+            ctx2.fillStyle = 'rgba(245, 158, 11, 0.6)';
+            ctx2.fillRect(agx * cs, agy * cs, cs, cs);
+            const apx = at.position_norm[0] * sz;
+            const apy = at.position_norm[1] * sz;
+            ctx2.beginPath(); ctx2.arc(apx, apy, 3, 0, Math.PI * 2);
+            ctx2.fillStyle = '#f59e0b'; ctx2.fill();
+            ctx2.beginPath(); ctx2.moveTo(apx, apy);
+            ctx2.lineTo(apx + at.direction[0] * 15, apy + at.direction[1] * 15);
+            ctx2.strokeStyle = '#f59e0b'; ctx2.lineWidth = 2; ctx2.stroke();
+          }
+        }
       }, 50);
     }
   }

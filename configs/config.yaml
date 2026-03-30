@@ -16,8 +16,8 @@ augmentations:
   prob_flip_h: 0.5
   prob_flip_v: 0.0
   prob_rotate: 0.3 
-  rotate_range: [-15, 15]
-  prob_scale: 1.0
+  rotate_range: [-40, 40]
+  prob_scale: 0.3
   scale_range: [0.9, 1.1]
   prob_translate: 0.3
   translate_range: 0.1
@@ -25,9 +25,9 @@ augmentations:
   hsv_hue: 0.1
   hsv_saturation: 0.9
   hsv_value: 0.9
-  prob_brightness: 1.0
+  prob_brightness: 0.3
   brightness_range: 0.4
-  prob_contrast: 1.0
+  prob_contrast: 0.3
   contrast_range: 0.4
   prob_gamma: 0.0
   gamma_range: [0.8, 1.2]

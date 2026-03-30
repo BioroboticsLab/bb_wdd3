@@ -27,6 +27,11 @@ CLEAN_PATH = os.path.join(DATA_DIR, "annotations", "fps_multires_clean.csv")
 
 JERUSALEM_OFFSET = 30  # frames to shift forward
 
+# Videos with known bad annotations (e.g. cross-resolution detection mismatches)
+EXCLUDE_VIDEOS = [
+    "T1-D1-B3-V6-C_960_540.mp4",  # annotations don't match 480p variant
+]
+
 
 def is_upsampled_fps(video_name: str) -> bool:
     """Check if a video is an upsampled FPS variant (frame-duplicated)."""
@@ -199,6 +204,15 @@ def main():
     n_jerusalem_ds = jerusalem_ds_mask.sum()
     df = df[~jerusalem_ds_mask].reset_index(drop=True)
     print(f"  Removed {n_jerusalem_ds:,} rows (downsampled Jerusalem videos)")
+    
+    # --- Step 3b: Exclude videos with known bad annotations ---
+    if EXCLUDE_VIDEOS:
+        print("\n--- Step 3b: Exclude videos with known bad annotations ---")
+        exclude_mask = df["video_name"].isin(EXCLUDE_VIDEOS)
+        n_excluded = exclude_mask.sum()
+        excluded_videos = df[exclude_mask]["video_name"].nunique()
+        df = df[~exclude_mask].reset_index(drop=True)
+        print(f"  Removed {n_excluded:,} rows ({excluded_videos} videos: {', '.join(EXCLUDE_VIDEOS)})")
     
     # --- Step 4: Temporal downsampling of 60fps videos ---
     print("\n--- Step 4: Temporal downsampling of native 60fps videos ---")
