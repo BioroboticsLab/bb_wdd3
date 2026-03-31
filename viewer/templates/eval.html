@@ -866,18 +866,13 @@ function buildPerVideoTable(data) {
     return;
   }
 
-  // Build sortable array
+  // Build sortable array — supports both new lightweight and legacy full metrics
   const rows = Object.entries(perVideo).map(([vname, vdata]) => ({
     name: vname,
-    n_windows: vdata.n_windows,
-    map_pre: vdata.pre?.comprehensive?.map ?? 0,
-    map_post: vdata.post?.comprehensive?.map ?? 0,
-    f1_pre: vdata.pre?.comprehensive?.mean_f1 ?? 0,
-    f1_post: vdata.post?.comprehensive?.mean_f1 ?? 0,
-    precision_post: vdata.post?.comprehensive?.mean_precision ?? 0,
-    recall_post: vdata.post?.comprehensive?.mean_recall ?? 0,
-    n_preds: vdata.post?.counts?.predictions ?? 0,
-    n_gts: vdata.post?.counts?.ground_truths ?? 0,
+    n_windows: vdata.n_windows ?? 0,
+    n_preds: vdata.n_preds ?? vdata.pre?.counts?.predictions ?? 0,
+    n_post_preds: vdata.n_post_preds ?? vdata.post?.counts?.predictions ?? 0,
+    n_gts: vdata.n_gts ?? vdata.post?.counts?.ground_truths ?? 0,
   }));
 
   // Sort
@@ -891,12 +886,8 @@ function buildPerVideoTable(data) {
   const cols = [
     { key: 'name', label: 'Video', fmt: v => `<span class="video-name" title="${v}">${v}</span>` },
     { key: 'n_windows', label: 'Windows', fmt: fmtInt },
-    { key: 'map_post', label: 'mAP (post)', fmt: v => fmt(v) },
-    { key: 'f1_post', label: 'F1 (post)', fmt: v => fmt(v) },
-    { key: 'f1_pre', label: 'F1 (pre)', fmt: v => fmt(v) },
-    { key: 'precision_post', label: 'Prec', fmt: v => fmt(v) },
-    { key: 'recall_post', label: 'Rec', fmt: v => fmt(v) },
-    { key: 'n_preds', label: 'Preds', fmt: fmtInt },
+    { key: 'n_preds', label: 'Raw Preds', fmt: fmtInt },
+    { key: 'n_post_preds', label: 'Post Preds', fmt: fmtInt },
     { key: 'n_gts', label: 'GTs', fmt: fmtInt },
   ];
 

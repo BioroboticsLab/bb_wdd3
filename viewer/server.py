@@ -1207,8 +1207,8 @@ class EvaluationEngine:
                   f"Recall: {dance_metrics['coverage']['recall']:.3f}, "
                   f"Precision: {dance_metrics['coverage']['precision']:.3f}", flush=True)
 
-            # ── 7. Per-video breakdown (window-level) ──
-            self._progress['message'] = 'Computing per-video breakdown…'
+            # ── 7. Per-video breakdown (lightweight — just counts) ──
+            self._progress['message'] = 'Computing per-video summary…'
             per_video = {}
             unique_videos = sorted(set(all_video_names))
             for vname in unique_videos:
@@ -1220,32 +1220,16 @@ class EvaluationEngine:
                 v_preds = [test_preds[i] for i in indices]
                 v_post = [post_test_preds[i] for i in indices]
                 v_gts = [test_gts[i] for i in indices]
-                v_run_ids = [waggle_run_ids[i] for i in indices]
-                v_vnames = [all_video_names[i] for i in indices]
 
-                v_metrics = get_eval_metrics_fast(
-                    v_preds, v_gts,
-                    pos_thresholds=config['eval']['pos_thresholds'],
-                    iou_threshold_range=config['eval']['iou_thresholds'],
-                    angular_thresholds=config['eval']['angular_thresholds'],
-                    match_pairs=config['eval']['match_pairs'],
-                    waggle_run_ids=v_run_ids,
-                    video_names=v_vnames,
-                )
-                v_post_metrics = get_eval_metrics_fast(
-                    v_post, v_gts,
-                    pos_thresholds=config['eval']['pos_thresholds'],
-                    iou_threshold_range=config['eval']['iou_thresholds'],
-                    angular_thresholds=config['eval']['angular_thresholds'],
-                    match_pairs=config['eval']['match_pairs'],
-                    waggle_run_ids=v_run_ids,
-                    video_names=v_vnames,
-                )
+                n_preds = sum(len(p) for p in v_preds)
+                n_post = sum(len(p) for p in v_post)
+                n_gts = sum(len(g) for g in v_gts)
 
                 per_video[vname] = {
-                    'pre': _eval_metrics_to_native(v_metrics),
-                    'post': _eval_metrics_to_native(v_post_metrics),
                     'n_windows': int(len(indices)),
+                    'n_preds': n_preds,
+                    'n_post_preds': n_post,
+                    'n_gts': n_gts,
                 }
 
             # Print to console (same as training)
