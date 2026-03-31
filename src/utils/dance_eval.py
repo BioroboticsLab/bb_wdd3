@@ -107,7 +107,7 @@ def cross_window_cluster_predictions(
     video_resolutions,
     video_fps=None,
     spatial_threshold=30.0,
-    temporal_threshold=8,
+    temporal_threshold_sec=0.3,
     confidence_threshold=0.5,
     min_samples=1,
     mode='mean',
@@ -126,8 +126,7 @@ def cross_window_cluster_predictions(
         video_resolutions: list of (H, W) per window
         video_fps: dict {video_name: fps} or None (defaults to 15fps)
         spatial_threshold: DBSCAN eps in pixels (at reference 1000px width)
-        temporal_threshold: temporal proximity in frames (at 30fps reference);
-            internally converted to seconds for fps-invariant clustering
+        temporal_threshold_sec: temporal proximity in seconds for clustering
         confidence_threshold: minimum confidence to include
         min_samples: DBSCAN min_samples
         mode: 'mean' or 'median' for consolidation
@@ -141,8 +140,6 @@ def cross_window_cluster_predictions(
             confidence: float
             n_detections: int
     """
-    # Convert temporal threshold from frames to seconds using 30fps reference
-    temporal_threshold_sec = temporal_threshold / 30.0
     
     # Collect all predictions per video, transformed to frame space
     video_preds = defaultdict(list)

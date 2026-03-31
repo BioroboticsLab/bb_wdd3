@@ -390,8 +390,8 @@ header h1 span { font-size: 20px; margin-right: 4px; }
             <input type="range" id="rc-spatial" min="5" max="100" step="1" value="30">
           </div>
           <div class="recluster-group">
-            <label>Temporal Threshold (frames) <span class="rc-val" id="rc-temporal-val">8</span></label>
-            <input type="range" id="rc-temporal" min="1" max="30" step="1" value="8">
+            <label>Temporal Threshold (ms) <span class="rc-val" id="rc-temporal-val">300</span></label>
+            <input type="range" id="rc-temporal" min="50" max="2000" step="50" value="300">
           </div>
           <div class="recluster-group">
             <label>Confidence Threshold <span class="rc-val" id="rc-conf-val">0.00</span></label>
@@ -968,9 +968,14 @@ function showResults(data) {
     document.getElementById('rc-spatial').value = pc.spatial_threshold;
     document.getElementById('rc-spatial-val').textContent = pc.spatial_threshold;
   }
-  if (pc.temporal_threshold != null) {
-    document.getElementById('rc-temporal').value = pc.temporal_threshold;
-    document.getElementById('rc-temporal-val').textContent = pc.temporal_threshold;
+  if (pc.temporal_threshold_ms != null) {
+    document.getElementById('rc-temporal').value = pc.temporal_threshold_ms;
+    document.getElementById('rc-temporal-val').textContent = pc.temporal_threshold_ms;
+  } else if (pc.temporal_threshold != null) {
+    // Legacy: convert frames (at ~30fps) to ms
+    const ms = Math.round(pc.temporal_threshold / 30.0 * 1000);
+    document.getElementById('rc-temporal').value = ms;
+    document.getElementById('rc-temporal-val').textContent = ms;
   }
   if (pc.confidence_threshold != null) {
     document.getElementById('rc-conf').value = pc.confidence_threshold;
@@ -1122,7 +1127,8 @@ async function doRecluster() {
 
   const params = {
     spatial_threshold: parseFloat(document.getElementById('rc-spatial').value),
-    temporal_threshold: parseInt(document.getElementById('rc-temporal').value),
+    temporal_threshold_ms: parseInt(document.getElementById('rc-temporal').value),
+    temporal_threshold: Math.round(parseInt(document.getElementById('rc-temporal').value) / 1000.0 * 30),  // frames at 30fps for window-level
     confidence_threshold: parseFloat(document.getElementById('rc-conf').value),
     min_samples: parseInt(document.getElementById('rc-minsamp').value),
     clustering_method: document.getElementById('rc-method').value,
