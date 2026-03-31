@@ -1311,36 +1311,31 @@ class EvaluationEngine:
         """Check if decoded predictions are cached for re-clustering."""
         return self._cached_preds is not None
 
-    def recluster(self, post_params, eval_config=None):
-        """Re-run post-processing + metrics with new clustering params.
+    def recluster(self, post_params):
+        """Re-run dance-level clustering with new params.
 
-        This is very fast (~seconds) since it reuses cached decoded
-        predictions and skips the expensive inference step entirely.
+        Single-step pipeline: overlap averaging → DBSCAN → dance metrics.
+        Reuses cached decoded predictions — no re-inference needed.
 
         Args:
-            post_params: dict with keys like spatial_threshold, temporal_threshold,
-                        confidence_threshold, strategy, mode, min_samples, etc.
-            eval_config: optional dict to override eval thresholds (pos_thresholds,
-                        iou_thresholds, angular_thresholds, match_pairs).
-                        If None, uses the config cached from the original eval run.
+            post_params: dict with keys like spatial_threshold, temporal_threshold_ms,
+                        confidence_threshold, min_samples, mode.
         Returns:
-            Updated results dict (same shape as full eval results).
+            Updated results dict.
         """
-        from src.utils.postprocess import batch_postprocess_predictions
-        from src.utils.eval_utils_fast import get_eval_metrics_fast
-        from src.utils.eval_utils import print_evaluation_results
+        from src.utils.dance_eval import (
+            deduplicate_gt_dances,
+            average_overlapping_predictions,
+            cross_window_cluster_predictions,
+            compute_dance_level_metrics,
+        )
         import time as _time
 
         if self._cached_preds is None:
             raise RuntimeError("No cached predictions. Run full evaluation first.")
 
         config = self._cached_config
-        # Allow overriding eval thresholds with live config
-        if eval_config:
-            config = dict(config)  # shallow copy
-            config['eval'] = {**config.get('eval', {}), **eval_config}
         test_preds = self._cached_preds
-        test_gts = self._cached_gts
         all_video_names = self._cached_video_names
 
         # Merge defaults with provided params
@@ -1348,7 +1343,6 @@ class EvaluationEngine:
             'spatial_threshold': config['post_process']['spatial_threshold'],
             'temporal_threshold': config['post_process']['temporal_threshold'],
             'confidence_threshold': config['post_process']['confidence_threshold'],
-            'strategy': config['post_process']['strategy'],
             'mode': config['post_process']['mode'],
             'min_samples': 1,
         }
@@ -1356,106 +1350,60 @@ class EvaluationEngine:
 
         t0 = _time.time()
 
-        # Re-run post-processing
-        post_test_preds = batch_postprocess_predictions(
-            test_preds,
-            spatial_threshold=pp['spatial_threshold'],
-            temporal_threshold=pp['temporal_threshold'],
-            confidence_threshold=pp['confidence_threshold'],
-            strategy=pp['strategy'],
-            mode=pp['mode'],
-            remove_outliers=pp.get('remove_outliers', False),
-            outlier_method=pp.get('outlier_method', 'isolation_forest'),
-            min_samples=pp.get('min_samples', 1),
-        )
-
-        # Re-compute metrics
-        run_ids = self._cached_run_ids
-        test_metrics = get_eval_metrics_fast(
-            test_preds, test_gts,
-            pos_thresholds=config['eval']['pos_thresholds'],
-            iou_threshold_range=config['eval']['iou_thresholds'],
-            angular_thresholds=config['eval']['angular_thresholds'],
-            match_pairs=config['eval']['match_pairs'],
-            waggle_run_ids=run_ids,
-            video_names=all_video_names,
-        )
-
-        post_test_metrics = get_eval_metrics_fast(
-            post_test_preds, test_gts,
-            pos_thresholds=config['eval']['pos_thresholds'],
-            iou_threshold_range=config['eval']['iou_thresholds'],
-            angular_thresholds=config['eval']['angular_thresholds'],
-            match_pairs=config['eval']['match_pairs'],
-            waggle_run_ids=run_ids,
-            video_names=all_video_names,
-        )
-
-        # Reuse cached per-video breakdown (skip recomputing — expensive)
-        # Only the aggregate pre/post/dance metrics are recomputed with new params.
-        per_video = self._results.get('per_video', {}) if self._results else {}
-
-        elapsed = _time.time() - t0
-        print_evaluation_results(test_metrics, post_test_metrics)
-
-        # Recompute dance-level metrics with new clustering params
-        from src.utils.dance_eval import (
-            deduplicate_gt_dances,
-            average_overlapping_predictions,
-            cross_window_cluster_predictions,
-            compute_dance_level_metrics,
-        )
+        # ── Single-step pipeline: average → cluster → metrics ──
         crop_origins = self._cached_crop_origins
         original_res = self._cached_original_res
-        if crop_origins and original_res:
-            video_res = {}
-            for vn, res in zip(all_video_names, original_res):
-                video_res[vn] = res
-            gt_dances = deduplicate_gt_dances(
-                annotations_df[~annotations_df['video_name'].isin(train_videos)].reset_index(drop=True)
-            )
-            # Average overlapping windows before clustering
-            averaged_preds = average_overlapping_predictions(
-                test_preds, crop_origins, all_video_names
-            )
-            predicted_runs = cross_window_cluster_predictions(
-                averaged_preds, crop_origins, all_video_names, original_res,
-                video_fps=self._cached_video_fps,
-                spatial_threshold=pp.get('spatial_threshold', 30.0),
-                temporal_threshold_sec=pp.get('temporal_threshold_ms', 300) / 1000.0,
-                confidence_threshold=pp.get('confidence_threshold', 0.5),
-                min_samples=pp.get('min_samples', 1),
-                mode=pp.get('mode', 'mean'),
-            )
-            dance_metrics = compute_dance_level_metrics(predicted_runs, gt_dances, video_res)
-            n_pred_runs = sum(len(v) for v in predicted_runs.values())
-            n_gt_dances = sum(len(v) for v in gt_dances.values())
-            print(f"  Dance-level: {n_pred_runs} predicted runs vs {n_gt_dances} GT dances", flush=True)
-            print(f"  Dance mAP: {dance_metrics['comprehensive']['map']:.3f}, "
-                  f"Recall: {dance_metrics['coverage']['recall']:.3f}, "
-                  f"Precision: {dance_metrics['coverage']['precision']:.3f}", flush=True)
-        else:
-            dance_metrics = None
-            print("  ⚠️ No crop origins cached — skipping dance-level metrics", flush=True)
 
+        if not crop_origins or not original_res:
+            raise RuntimeError("No crop origins cached. Run full evaluation first.")
+
+        video_res = {}
+        for vn, res in zip(all_video_names, original_res):
+            video_res[vn] = res
+        gt_dances = deduplicate_gt_dances(
+            annotations_df[~annotations_df['video_name'].isin(train_videos)].reset_index(drop=True)
+        )
+
+        # 1. Average overlapping windows
+        averaged_preds = average_overlapping_predictions(
+            test_preds, crop_origins, all_video_names
+        )
+
+        # 2. Cross-window DBSCAN clustering → dance-level runs
+        predicted_runs = cross_window_cluster_predictions(
+            averaged_preds, crop_origins, all_video_names, original_res,
+            video_fps=self._cached_video_fps,
+            spatial_threshold=pp.get('spatial_threshold', 30.0),
+            temporal_threshold_sec=pp.get('temporal_threshold_ms', 300) / 1000.0,
+            confidence_threshold=pp.get('confidence_threshold', 0.5),
+            min_samples=pp.get('min_samples', 1),
+            mode=pp.get('mode', 'mean'),
+        )
+
+        # 3. Dance-level metrics
+        dance_metrics = compute_dance_level_metrics(predicted_runs, gt_dances, video_res)
+
+        elapsed = _time.time() - t0
+
+        n_pred_runs = sum(len(v) for v in predicted_runs.values())
+        n_gt_dances = sum(len(v) for v in gt_dances.values())
+        print(f"  Dance-level: {n_pred_runs} predicted runs vs {n_gt_dances} GT dances", flush=True)
+        print(f"  Dance mAP: {dance_metrics['comprehensive']['map']:.3f}, "
+              f"Recall: {dance_metrics['coverage']['recall']:.3f}, "
+              f"Precision: {dance_metrics['coverage']['precision']:.3f}", flush=True)
         print(f"  ✅ Re-clustered in {elapsed:.1f}s with params: {pp}", flush=True)
 
-        # Build results dict
+        # Build results — reuse cached window-level and per-video metrics
+        prev = self._results or {}
+        unique_videos = sorted(set(all_video_names))
         results = {
-            'pre': _eval_metrics_to_native(test_metrics),
-            'post': _eval_metrics_to_native(post_test_metrics),
-            'dance': _eval_metrics_to_native(dance_metrics) if dance_metrics else None,
-            'per_video': per_video,
-            'checkpoint': self._results.get('checkpoint') if self._results else {},
+            'pre': prev.get('pre', {}),
+            'post': prev.get('post', {}),
+            'dance': _eval_metrics_to_native(dance_metrics),
+            'per_video': prev.get('per_video', {}),
+            'checkpoint': prev.get('checkpoint', {}),
             'config': {
-                'eval': {
-                    'pos_thresholds': config['eval']['pos_thresholds'],
-                    'iou_thresholds': config['eval']['iou_thresholds'],
-                    'angular_thresholds': config['eval']['angular_thresholds'],
-                    'match_pairs': config['eval']['match_pairs'],
-                    'confidence_threshold': config['eval']['confidence_threshold'],
-                    'max_dets': config['eval']['max_dets'],
-                },
+                'eval': prev.get('config', {}).get('eval', {}),
                 'post_process': pp,
             },
             'n_val_windows': int(len(test_preds)),
@@ -1879,7 +1827,7 @@ def api_eval_recluster():
         pp['clustering_method'] = str(params['clustering_method'])
 
     try:
-        results = evaluation_engine.recluster(pp, eval_config=_config['eval'])
+        results = evaluation_engine.recluster(pp)
         return jsonify(results)
     except Exception as e:
         import traceback
