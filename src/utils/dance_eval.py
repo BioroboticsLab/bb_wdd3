@@ -105,8 +105,9 @@ def cross_window_cluster_predictions(
     crop_origins,
     video_names,
     video_resolutions,
+    video_fps=None,
     spatial_threshold=30.0,
-    temporal_threshold=10,
+    temporal_threshold=8,
     confidence_threshold=0.5,
     min_samples=1,
     mode='mean',
@@ -115,16 +116,18 @@ def cross_window_cluster_predictions(
     Map per-window crop-space predictions to frame-space, pool per video,
     and cluster to produce consolidated waggle run predictions.
     
-    Uses origin-space coordinates (normalized by resolution) for resolution-
-    invariant clustering.
+    Uses normalized [0,1] coordinates for resolution-invariant spatial
+    clustering, and seconds for fps-invariant temporal clustering.
     
     Args:
         per_window_preds: list of lists, per-window predictions in crop space
         crop_origins: list of (x_min, y_min) per window
         video_names: list/array of video names per window
         video_resolutions: list of (H, W) per window
-        spatial_threshold: DBSCAN eps in origin-space pixels
-        temporal_threshold: temporal scaling (frames → spatial units)
+        video_fps: dict {video_name: fps} or None (defaults to 15fps)
+        spatial_threshold: DBSCAN eps in pixels (at reference 1000px width)
+        temporal_threshold: temporal proximity in frames (at 30fps reference);
+            internally converted to seconds for fps-invariant clustering
         confidence_threshold: minimum confidence to include
         min_samples: DBSCAN min_samples
         mode: 'mean' or 'median' for consolidation
@@ -132,19 +135,31 @@ def cross_window_cluster_predictions(
     Returns:
         dict: {video_name: [predicted_run_dict, ...]}
         where predicted_run_dict has keys:
-            position: [x, y]  in origin-space (resolution-invariant)
+            position: [x, y]  normalized [0,1]
             direction: [dx, dy]  (unit vector)
-            temporal_offsets: [start_frame, end_frame]
+            temporal_offsets: [start_frame, end_frame]  (original frame numbers)
             confidence: float
-            n_detections: int  (number of contributing predictions)
+            n_detections: int
     """
+    # Convert temporal threshold from frames to seconds using 30fps reference
+    temporal_threshold_sec = temporal_threshold / 30.0
+    
     # Collect all predictions per video, transformed to frame space
-    # then to origin-space (scale by resolution ratio relative to a reference)
     video_preds = defaultdict(list)
+    # Track fps per video for temporal normalization
+    _video_fps = {}
     
     for w_idx, (window_preds, (x_min, y_min), vname, (orig_h, orig_w)) in enumerate(
         zip(per_window_preds, crop_origins, video_names, video_resolutions)
     ):
+        # Determine fps for this video
+        if vname not in _video_fps:
+            if video_fps and vname in video_fps:
+                _video_fps[vname] = video_fps[vname]
+            else:
+                _video_fps[vname] = 15.0  # fallback
+        fps = _video_fps[vname]
+        
         for pred in window_preds:
             if pred['confidence'] < confidence_threshold:
                 continue
@@ -154,20 +169,19 @@ def cross_window_cluster_predictions(
             frame_x = crop_x + x_min
             frame_y = crop_y + y_min
             
-            # Frame-space → origin-space (resolution-invariant)
-            # The annotations use a reference resolution; we need the scale factor.
-            # From video 063: at 576×440, x1=57; at 1152×880, x1=114; at 2304×1760, x1=227
-            # origin_x is constant at 95 across all resolutions.
-            # The reference resolution appears to be the original recording resolution.
-            # For clustering, we just normalize to [0,1] relative to frame size.
-            # This makes the threshold resolution-independent.
+            # Frame-space → normalized [0,1] (resolution-invariant)
             norm_x = frame_x / orig_w
             norm_y = frame_y / orig_h
+            
+            # Temporal: convert frame numbers to seconds (fps-invariant)
+            t_start, t_end = pred['temporal_offsets']
+            t_mid_sec = (t_start + t_end) / (2.0 * fps)
             
             video_preds[vname].append({
                 'position_norm': [norm_x, norm_y],
                 'direction': list(pred['direction']),
                 'temporal_offsets': list(pred['temporal_offsets']),
+                't_mid_sec': t_mid_sec,
                 'confidence': pred['confidence'],
             })
     
@@ -178,22 +192,19 @@ def cross_window_cluster_predictions(
             result[vname] = []
             continue
         
-        # Build feature matrix: [norm_x, norm_y, frame_mid]
+        # Build feature matrix: [norm_x, norm_y, time_seconds]
         features = []
         for p in preds:
             nx, ny = p['position_norm']
-            frame_mid = (p['temporal_offsets'][0] + p['temporal_offsets'][1]) / 2
-            features.append([nx, ny, frame_mid])
+            features.append([nx, ny, p['t_mid_sec']])
         features = np.array(features)
         
-        # Scale: normalize spatial to [0,1] already done; 
-        # temporal needs scaling so that temporal_threshold frames ≈ spatial_threshold
-        # But spatial is now in [0,1] not pixels. So we need:
-        #   normalized_spatial_threshold = spatial_threshold / reference_width
-        # Let's use a reference of 1000px (arbitrary but consistent)
+        # Spatial eps in normalized space
         ref_size = 1000.0
         norm_spatial_eps = spatial_threshold / ref_size
-        temporal_scale = norm_spatial_eps / temporal_threshold
+        
+        # Scale temporal (seconds) so that temporal_threshold_sec ≈ norm_spatial_eps
+        temporal_scale = norm_spatial_eps / temporal_threshold_sec if temporal_threshold_sec > 0 else 1.0
         
         scaled_features = features.copy()
         scaled_features[:, 2] *= temporal_scale  # scale temporal dimension

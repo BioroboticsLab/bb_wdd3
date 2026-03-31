@@ -830,6 +830,7 @@ class EvaluationEngine:
         self._cached_run_ids = None   # waggle_run_id per window (from annotations)
         self._cached_crop_origins = None  # (x_min, y_min) per window for frame-space transform
         self._cached_original_res = None  # (H, W) per window
+        self._cached_video_fps = None     # {video_name: fps} for temporal normalization
         self._load_disk_cache()
 
     def _load_disk_cache(self):
@@ -847,6 +848,7 @@ class EvaluationEngine:
                 self._cached_run_ids = cache.get('run_ids')
                 self._cached_crop_origins = cache.get('crop_origins')
                 self._cached_original_res = cache.get('original_res')
+                self._cached_video_fps = cache.get('video_fps')
                 self._results = cache.get('results')
                 if self._results:
                     self._progress = {'stage': 'done', 'batch_current': 0,
@@ -868,6 +870,7 @@ class EvaluationEngine:
             'run_ids': self._cached_run_ids,
             'crop_origins': self._cached_crop_origins,
             'original_res': self._cached_original_res,
+            'video_fps': self._cached_video_fps,
             'results': self._results,
         }
         with open(self.CACHE_PATH, 'wb') as f:
@@ -1148,10 +1151,20 @@ class EvaluationEngine:
             self._cached_crop_origins = crop_origins
             self._cached_original_res = all_original_res
 
-            # Build per-video resolution dict
+            # Build per-video resolution dict and fps dict
             video_res = {}
+            video_fps = {}
             for vn, res in zip(all_video_names, all_original_res):
                 video_res[vn] = res
+                if vn not in video_fps:
+                    vpath = os.path.join(DATA_DIR, 'videos', vn)
+                    if os.path.exists(vpath):
+                        cap = cv2.VideoCapture(vpath)
+                        video_fps[vn] = float(cap.get(cv2.CAP_PROP_FPS)) or 15.0
+                        cap.release()
+                    else:
+                        video_fps[vn] = 15.0
+            self._cached_video_fps = video_fps
 
             gt_dances = deduplicate_gt_dances(test_df)
 
@@ -1160,6 +1173,7 @@ class EvaluationEngine:
                 crop_origins,
                 all_video_names,
                 all_original_res,
+                video_fps=video_fps,
                 spatial_threshold=config['post_process']['spatial_threshold'],
                 temporal_threshold=config['post_process']['temporal_threshold'],
                 confidence_threshold=config['post_process']['confidence_threshold'],
@@ -1421,8 +1435,9 @@ class EvaluationEngine:
             )
             predicted_runs = cross_window_cluster_predictions(
                 test_preds, crop_origins, all_video_names, original_res,
+                video_fps=self._cached_video_fps,
                 spatial_threshold=pp.get('spatial_threshold', 30.0),
-                temporal_threshold=pp.get('temporal_threshold', 10),
+                temporal_threshold=pp.get('temporal_threshold', 8),
                 confidence_threshold=pp.get('confidence_threshold', 0.5),
                 min_samples=pp.get('min_samples', 1),
                 mode=pp.get('mode', 'mean'),
