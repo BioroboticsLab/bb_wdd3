@@ -1080,7 +1080,9 @@ async function doRecluster() {
           const banner = document.createElement('div');
           banner.id = 'stale-banner';
           banner.style.cssText = 'background:#78350f;color:#fbbf24;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:8px;';
-          banner.innerHTML = '⚠️ <b>Stale cache</b> — these results are from a previous checkpoint. Click <b>Run Evaluation</b> to re-evaluate with the current model.';
+          const cacheEp = status.cache_epoch || '?';
+          const curEp = status.checkpoint?.epoch || '?';
+          banner.innerHTML = `⚠️ <b>Stale cache</b> — showing results from epoch ${cacheEp}, but the current model is epoch ${curEp}. Click <b>Run Evaluation</b> to re-evaluate.`;
           resultsContainer.insertBefore(banner, resultsContainer.firstChild);
         }
       }

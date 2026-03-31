@@ -1110,6 +1110,7 @@ class EvaluationEngine:
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
                 waggle_run_ids=waggle_run_ids,
+                video_names=all_video_names,
             )
 
             post_test_metrics = get_eval_metrics(
@@ -1119,6 +1120,7 @@ class EvaluationEngine:
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
                 waggle_run_ids=waggle_run_ids,
+                video_names=all_video_names,
             )
 
             # ── 6. Per-video breakdown ──
@@ -1135,6 +1137,7 @@ class EvaluationEngine:
                 v_post = [post_test_preds[i] for i in indices]
                 v_gts = [test_gts[i] for i in indices]
                 v_run_ids = [waggle_run_ids[i] for i in indices]
+                v_vnames = [all_video_names[i] for i in indices]
 
                 v_metrics = get_eval_metrics(
                     v_preds, v_gts,
@@ -1143,6 +1146,7 @@ class EvaluationEngine:
                     angular_thresholds=config['eval']['angular_thresholds'],
                     match_pairs=config['eval']['match_pairs'],
                     waggle_run_ids=v_run_ids,
+                    video_names=v_vnames,
                 )
                 v_post_metrics = get_eval_metrics(
                     v_post, v_gts,
@@ -1151,6 +1155,7 @@ class EvaluationEngine:
                     angular_thresholds=config['eval']['angular_thresholds'],
                     match_pairs=config['eval']['match_pairs'],
                     waggle_run_ids=v_run_ids,
+                    video_names=v_vnames,
                 )
 
                 per_video[vname] = {
@@ -1288,6 +1293,7 @@ class EvaluationEngine:
             angular_thresholds=config['eval']['angular_thresholds'],
             match_pairs=config['eval']['match_pairs'],
             waggle_run_ids=run_ids,
+            video_names=all_video_names,
         )
 
         post_test_metrics = get_eval_metrics(
@@ -1297,6 +1303,7 @@ class EvaluationEngine:
             angular_thresholds=config['eval']['angular_thresholds'],
             match_pairs=config['eval']['match_pairs'],
             waggle_run_ids=run_ids,
+            video_names=all_video_names,
         )
 
         # Per-video breakdown
@@ -1311,6 +1318,7 @@ class EvaluationEngine:
             v_post = [post_test_preds[i] for i in indices]
             v_gts = [test_gts[i] for i in indices]
             v_run_ids = [run_ids[i] for i in indices] if run_ids else None
+            v_vnames = [all_video_names[i] for i in indices]
             v_metrics = get_eval_metrics(
                 v_preds, v_gts,
                 pos_thresholds=config['eval']['pos_thresholds'],
@@ -1318,6 +1326,7 @@ class EvaluationEngine:
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
                 waggle_run_ids=v_run_ids,
+                video_names=v_vnames,
             )
             v_post_metrics = get_eval_metrics(
                 v_post, v_gts,
@@ -1326,6 +1335,7 @@ class EvaluationEngine:
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
                 waggle_run_ids=v_run_ids,
+                video_names=v_vnames,
             )
             per_video[vname] = {
                 'pre': _eval_metrics_to_native(v_metrics),
@@ -1713,11 +1723,13 @@ def api_eval_status():
     progress['has_results'] = evaluation_engine.get_results() is not None
     progress['has_cached_preds'] = evaluation_engine.has_cached_preds()
 
-    # Flag if cache is from a different checkpoint
-    if (prediction_engine.is_loaded
-            and evaluation_engine._results_ckpt
-            and evaluation_engine._results_ckpt != prediction_engine.checkpoint_path):
+    # Flag if cache is from a different model (compare epoch since best.pth gets overwritten)
+    cached_results = evaluation_engine.get_results()
+    if (prediction_engine.is_loaded and cached_results
+            and cached_results.get('checkpoint', {}).get('epoch')
+               != prediction_engine.checkpoint_meta.get('epoch')):
         progress['cache_stale'] = True
+        progress['cache_epoch'] = cached_results.get('checkpoint', {}).get('epoch', '?')
 
     progress['model_loaded'] = prediction_engine.is_loaded
     if prediction_engine.is_loaded:

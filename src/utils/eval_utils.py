@@ -590,6 +590,7 @@ def get_eval_metrics(
     angular_thresholds=None,
     match_pairs='greedy',
     waggle_run_ids=None,
+    video_names=None,
 ):
     """
     Run complete evaluation with hierarchical metrics structure.
@@ -702,21 +703,23 @@ def get_eval_metrics(
     mid_idx = len(matched_pairs_per_combo) // 2
     mid_pairs = matched_pairs_per_combo[mid_idx] if matched_pairs_per_combo else []
 
-    if waggle_run_ids is not None:
+    if waggle_run_ids is not None and video_names is not None:
         # Find which window indices had a matched GT
         matched_window_idxs = set()
         for gt, pred in mid_pairs:
             if 'window_idx' in gt:
                 matched_window_idxs.add(gt['window_idx'])
 
-        # Map matched windows to unique waggle_run_ids
+        # Map matched windows to unique (video_name, waggle_run_id) pairs
+        # waggle_run_id is per-video (1, 2, 3...), NOT globally unique
         all_dance_ids = set()
         detected_dance_ids = set()
         for window_idx, run_id in enumerate(waggle_run_ids):
             if run_id is not None and not (isinstance(run_id, float) and np.isnan(run_id)):
-                all_dance_ids.add(run_id)
+                dance_key = (video_names[window_idx], int(run_id))
+                all_dance_ids.add(dance_key)
                 if window_idx in matched_window_idxs:
-                    detected_dance_ids.add(run_id)
+                    detected_dance_ids.add(dance_key)
 
         n_unique_dances = len(all_dance_ids)
         n_detected = len(detected_dance_ids)
