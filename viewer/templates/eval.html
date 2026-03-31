@@ -712,31 +712,34 @@ function buildMetricTables(data) {
   // Detection Coverage
   function coverageBlock(label, cov, counts) {
     if (!cov) return `<div style="color:var(--text-muted)">No coverage data</div>`;
-    const tp = cov.true_positives;
-    const fp = cov.false_positives;
-    const fn = cov.false_negatives;
+    const detected = cov.detected_dances;
+    const missed = cov.missed_dances;
+    const totalGT = cov.unique_gt_dances;
+    const totalPreds = cov.total_predictions;
     const recPct = (cov.gt_recall * 100).toFixed(1);
     const precPct = (cov.pred_precision * 100).toFixed(1);
+    const levelLabel = cov.level === 'waggle_run' ? 'Waggle Runs' : 'Windows';
     return `
       <div style="flex:1;min-width:280px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;">
-        <h4 style="margin:0 0 12px;color:var(--text-primary);font-size:14px;">${label}</h4>
+        <h4 style="margin:0 0 4px;color:var(--text-primary);font-size:14px;">${label}</h4>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;">${levelLabel}</div>
         <div style="display:flex;gap:16px;margin-bottom:12px;">
           <div style="text-align:center;flex:1;">
-            <div style="font-size:28px;font-weight:700;color:#4ade80;">${tp}</div>
-            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Matched (TP)</div>
+            <div style="font-size:28px;font-weight:700;color:#4ade80;">${detected}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Detected</div>
           </div>
           <div style="text-align:center;flex:1;">
-            <div style="font-size:28px;font-weight:700;color:#f87171;">${fp}</div>
-            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">False Pos</div>
+            <div style="font-size:28px;font-weight:700;color:#fbbf24;">${missed}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Missed</div>
           </div>
           <div style="text-align:center;flex:1;">
-            <div style="font-size:28px;font-weight:700;color:#fbbf24;">${fn}</div>
-            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Missed (FN)</div>
+            <div style="font-size:28px;font-weight:700;color:#60a5fa;">${totalPreds}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Predictions</div>
           </div>
         </div>
         <div style="margin-bottom:8px;">
           <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
-            <span>GT Recall</span><span style="color:#4ade80;font-weight:600;">${recPct}%</span>
+            <span>Dance Recall (${detected}/${totalGT})</span><span style="color:#4ade80;font-weight:600;">${recPct}%</span>
           </div>
           <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden;">
             <div style="width:${recPct}%;height:100%;background:#4ade80;border-radius:4px;"></div>
@@ -744,7 +747,7 @@ function buildMetricTables(data) {
         </div>
         <div>
           <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
-            <span>Pred Precision</span><span style="color:#60a5fa;font-weight:600;">${precPct}%</span>
+            <span>Pred Precision (${detected}/${totalPreds})</span><span style="color:#60a5fa;font-weight:600;">${precPct}%</span>
           </div>
           <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden;">
             <div style="width:${precPct}%;height:100%;background:#60a5fa;border-radius:4px;"></div>
@@ -959,6 +962,11 @@ async function pollStatus() {
       const res = await fetch('/api/eval/results');
       const data = await res.json();
       if (!data.error) showResults(data);
+    } else if (status.has_cached_preds && !status.has_results && !status.running && !currentResults) {
+      // Cached predictions exist but no results yet — auto-trigger recluster
+      console.log('Auto-triggering recluster from cached predictions…');
+      statusHint.textContent = 'Computing metrics from cached predictions…';
+      await doRecluster();
     }
 
     if (status.stage === 'done' || status.stage === 'error' || status.stage === 'idle') {
@@ -1066,7 +1074,37 @@ async function doRecluster() {
     } else if (status.has_results) {
       const res = await fetch('/api/eval/results');
       const data = await res.json();
-      if (!data.error) showResults(data);
+      if (!data.error) {
+        showResults(data);
+        if (status.cache_stale) {
+          const banner = document.createElement('div');
+          banner.id = 'stale-banner';
+          banner.style.cssText = 'background:#78350f;color:#fbbf24;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:8px;';
+          banner.innerHTML = '⚠️ <b>Stale cache</b> — these results are from a previous checkpoint. Click <b>Run Evaluation</b> to re-evaluate with the current model.';
+          resultsContainer.insertBefore(banner, resultsContainer.firstChild);
+        }
+      }
+    } else if (status.has_cached_preds) {
+      // Cached predictions available but no results — auto-compute metrics
+      statusHint.textContent = 'Computing metrics from cached predictions…';
+      try {
+        const resp = await fetch('/api/eval/recluster', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy: 'cluster_consolidate' }),
+        });
+        const data = await resp.json();
+        if (!data.error) {
+          showResults(data);
+          statusHint.textContent = 'Metrics computed from cached predictions.';
+        } else {
+          statusHint.textContent = 'Error computing metrics: ' + data.error;
+          statusHint.style.color = 'var(--red)';
+        }
+      } catch (e) {
+        statusHint.textContent = 'Error: ' + e.message;
+        statusHint.style.color = 'var(--red)';
+      }
     }
   } catch (e) {
     statusHint.textContent = 'Cannot connect to viewer server.';

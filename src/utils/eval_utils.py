@@ -204,7 +204,8 @@ def yolo_to_img_space_gt(
                             "direction": [float(dir_x), float(dir_y)],
                             "grid_cell": [i, j, k],
                             "temporal_offsets": [start_frame, end_frame],
-                            "is_ground_truth": True  # Optional: mark as GT for debug
+                            "is_ground_truth": True,
+                            "window_idx": b,
                         })
         
         all_detections.append(sample_detections)
@@ -587,7 +588,8 @@ def get_eval_metrics(
     pos_thresholds=None,
     iou_threshold_range=None,
     angular_thresholds=None,
-    match_pairs='greedy'
+    match_pairs='greedy',
+    waggle_run_ids=None,
 ):
     """
     Run complete evaluation with hierarchical metrics structure.
@@ -603,15 +605,19 @@ def get_eval_metrics(
                             Default: (0.25, 0.75)
         angular_thresholds: List of angular thresholds or single value.
                            Default: [10, 15, 20]
+        waggle_run_ids: Optional list parallel to gts, where waggle_run_ids[i]
+                       is the waggle_run_id for window i (from annotations).
+                       Used to compute dance-level (not window-level) coverage.
     
     Returns:
         Hierarchical dictionary with metrics containing:
         - comprehensive: Detection metrics across all thresholds
         - spatial: Position-based metrics (kept for backwards compat / diagnostics)
         - temporal: Temporal IoU metrics averaged across all threshold combos
-        - directional: Angular direction metrics averaged across all threshold combos
-        - counts: Prediction and ground truth counts
-        - config: Configuration used for evaluation
+        - directional: Angular accuracy metrics averaged across all threshold combos
+        - detection_coverage: TP/FP/FN at waggle-run level (if waggle_run_ids provided)
+        - counts: Total predictions and ground truths (window-level)
+        - config: Thresholds used for evaluation
     """
     if pos_thresholds is None:
         pos_thresholds = [5, 10, 15, 20, 25, 30]
@@ -691,21 +697,55 @@ def get_eval_metrics(
         'duration_accuracy': np.mean(temp_dur_accs) if temp_dur_accs else 0.0,
     }
 
-    # Detection coverage: simple TP/FP/FN at the median threshold combo
-    # Answers: "how many GTs are matched?" and "how many predictions are correct?"
-    total_preds = sum(len(b) for b in preds)
-    total_gts = sum(len(b) for b in gts)
+    # Detection coverage at waggle-run level (if waggle_run_ids provided)
+    # Answers: "how many physical dances are detected?" and "how many predictions are correct?"
     mid_idx = len(matched_pairs_per_combo) // 2
     mid_pairs = matched_pairs_per_combo[mid_idx] if matched_pairs_per_combo else []
-    tp = len(mid_pairs)
-    coverage = {
-        'true_positives': tp,
-        'false_positives': total_preds - tp,
-        'false_negatives': total_gts - tp,
-        'gt_recall': tp / total_gts if total_gts > 0 else 0.0,
-        'pred_precision': tp / total_preds if total_preds > 0 else 0.0,
-        'threshold_combo_index': mid_idx,
-    }
+
+    if waggle_run_ids is not None:
+        # Find which window indices had a matched GT
+        matched_window_idxs = set()
+        for gt, pred in mid_pairs:
+            if 'window_idx' in gt:
+                matched_window_idxs.add(gt['window_idx'])
+
+        # Map matched windows to unique waggle_run_ids
+        all_dance_ids = set()
+        detected_dance_ids = set()
+        for window_idx, run_id in enumerate(waggle_run_ids):
+            if run_id is not None and not (isinstance(run_id, float) and np.isnan(run_id)):
+                all_dance_ids.add(run_id)
+                if window_idx in matched_window_idxs:
+                    detected_dance_ids.add(run_id)
+
+        n_unique_dances = len(all_dance_ids)
+        n_detected = len(detected_dance_ids)
+        n_missed = n_unique_dances - n_detected
+        total_preds_clustered = sum(len(b) for b in preds)
+
+        coverage = {
+            'level': 'waggle_run',
+            'unique_gt_dances': n_unique_dances,
+            'detected_dances': n_detected,
+            'missed_dances': n_missed,
+            'total_predictions': total_preds_clustered,
+            'gt_recall': n_detected / n_unique_dances if n_unique_dances > 0 else 0.0,
+            'pred_precision': n_detected / total_preds_clustered if total_preds_clustered > 0 else 0.0,
+        }
+    else:
+        # Fallback: window-level coverage
+        total_preds = sum(len(b) for b in preds)
+        total_gts = sum(len(b) for b in gts)
+        tp = len(mid_pairs)
+        coverage = {
+            'level': 'window',
+            'unique_gt_dances': total_gts,
+            'detected_dances': tp,
+            'missed_dances': total_gts - tp,
+            'total_predictions': total_preds,
+            'gt_recall': tp / total_gts if total_gts > 0 else 0.0,
+            'pred_precision': tp / total_preds if total_preds > 0 else 0.0,
+        }
 
     metrics = {
         'comprehensive': comprehensive_metrics,

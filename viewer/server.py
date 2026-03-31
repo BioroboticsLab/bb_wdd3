@@ -827,6 +827,7 @@ class EvaluationEngine:
         self._cached_gts = None       # decoded per-window ground truths
         self._cached_video_names = None  # video name per window
         self._cached_config = None    # eval config used
+        self._cached_run_ids = None   # waggle_run_id per window (from annotations)
         self._load_disk_cache()
 
     def _load_disk_cache(self):
@@ -841,6 +842,7 @@ class EvaluationEngine:
                 self._cached_video_names = cache['video_names']
                 self._cached_config = cache['config']
                 self._results_ckpt = cache.get('ckpt_path')
+                self._cached_run_ids = cache.get('run_ids')
                 self._results = cache.get('results')
                 if self._results:
                     self._progress = {'stage': 'done', 'batch_current': 0,
@@ -859,6 +861,7 @@ class EvaluationEngine:
             'video_names': self._cached_video_names,
             'config': self._cached_config,
             'ckpt_path': ckpt_path,
+            'run_ids': self._cached_run_ids,
             'results': self._results,
         }
         with open(self.CACHE_PATH, 'wb') as f:
@@ -1070,11 +1073,15 @@ class EvaluationEngine:
                 max_dets=config['eval']['max_dets'],
             )
 
+            # Extract waggle_run_ids from annotations (parallel to windows)
+            waggle_run_ids = test_df['waggle_run_id'].values.tolist()
+
             # Cache decoded predictions for fast re-clustering
             self._cached_preds = test_preds
             self._cached_gts = test_gts
             self._cached_video_names = all_video_names
             self._cached_config = config
+            self._cached_run_ids = waggle_run_ids
             print(f"  Eval: cached {len(test_preds)} decoded windows for re-clustering", flush=True)
             self._save_disk_cache(ckpt_path=pred_engine.checkpoint_path)
 
@@ -1102,6 +1109,7 @@ class EvaluationEngine:
                 iou_threshold_range=config['eval']['iou_thresholds'],
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
+                waggle_run_ids=waggle_run_ids,
             )
 
             post_test_metrics = get_eval_metrics(
@@ -1110,6 +1118,7 @@ class EvaluationEngine:
                 iou_threshold_range=config['eval']['iou_thresholds'],
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
+                waggle_run_ids=waggle_run_ids,
             )
 
             # ── 6. Per-video breakdown ──
@@ -1125,6 +1134,7 @@ class EvaluationEngine:
                 v_preds = [test_preds[i] for i in indices]
                 v_post = [post_test_preds[i] for i in indices]
                 v_gts = [test_gts[i] for i in indices]
+                v_run_ids = [waggle_run_ids[i] for i in indices]
 
                 v_metrics = get_eval_metrics(
                     v_preds, v_gts,
@@ -1132,6 +1142,7 @@ class EvaluationEngine:
                     iou_threshold_range=config['eval']['iou_thresholds'],
                     angular_thresholds=config['eval']['angular_thresholds'],
                     match_pairs=config['eval']['match_pairs'],
+                    waggle_run_ids=v_run_ids,
                 )
                 v_post_metrics = get_eval_metrics(
                     v_post, v_gts,
@@ -1139,6 +1150,7 @@ class EvaluationEngine:
                     iou_threshold_range=config['eval']['iou_thresholds'],
                     angular_thresholds=config['eval']['angular_thresholds'],
                     match_pairs=config['eval']['match_pairs'],
+                    waggle_run_ids=v_run_ids,
                 )
 
                 per_video[vname] = {
@@ -1268,12 +1280,14 @@ class EvaluationEngine:
         )
 
         # Re-compute metrics
+        run_ids = self._cached_run_ids
         test_metrics = get_eval_metrics(
             test_preds, test_gts,
             pos_thresholds=config['eval']['pos_thresholds'],
             iou_threshold_range=config['eval']['iou_thresholds'],
             angular_thresholds=config['eval']['angular_thresholds'],
             match_pairs=config['eval']['match_pairs'],
+            waggle_run_ids=run_ids,
         )
 
         post_test_metrics = get_eval_metrics(
@@ -1282,6 +1296,7 @@ class EvaluationEngine:
             iou_threshold_range=config['eval']['iou_thresholds'],
             angular_thresholds=config['eval']['angular_thresholds'],
             match_pairs=config['eval']['match_pairs'],
+            waggle_run_ids=run_ids,
         )
 
         # Per-video breakdown
@@ -1295,12 +1310,14 @@ class EvaluationEngine:
             v_preds = [test_preds[i] for i in indices]
             v_post = [post_test_preds[i] for i in indices]
             v_gts = [test_gts[i] for i in indices]
+            v_run_ids = [run_ids[i] for i in indices] if run_ids else None
             v_metrics = get_eval_metrics(
                 v_preds, v_gts,
                 pos_thresholds=config['eval']['pos_thresholds'],
                 iou_threshold_range=config['eval']['iou_thresholds'],
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
+                waggle_run_ids=v_run_ids,
             )
             v_post_metrics = get_eval_metrics(
                 v_post, v_gts,
@@ -1308,6 +1325,7 @@ class EvaluationEngine:
                 iou_threshold_range=config['eval']['iou_thresholds'],
                 angular_thresholds=config['eval']['angular_thresholds'],
                 match_pairs=config['eval']['match_pairs'],
+                waggle_run_ids=v_run_ids,
             )
             per_video[vname] = {
                 'pre': _eval_metrics_to_native(v_metrics),
@@ -1694,6 +1712,13 @@ def api_eval_status():
     progress['running'] = evaluation_engine.is_running
     progress['has_results'] = evaluation_engine.get_results() is not None
     progress['has_cached_preds'] = evaluation_engine.has_cached_preds()
+
+    # Flag if cache is from a different checkpoint
+    if (prediction_engine.is_loaded
+            and evaluation_engine._results_ckpt
+            and evaluation_engine._results_ckpt != prediction_engine.checkpoint_path):
+        progress['cache_stale'] = True
+
     progress['model_loaded'] = prediction_engine.is_loaded
     if prediction_engine.is_loaded:
         progress['checkpoint'] = prediction_engine.checkpoint_meta
