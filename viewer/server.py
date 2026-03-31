@@ -894,9 +894,10 @@ class EvaluationEngine:
         if self._running:
             return False  # already running
 
-        # Check if results are cached for this checkpoint
-        ckpt_path = prediction_engine.checkpoint_path
-        if self._results and self._results_ckpt == ckpt_path:
+        # Check if results are cached for this checkpoint (compare epoch, not path)
+        cached_epoch = (self._results or {}).get('checkpoint', {}).get('epoch')
+        model_epoch = prediction_engine.checkpoint_meta.get('epoch')
+        if self._results and cached_epoch == model_epoch:
             return True  # results already available
 
         self._running = True
