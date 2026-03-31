@@ -828,6 +828,8 @@ class EvaluationEngine:
         self._cached_video_names = None  # video name per window
         self._cached_config = None    # eval config used
         self._cached_run_ids = None   # waggle_run_id per window (from annotations)
+        self._cached_crop_origins = None  # (x_min, y_min) per window for frame-space transform
+        self._cached_original_res = None  # (H, W) per window
         self._load_disk_cache()
 
     def _load_disk_cache(self):
@@ -843,6 +845,8 @@ class EvaluationEngine:
                 self._cached_config = cache['config']
                 self._results_ckpt = cache.get('ckpt_path')
                 self._cached_run_ids = cache.get('run_ids')
+                self._cached_crop_origins = cache.get('crop_origins')
+                self._cached_original_res = cache.get('original_res')
                 self._results = cache.get('results')
                 if self._results:
                     self._progress = {'stage': 'done', 'batch_current': 0,
@@ -862,6 +866,8 @@ class EvaluationEngine:
             'config': self._cached_config,
             'ckpt_path': ckpt_path,
             'run_ids': self._cached_run_ids,
+            'crop_origins': self._cached_crop_origins,
+            'original_res': self._cached_original_res,
             'results': self._results,
         }
         with open(self.CACHE_PATH, 'wb') as f:
@@ -1099,9 +1105,9 @@ class EvaluationEngine:
                 outlier_method='isolation_forest',
             )
 
-            # ── 5. Compute metrics ──
+            # ── 5. Compute window-level metrics (for internal model diagnostics) ──
             self._progress['stage'] = 'metrics'
-            self._progress['message'] = 'Computing STD-mAP metrics…'
+            self._progress['message'] = 'Computing window-level metrics…'
 
             test_metrics = get_eval_metrics(
                 test_preds, test_gts,
@@ -1123,7 +1129,58 @@ class EvaluationEngine:
                 video_names=all_video_names,
             )
 
-            # ── 6. Per-video breakdown ──
+            # ── 6. Dance-level metrics (cross-window dedup) ──
+            self._progress['message'] = 'Computing dance-level metrics…'
+
+            from src.utils.dance_eval import (
+                compute_crop_origins,
+                deduplicate_gt_dances,
+                cross_window_cluster_predictions,
+                compute_dance_level_metrics,
+            )
+
+            crop_origins = compute_crop_origins(
+                test_df,
+                crop_w=config['data']['width'],
+                crop_h=config['data']['height'],
+                all_original_res=all_original_res,
+            )
+            self._cached_crop_origins = crop_origins
+            self._cached_original_res = all_original_res
+
+            # Build per-video resolution dict
+            video_res = {}
+            for vn, res in zip(all_video_names, all_original_res):
+                video_res[vn] = res
+
+            gt_dances = deduplicate_gt_dances(test_df)
+
+            predicted_runs = cross_window_cluster_predictions(
+                test_preds,
+                crop_origins,
+                all_video_names,
+                all_original_res,
+                spatial_threshold=config['post_process']['spatial_threshold'],
+                temporal_threshold=config['post_process']['temporal_threshold'],
+                confidence_threshold=config['post_process']['confidence_threshold'],
+                min_samples=1,
+                mode=config['post_process'].get('mode', 'mean'),
+            )
+
+            dance_metrics = compute_dance_level_metrics(
+                predicted_runs,
+                gt_dances,
+                video_res,
+            )
+
+            n_pred_runs = sum(len(v) for v in predicted_runs.values())
+            n_gt_dances = sum(len(v) for v in gt_dances.values())
+            print(f"  Dance-level: {n_pred_runs} predicted runs vs {n_gt_dances} GT dances", flush=True)
+            print(f"  Dance mAP: {dance_metrics['comprehensive']['map']:.3f}, "
+                  f"Recall: {dance_metrics['coverage']['recall']:.3f}, "
+                  f"Precision: {dance_metrics['coverage']['precision']:.3f}", flush=True)
+
+            # ── 7. Per-video breakdown (window-level) ──
             self._progress['message'] = 'Computing per-video breakdown…'
             per_video = {}
             unique_videos = sorted(set(all_video_names))
@@ -1172,6 +1229,7 @@ class EvaluationEngine:
             results = {
                 'pre': _eval_metrics_to_native(test_metrics),
                 'post': _eval_metrics_to_native(post_test_metrics),
+                'dance': _eval_metrics_to_native(dance_metrics),
                 'per_video': per_video,
                 'checkpoint': pred_engine.checkpoint_meta,
                 'config': {
@@ -1345,12 +1403,48 @@ class EvaluationEngine:
 
         elapsed = _time.time() - t0
         print_evaluation_results(test_metrics, post_test_metrics)
+
+        # Recompute dance-level metrics with new clustering params
+        from src.utils.dance_eval import (
+            deduplicate_gt_dances,
+            cross_window_cluster_predictions,
+            compute_dance_level_metrics,
+        )
+        crop_origins = self._cached_crop_origins
+        original_res = self._cached_original_res
+        if crop_origins and original_res:
+            video_res = {}
+            for vn, res in zip(all_video_names, original_res):
+                video_res[vn] = res
+            gt_dances = deduplicate_gt_dances(
+                annotations_df[~annotations_df['video_name'].isin(train_videos)].reset_index(drop=True)
+            )
+            predicted_runs = cross_window_cluster_predictions(
+                test_preds, crop_origins, all_video_names, original_res,
+                spatial_threshold=pp.get('spatial_threshold', 30.0),
+                temporal_threshold=pp.get('temporal_threshold', 10),
+                confidence_threshold=pp.get('confidence_threshold', 0.5),
+                min_samples=pp.get('min_samples', 1),
+                mode=pp.get('mode', 'mean'),
+            )
+            dance_metrics = compute_dance_level_metrics(predicted_runs, gt_dances, video_res)
+            n_pred_runs = sum(len(v) for v in predicted_runs.values())
+            n_gt_dances = sum(len(v) for v in gt_dances.values())
+            print(f"  Dance-level: {n_pred_runs} predicted runs vs {n_gt_dances} GT dances", flush=True)
+            print(f"  Dance mAP: {dance_metrics['comprehensive']['map']:.3f}, "
+                  f"Recall: {dance_metrics['coverage']['recall']:.3f}, "
+                  f"Precision: {dance_metrics['coverage']['precision']:.3f}", flush=True)
+        else:
+            dance_metrics = None
+            print("  ⚠️ No crop origins cached — skipping dance-level metrics", flush=True)
+
         print(f"  ✅ Re-clustered in {elapsed:.1f}s with params: {pp}", flush=True)
 
         # Build results dict
         results = {
             'pre': _eval_metrics_to_native(test_metrics),
             'post': _eval_metrics_to_native(post_test_metrics),
+            'dance': _eval_metrics_to_native(dance_metrics) if dance_metrics else None,
             'per_video': per_video,
             'checkpoint': self._results.get('checkpoint') if self._results else {},
             'config': {
