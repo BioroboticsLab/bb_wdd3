@@ -423,59 +423,23 @@ header h1 span { font-size: 20px; margin-right: 4px; }
       </div>
     </div>
 
-    <!-- Spatio-Temporal-Directional Detection -->
-    <div class="section" id="section-std">
-      <div class="section-header" onclick="toggleSection('std')">
-        <span class="section-icon">🎯</span>
-        <h3>Spatio-Temporal-Directional Detection</h3>
+    <!-- Dance-Level Results (primary) -->
+    <div class="section" id="section-dance">
+      <div class="section-header" onclick="toggleSection('dance')">
+        <span class="section-icon">🐝</span>
+        <h3>Dance-Level Results</h3>
         <span class="toggle">▼</span>
       </div>
-      <div class="section-body" id="body-std">
-        <table class="metrics-table" id="table-std"></table>
+      <div class="section-body" id="body-dance">
+        <div id="dance-content" style="padding:18px;"></div>
       </div>
     </div>
 
-    <!-- Spatial Detection -->
-    <div class="section" id="section-spatial">
-      <div class="section-header" onclick="toggleSection('spatial')">
-        <span class="section-icon">📍</span>
-        <h3>Spatial Detection</h3>
-        <span class="toggle">▼</span>
-      </div>
-      <div class="section-body" id="body-spatial">
-        <table class="metrics-table" id="table-spatial"></table>
-      </div>
-    </div>
-
-    <!-- Temporal Detection -->
-    <div class="section" id="section-temporal">
-      <div class="section-header" onclick="toggleSection('temporal')">
-        <span class="section-icon">⏱</span>
-        <h3>Temporal Detection</h3>
-        <span class="toggle">▼</span>
-      </div>
-      <div class="section-body" id="body-temporal">
-        <table class="metrics-table" id="table-temporal"></table>
-      </div>
-    </div>
-
-    <!-- Directional Detection -->
-    <div class="section" id="section-directional">
-      <div class="section-header" onclick="toggleSection('directional')">
-        <span class="section-icon">🧭</span>
-        <h3>Directional Detection</h3>
-        <span class="toggle">▼</span>
-      </div>
-      <div class="section-body" id="body-directional">
-        <table class="metrics-table" id="table-directional"></table>
-      </div>
-    </div>
-
-    <!-- Detection Coverage -->
+    <!-- Dance Coverage Visualization -->
     <div class="section" id="section-coverage">
       <div class="section-header" onclick="toggleSection('coverage')">
         <span class="section-icon">🎯</span>
-        <h3>Detection Coverage</h3>
+        <h3>Dance Detection Coverage</h3>
         <span class="toggle">▼</span>
       </div>
       <div class="section-body" id="body-coverage">
@@ -492,6 +456,29 @@ header h1 span { font-size: 20px; margin-right: 4px; }
       </div>
       <div class="section-body" id="body-per-video">
         <table class="video-table" id="table-per-video"></table>
+      </div>
+    </div>
+
+    <!-- Window-Level Diagnostics (collapsed by default) -->
+    <div class="section" id="section-window-diag">
+      <div class="section-header collapsed" onclick="toggleSection('window-diag')">
+        <span class="section-icon">🔬</span>
+        <h3>Window-Level Model Diagnostics</h3>
+        <span class="toggle" style="transform:rotate(-90deg)">▼</span>
+      </div>
+      <div class="section-body collapsed" id="body-window-diag" style="padding:0;">
+        <!-- STD -->
+        <div style="padding:6px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Spatio-Temporal-Directional</div>
+        <table class="metrics-table" id="table-std"></table>
+        <!-- Spatial -->
+        <div style="padding:14px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Spatial</div>
+        <table class="metrics-table" id="table-spatial"></table>
+        <!-- Temporal -->
+        <div style="padding:14px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Temporal</div>
+        <table class="metrics-table" id="table-temporal"></table>
+        <!-- Directional -->
+        <div style="padding:14px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Directional</div>
+        <table class="metrics-table" id="table-directional"></table>
       </div>
     </div>
 
@@ -625,35 +612,51 @@ function tableHeader() {
 
 // ─── Build KPI cards ────────────────────────────────────────────────────────
 function buildKPIs(data) {
-  const pre = data.pre;
+  const dance = data.dance;
   const post = data.post;
 
-  const cards = [
-    { label: 'STD-mAP', value: fmt(post.comprehensive.map), accent: 'green',
-      sub: `Pre: ${fmt(pre.comprehensive.map)}`,
-      tip: 'Primary composite metric measuring joint detection quality across spatial position, temporal alignment, and waggle direction.' },
-    { label: 'Mean F1', value: fmt(post.comprehensive.mean_f1), accent: 'blue',
-      sub: `Pre: ${fmt(pre.comprehensive.mean_f1)}`,
-      tip: 'Harmonic mean of precision and recall at the F1-optimal confidence threshold.' },
-    { label: 'Precision', value: fmt(post.comprehensive.mean_precision), accent: 'purple',
-      sub: `Recall: ${fmt(post.comprehensive.mean_recall)}`,
-      tip: 'Fraction of model predictions that correctly match a ground-truth event (at F1-optimal threshold).' },
-    { label: 'Position Error', value: fmt(post.spatial.mean_error, 1) + ' px', accent: 'amber',
-      sub: `Pre: ${fmt(pre.spatial.mean_error, 1)} px`,
-      tip: 'Average distance in crop-space pixels between predicted and true waggle dance centers. Lower is better.' },
-    { label: 'Temporal IoU', value: fmt(post.temporal.mean_iou), accent: 'blue',
-      sub: `Pre: ${fmt(pre.temporal.mean_iou)}`,
-      tip: 'Intersection over Union of predicted vs. ground-truth time windows. 1.0 = perfect temporal overlap.' },
-    { label: 'Angular Error', value: fmt(post.directional.mean_error, 1) + '°', accent: 'amber',
-      sub: `Pre: ${fmt(pre.directional.mean_error, 1)}°`,
-      tip: 'Average angular error between predicted and true waggle direction in degrees. Lower is better.' },
-    { label: 'Predictions', value: fmtInt(post.counts.predictions), accent: 'purple',
-      sub: `GTs: ${fmtInt(post.counts.ground_truths)}`,
-      tip: 'Total number of model predictions vs. ground-truth annotations in the validation set.' },
-    { label: 'Val Windows', value: fmtInt(data.n_val_windows), accent: 'blue',
-      sub: `${fmtInt(data.n_val_videos)} videos`,
-      tip: 'Number of temporal windows (sliding crops) evaluated, and how many unique videos they span.' },
-  ];
+  let cards;
+  if (dance && dance.level === 'waggle_run') {
+    const cov = dance.coverage;
+    cards = [
+      { label: 'Dance Recall', value: fmtPct(cov.recall), accent: 'green',
+        sub: `${cov.detected_dances} / ${cov.total_gt_dances} dances detected`,
+        tip: 'Fraction of physical waggle dances that the model successfully detected (at least one matched prediction per dance).' },
+      { label: 'Dance Precision', value: fmtPct(cov.precision), accent: 'blue',
+        sub: `${cov.detected_dances} / ${cov.total_predicted_runs} predictions correct`,
+        tip: 'Fraction of predicted waggle runs that match a real dance. Higher = fewer false positives.' },
+      { label: 'Dance mAP', value: fmt(dance.comprehensive.map), accent: 'purple',
+        sub: `F1: ${fmt(dance.comprehensive.mean_f1)}`,
+        tip: 'Mean Average Precision computed at the dance level — joint spatial, temporal, and directional quality after cross-window deduplication.' },
+      { label: 'GT Dances', value: fmtInt(cov.total_gt_dances), accent: 'amber',
+        sub: `${fmtInt(cov.missed_dances)} missed`,
+        tip: 'Total unique physical waggle dances in the validation set (deduplicated by video + waggle_run_id).' },
+      { label: 'Predicted Runs', value: fmtInt(cov.total_predicted_runs), accent: 'blue',
+        sub: `from ${fmtInt(data.n_val_windows)} windows`,
+        tip: 'Number of predicted waggle runs after cross-window DBSCAN clustering consolidates overlapping detections.' },
+      { label: 'Temporal IoU', value: fmt(dance.temporal.mean_iou), accent: 'green',
+        sub: `median: ${fmt(dance.temporal.median_iou)}`,
+        tip: 'Intersection over Union of predicted vs. ground-truth temporal boundaries at the dance level.' },
+      { label: 'Angular Error', value: fmt(dance.directional.mean_error, 1) + '°', accent: 'amber',
+        sub: `median: ${fmt(dance.directional.median_error, 1)}°`,
+        tip: 'Mean angular error between predicted and true waggle direction at the dance level.' },
+      { label: 'Val Videos', value: fmtInt(data.n_val_videos), accent: 'purple',
+        sub: `${fmtInt(data.n_val_windows)} windows`,
+        tip: 'Number of unique videos evaluated.' },
+    ];
+  } else {
+    // Fallback: window-level KPIs (if no dance metrics available)
+    cards = [
+      { label: 'STD-mAP', value: fmt(post.comprehensive.map), accent: 'green',
+        sub: `Window-level`, tip: 'Window-level mAP (no dance-level data available).' },
+      { label: 'Mean F1', value: fmt(post.comprehensive.mean_f1), accent: 'blue',
+        sub: `Window-level`, tip: 'Window-level F1.' },
+      { label: 'Predictions', value: fmtInt(post.counts.predictions), accent: 'purple',
+        sub: `GTs: ${fmtInt(post.counts.ground_truths)}`, tip: 'Window-level counts.' },
+      { label: 'Val Windows', value: fmtInt(data.n_val_windows), accent: 'amber',
+        sub: `${fmtInt(data.n_val_videos)} videos`, tip: 'Window count.' },
+    ];
+  }
 
   document.getElementById('kpi-grid').innerHTML = cards.map(c => `
     <div class="kpi-card accent-${c.accent}">
@@ -712,13 +715,13 @@ function buildMetricTables(data) {
   // Detection Coverage
   function coverageBlock(label, cov, counts) {
     if (!cov) return `<div style="color:var(--text-muted)">No coverage data</div>`;
-    const detected = cov.detected_dances;
-    const missed = cov.missed_dances;
-    const totalGT = cov.unique_gt_dances;
-    const totalPreds = cov.total_predictions;
-    const recPct = (cov.gt_recall * 100).toFixed(1);
-    const precPct = (cov.pred_precision * 100).toFixed(1);
-    const levelLabel = cov.level === 'waggle_run' ? 'Waggle Runs' : 'Windows';
+    const detected = cov.detected_dances || 0;
+    const missed = cov.missed_dances || 0;
+    const totalGT = cov.total_gt_dances || cov.unique_gt_dances || 0;
+    const totalPreds = cov.total_predicted_runs || cov.total_predictions || 0;
+    const recPct = ((cov.recall || cov.gt_recall || 0) * 100).toFixed(1);
+    const precPct = ((cov.precision || cov.pred_precision || 0) * 100).toFixed(1);
+    const levelLabel = (cov.level || data.dance?.level) === 'waggle_run' ? 'Waggle Runs' : 'Windows';
     return `
       <div style="flex:1;min-width:280px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;">
         <h4 style="margin:0 0 4px;color:var(--text-primary);font-size:14px;">${label}</h4>
@@ -755,9 +758,103 @@ function buildMetricTables(data) {
         </div>
       </div>`;
   }
+
   const cc = document.getElementById('coverage-content');
-  cc.innerHTML = coverageBlock('Pre Post-Processing', pre.detection_coverage, pre.counts) +
-                 coverageBlock('Post Post-Processing', post.detection_coverage, post.counts);
+  const dance = data.dance;
+
+  if (dance && dance.coverage) {
+    // Dance-level coverage (primary)
+    cc.innerHTML = coverageBlock('Dance-Level Detection', dance.coverage, dance.counts);
+  } else {
+    // Fallback to window-level
+    cc.innerHTML = coverageBlock('Pre Post-Processing', pre.detection_coverage, pre.counts) +
+                   coverageBlock('Post Post-Processing', post.detection_coverage, post.counts);
+  }
+}
+
+// ─── Build dance-level results section ──────────────────────────────────────
+function buildDanceSection(data) {
+  const el = document.getElementById('dance-content');
+  const dance = data.dance;
+
+  if (!dance || dance.level !== 'waggle_run') {
+    el.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:24px;">
+      No dance-level data — run evaluation to compute cross-window metrics.
+    </div>`;
+    return;
+  }
+
+  const c = dance.comprehensive;
+  const s = dance.spatial;
+  const t = dance.temporal;
+  const d = dance.directional;
+  const cov = dance.coverage;
+
+  el.innerHTML = `
+    <div style="margin-bottom:16px;font-size:12px;color:var(--text-muted);">
+      Predictions are mapped from crop-space to frame-space, pooled across overlapping temporal windows,
+      and clustered per-video using DBSCAN. GT dances are deduplicated by (video, waggle_run_id).
+      All position comparisons use normalized [0,1] coordinates for resolution-invariance.
+    </div>
+
+    <table class="metrics-table">
+      <thead><tr>
+        <th>Metric</th><th>Value</th><th>Details</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td class="metric-name">Dance mAP</td>
+          <td class="metric-value" style="color:var(--green);font-weight:700;">${fmt(c.map)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Swept over position, temporal IoU, and angular thresholds</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Precision (F1-opt)</td>
+          <td class="metric-value">${fmt(c.mean_precision)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">At optimal confidence threshold</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Recall (F1-opt)</td>
+          <td class="metric-value">${fmt(c.mean_recall)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">At optimal confidence threshold</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean F1 (F1-opt)</td>
+          <td class="metric-value">${fmt(c.mean_f1)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Harmonic mean of precision and recall</td>
+        </tr>
+        <tr style="border-top:1px solid var(--border);">
+          <td class="metric-name">Mean Position Error (norm)</td>
+          <td class="metric-value">${fmt(s.mean_error, 4)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(s.median_error, 4)} · in [0,1] normalized coords</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Temporal IoU</td>
+          <td class="metric-value">${fmt(t.mean_iou)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(t.median_iou)}</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Angular Error</td>
+          <td class="metric-value">${fmt(d.mean_error, 1)}°</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(d.median_error, 1)}°</td>
+        </tr>
+        <tr style="border-top:1px solid var(--border);">
+          <td class="metric-name">GT Dances</td>
+          <td class="metric-value">${fmtInt(cov.total_gt_dances)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Unique (video, waggle_run_id) pairs</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Predicted Runs</td>
+          <td class="metric-value">${fmtInt(cov.total_predicted_runs)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">After cross-window DBSCAN clustering</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Matched</td>
+          <td class="metric-value" style="color:var(--green);">${fmtInt(cov.detected_dances)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Missed: ${fmtInt(cov.missed_dances)}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
 }
 
 // ─── Build per-video table ──────────────────────────────────────────────────
@@ -858,6 +955,7 @@ function showResults(data) {
   resultsContainer.style.display = 'block';
 
   buildKPIs(data);
+  buildDanceSection(data);
   buildMetricTables(data);
   buildPerVideoTable(data);
   buildConfigPanel(data);
