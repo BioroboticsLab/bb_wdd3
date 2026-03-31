@@ -307,7 +307,7 @@ class PredictionEngine:
         import torchvision.transforms as T
         from torchvision.transforms import ToTensor
         from src.data.video_loader import load_video_frames
-        from src.utils.eval_utils import yolo_to_img_space
+        from src.utils.eval_utils_fast import yolo_to_img_space_vectorized
 
         config = self.config
         video_rows = annotations_df[annotations_df['video_name'] == video_name]
@@ -406,7 +406,7 @@ class PredictionEngine:
 
         # Convert to crop-space coordinates, then offset to full video space
         crop_size = (config['data']['width'], config['data']['height'])
-        raw_preds = yolo_to_img_space(
+        raw_preds = yolo_to_img_space_vectorized(
             all_outputs, all_starts_arr, all_ends_arr,
             window_size=window_size,
             confidence_threshold=config['eval']['confidence_threshold'],
@@ -922,8 +922,11 @@ class EvaluationEngine:
         import torchvision.transforms as T
         from src.data.dataset import VideoYoloDataset
         from src.utils.eval_utils import (
-            get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt,
-            get_eval_metrics, print_evaluation_results,
+            get_preds_gt, print_evaluation_results,
+        )
+        from src.utils.eval_utils_fast import (
+            yolo_to_img_space_vectorized, yolo_to_img_space_gt_vectorized,
+            get_eval_metrics_fast,
         )
         from src.utils.postprocess import batch_postprocess_predictions
 
@@ -1062,7 +1065,7 @@ class EvaluationEngine:
             self._progress['stage'] = 'postprocess'
             self._progress['message'] = 'Decoding predictions to image space…'
 
-            test_gts = yolo_to_img_space_gt(
+            test_gts = yolo_to_img_space_gt_vectorized(
                 all_targets,
                 all_starts=all_starts,
                 all_ends=all_ends,
@@ -1071,7 +1074,7 @@ class EvaluationEngine:
                                config['data']['height']),
             )
 
-            test_preds = yolo_to_img_space(
+            test_preds = yolo_to_img_space_vectorized(
                 all_outputs,
                 all_starts=all_starts,
                 all_ends=all_ends,
@@ -1112,7 +1115,7 @@ class EvaluationEngine:
             self._progress['stage'] = 'metrics'
             self._progress['message'] = 'Computing window-level metrics…'
 
-            test_metrics = get_eval_metrics(
+            test_metrics = get_eval_metrics_fast(
                 test_preds, test_gts,
                 pos_thresholds=config['eval']['pos_thresholds'],
                 iou_threshold_range=config['eval']['iou_thresholds'],
@@ -1122,7 +1125,7 @@ class EvaluationEngine:
                 video_names=all_video_names,
             )
 
-            post_test_metrics = get_eval_metrics(
+            post_test_metrics = get_eval_metrics_fast(
                 post_test_preds, test_gts,
                 pos_thresholds=config['eval']['pos_thresholds'],
                 iou_threshold_range=config['eval']['iou_thresholds'],
@@ -1219,7 +1222,7 @@ class EvaluationEngine:
                 v_run_ids = [waggle_run_ids[i] for i in indices]
                 v_vnames = [all_video_names[i] for i in indices]
 
-                v_metrics = get_eval_metrics(
+                v_metrics = get_eval_metrics_fast(
                     v_preds, v_gts,
                     pos_thresholds=config['eval']['pos_thresholds'],
                     iou_threshold_range=config['eval']['iou_thresholds'],
@@ -1228,7 +1231,7 @@ class EvaluationEngine:
                     waggle_run_ids=v_run_ids,
                     video_names=v_vnames,
                 )
-                v_post_metrics = get_eval_metrics(
+                v_post_metrics = get_eval_metrics_fast(
                     v_post, v_gts,
                     pos_thresholds=config['eval']['pos_thresholds'],
                     iou_threshold_range=config['eval']['iou_thresholds'],
@@ -1324,7 +1327,8 @@ class EvaluationEngine:
             Updated results dict (same shape as full eval results).
         """
         from src.utils.postprocess import batch_postprocess_predictions
-        from src.utils.eval_utils import get_eval_metrics, print_evaluation_results
+        from src.utils.eval_utils_fast import get_eval_metrics_fast
+        from src.utils.eval_utils import print_evaluation_results
         import time as _time
 
         if self._cached_preds is None:
@@ -1367,7 +1371,7 @@ class EvaluationEngine:
 
         # Re-compute metrics
         run_ids = self._cached_run_ids
-        test_metrics = get_eval_metrics(
+        test_metrics = get_eval_metrics_fast(
             test_preds, test_gts,
             pos_thresholds=config['eval']['pos_thresholds'],
             iou_threshold_range=config['eval']['iou_thresholds'],
@@ -1377,7 +1381,7 @@ class EvaluationEngine:
             video_names=all_video_names,
         )
 
-        post_test_metrics = get_eval_metrics(
+        post_test_metrics = get_eval_metrics_fast(
             post_test_preds, test_gts,
             pos_thresholds=config['eval']['pos_thresholds'],
             iou_threshold_range=config['eval']['iou_thresholds'],
@@ -1400,7 +1404,7 @@ class EvaluationEngine:
             v_gts = [test_gts[i] for i in indices]
             v_run_ids = [run_ids[i] for i in indices] if run_ids else None
             v_vnames = [all_video_names[i] for i in indices]
-            v_metrics = get_eval_metrics(
+            v_metrics = get_eval_metrics_fast(
                 v_preds, v_gts,
                 pos_thresholds=config['eval']['pos_thresholds'],
                 iou_threshold_range=config['eval']['iou_thresholds'],
@@ -1409,7 +1413,7 @@ class EvaluationEngine:
                 waggle_run_ids=v_run_ids,
                 video_names=v_vnames,
             )
-            v_post_metrics = get_eval_metrics(
+            v_post_metrics = get_eval_metrics_fast(
                 v_post, v_gts,
                 pos_thresholds=config['eval']['pos_thresholds'],
                 iou_threshold_range=config['eval']['iou_thresholds'],
@@ -2393,11 +2397,11 @@ def api_pipeline(video_name):
             with torch.amp.autocast(device_type=dev_type, dtype=amp_dtype):
                 output = prediction_engine.model(batch)
 
-        from src.utils.eval_utils import yolo_to_img_space
+        from src.utils.eval_utils_fast import yolo_to_img_space_vectorized
         start_frame = meta['start_frame']
         end_frame = meta['end_frame']
         crop_size = (config['data']['width'], config['data']['height'])
-        decoded = yolo_to_img_space(
+        decoded = yolo_to_img_space_vectorized(
             output, np.array([start_frame]), np.array([end_frame]),
             window_size=config['data']['window_size'],
             confidence_threshold=0.001,
