@@ -1391,42 +1391,9 @@ class EvaluationEngine:
             video_names=all_video_names,
         )
 
-        # Per-video breakdown
-        per_video = {}
-        unique_videos = sorted(set(all_video_names))
-        for vname in unique_videos:
-            mask = all_video_names == vname
-            indices = np.where(mask)[0]
-            if len(indices) == 0:
-                continue
-            v_preds = [test_preds[i] for i in indices]
-            v_post = [post_test_preds[i] for i in indices]
-            v_gts = [test_gts[i] for i in indices]
-            v_run_ids = [run_ids[i] for i in indices] if run_ids else None
-            v_vnames = [all_video_names[i] for i in indices]
-            v_metrics = get_eval_metrics_fast(
-                v_preds, v_gts,
-                pos_thresholds=config['eval']['pos_thresholds'],
-                iou_threshold_range=config['eval']['iou_thresholds'],
-                angular_thresholds=config['eval']['angular_thresholds'],
-                match_pairs=config['eval']['match_pairs'],
-                waggle_run_ids=v_run_ids,
-                video_names=v_vnames,
-            )
-            v_post_metrics = get_eval_metrics_fast(
-                v_post, v_gts,
-                pos_thresholds=config['eval']['pos_thresholds'],
-                iou_threshold_range=config['eval']['iou_thresholds'],
-                angular_thresholds=config['eval']['angular_thresholds'],
-                match_pairs=config['eval']['match_pairs'],
-                waggle_run_ids=v_run_ids,
-                video_names=v_vnames,
-            )
-            per_video[vname] = {
-                'pre': _eval_metrics_to_native(v_metrics),
-                'post': _eval_metrics_to_native(v_post_metrics),
-                'n_windows': int(len(indices)),
-            }
+        # Reuse cached per-video breakdown (skip recomputing — expensive)
+        # Only the aggregate pre/post/dance metrics are recomputed with new params.
+        per_video = self._results.get('per_video', {}) if self._results else {}
 
         elapsed = _time.time() - t0
         print_evaluation_results(test_metrics, post_test_metrics)
