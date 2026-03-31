@@ -1741,10 +1741,14 @@ def api_eval_run():
     if evaluation_engine.is_running:
         return jsonify({"status": "already_running", **evaluation_engine.get_progress()})
 
-    # Check if results already cached for this checkpoint
+    # Check if results already cached for this checkpoint (compare epoch, not path,
+    # since best.pth gets overwritten during training)
     cached = evaluation_engine.get_results()
-    if cached and evaluation_engine._results_ckpt == prediction_engine.checkpoint_path:
-        return jsonify({"status": "cached", "message": "Results already available."})
+    if cached:
+        cached_epoch = cached.get('checkpoint', {}).get('epoch')
+        model_epoch = prediction_engine.checkpoint_meta.get('epoch')
+        if cached_epoch == model_epoch:
+            return jsonify({"status": "cached", "message": "Results already available."})
 
     # Load config
     with open(CONFIG_PATH) as f:
