@@ -1138,6 +1138,7 @@ class EvaluationEngine:
             from src.utils.dance_eval import (
                 compute_crop_origins,
                 deduplicate_gt_dances,
+                average_overlapping_predictions,
                 cross_window_cluster_predictions,
                 compute_dance_level_metrics,
             )
@@ -1168,8 +1169,16 @@ class EvaluationEngine:
 
             gt_dances = deduplicate_gt_dances(test_df)
 
+            # Average overlapping windows BEFORE clustering
+            averaged_preds = average_overlapping_predictions(
+                test_preds, crop_origins, all_video_names
+            )
+            n_before = sum(len(w) for w in test_preds)
+            n_after = sum(len(w) for w in averaged_preds)
+            print(f"  Overlap averaging: {n_before} detections → {n_after} averaged", flush=True)
+
             predicted_runs = cross_window_cluster_predictions(
-                test_preds,
+                averaged_preds,
                 crop_origins,
                 all_video_names,
                 all_original_res,
@@ -1421,6 +1430,7 @@ class EvaluationEngine:
         # Recompute dance-level metrics with new clustering params
         from src.utils.dance_eval import (
             deduplicate_gt_dances,
+            average_overlapping_predictions,
             cross_window_cluster_predictions,
             compute_dance_level_metrics,
         )
@@ -1433,8 +1443,12 @@ class EvaluationEngine:
             gt_dances = deduplicate_gt_dances(
                 annotations_df[~annotations_df['video_name'].isin(train_videos)].reset_index(drop=True)
             )
+            # Average overlapping windows before clustering
+            averaged_preds = average_overlapping_predictions(
+                test_preds, crop_origins, all_video_names
+            )
             predicted_runs = cross_window_cluster_predictions(
-                test_preds, crop_origins, all_video_names, original_res,
+                averaged_preds, crop_origins, all_video_names, original_res,
                 video_fps=self._cached_video_fps,
                 spatial_threshold=pp.get('spatial_threshold', 30.0),
                 temporal_threshold_sec=pp.get('temporal_threshold_ms', 300) / 1000.0,

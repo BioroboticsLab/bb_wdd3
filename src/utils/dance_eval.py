@@ -97,6 +97,100 @@ def deduplicate_gt_dances(test_df):
     
     return dict(gt_dances)
 
+# ─── Cross-window overlap averaging ──────────────────────────────────────────
+
+def average_overlapping_predictions(per_window_preds, crop_origins, video_names):
+    """
+    Average predictions across overlapping temporal windows that share the
+    same spatial crop.
+    
+    Windows are grouped by (video_name, crop_origin). Within each group,
+    predictions are matched by grid_cell index. For each cell, confidence
+    is averaged across ALL windows in the group (windows with no detection
+    at that cell contribute 0 to the average). This naturally suppresses
+    sporadic false positives while preserving consistent detections.
+    
+    Args:
+        per_window_preds: list of lists of prediction dicts, one list per window.
+            Each prediction dict has keys: confidence, position, direction,
+            temporal_offsets, grid_cell (list [i,j,k]).
+        crop_origins: list of (x_min, y_min) per window
+        video_names: list of video name strings per window
+    
+    Returns:
+        list of lists of averaged prediction dicts (same outer length as input,
+        but predictions are reassigned to the first window of each group;
+        other windows in the group get empty lists).
+    """
+    if not per_window_preds:
+        return []
+    
+    # ── 1. Group windows by (video_name, crop_origin) ──
+    groups = defaultdict(list)  # key → list of (window_index, preds)
+    for w_idx, (preds, origin, vname) in enumerate(
+        zip(per_window_preds, crop_origins, video_names)
+    ):
+        key = (vname, tuple(origin))
+        groups[key].append((w_idx, preds))
+    
+    # ── 2. Average within each group ──
+    result = [[] for _ in range(len(per_window_preds))]
+    
+    for key, window_list in groups.items():
+        n_windows = len(window_list)
+        
+        # Collect all detections by grid cell
+        # cell_key → list of prediction dicts (one per window that detected it)
+        cell_preds = defaultdict(list)
+        for w_idx, preds in window_list:
+            for pred in preds:
+                gc = pred.get('grid_cell', [0, 0, 0])
+                cell_key = tuple(gc)
+                cell_preds[cell_key].append(pred)
+        
+        # Average each cell
+        averaged = []
+        for cell_key, preds_for_cell in cell_preds.items():
+            n_detections = len(preds_for_cell)
+            
+            # Confidence: sum of detected confidences / total windows in group
+            avg_conf = sum(p['confidence'] for p in preds_for_cell) / n_windows
+            
+            # Position: mean of detected positions
+            avg_pos = [
+                sum(p['position'][0] for p in preds_for_cell) / n_detections,
+                sum(p['position'][1] for p in preds_for_cell) / n_detections,
+            ]
+            
+            # Direction: mean of detected directions → re-normalize to unit
+            avg_dir = [
+                sum(p['direction'][0] for p in preds_for_cell) / n_detections,
+                sum(p['direction'][1] for p in preds_for_cell) / n_detections,
+            ]
+            norm = (avg_dir[0]**2 + avg_dir[1]**2) ** 0.5
+            if norm > 1e-8:
+                avg_dir = [avg_dir[0] / norm, avg_dir[1] / norm]
+            
+            # Temporal: union (earliest start, latest end)
+            t_start = min(p['temporal_offsets'][0] for p in preds_for_cell)
+            t_end = max(p['temporal_offsets'][1] for p in preds_for_cell)
+            
+            averaged.append({
+                'confidence': avg_conf,
+                'position': avg_pos,
+                'direction': avg_dir,
+                'temporal_offsets': [t_start, t_end],
+                'grid_cell': list(cell_key),
+                'n_detections': n_detections,
+                'n_windows': n_windows,
+            })
+        
+        # Assign averaged predictions to the first window in the group
+        first_w_idx = window_list[0][0]
+        result[first_w_idx] = averaged
+    
+    return result
+
 
 # ─── Cross-window prediction clustering ──────────────────────────────────────
 
