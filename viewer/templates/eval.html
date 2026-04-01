@@ -334,11 +334,55 @@ header h1 span { font-size: 20px; margin-right: 4px; }
 }
 .recluster-actions {
   display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  flex-wrap: wrap;
 }
 .recluster-actions .btn { font-size: 11px; padding: 6px 14px; }
 .recluster-actions .rc-status {
   font-size: 11px; color: var(--text-muted);
 }
+.optim-controls {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border); margin-top: 6px;
+  width: 100%;
+}
+.optim-controls select, .optim-controls input[type=number] {
+  padding: 4px 8px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-card); color: var(--text-primary);
+  font-size: 11px; width: 80px;
+}
+.optim-controls label {
+  font-size: 10px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.btn-optimize {
+  background: var(--purple-dim) !important;
+  border-color: rgba(139, 92, 246, 0.4) !important;
+  color: #c4b5fd !important;
+}
+.btn-optimize:hover:not(:disabled) {
+  background: var(--purple) !important; color: #fff !important;
+}
+.btn-optimize.running {
+  animation: pulse 1.5s ease-in-out infinite;
+  cursor: wait;
+}
+.optim-progress {
+  width: 120px; height: 5px;
+  background: var(--bg-card); border-radius: 3px;
+  overflow: hidden;
+}
+.optim-progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #8b5cf6, #c084fc);
+  border-radius: 3px; transition: width 0.3s ease;
+}
+.optim-result {
+  font-size: 11px; color: var(--text-secondary);
+  padding: 10px 0 0; line-height: 1.8;
+}
+.optim-result .best-val { color: #a78bfa; font-weight: 700; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -387,11 +431,11 @@ header h1 span { font-size: 20px; margin-right: 4px; }
         <div class="recluster-grid">
           <div class="recluster-group">
             <label>Spatial Threshold (px) <span class="rc-val" id="rc-spatial-val">30</span></label>
-            <input type="range" id="rc-spatial" min="5" max="100" step="1" value="30">
+            <input type="range" id="rc-spatial" min="5" max="200" step="1" value="30">
           </div>
           <div class="recluster-group">
             <label>Temporal Threshold (ms) <span class="rc-val" id="rc-temporal-val">300</span></label>
-            <input type="range" id="rc-temporal" min="50" max="2000" step="50" value="300">
+            <input type="range" id="rc-temporal" min="50" max="5000" step="50" value="300">
           </div>
           <div class="recluster-group">
             <label>Confidence Threshold <span class="rc-val" id="rc-conf-val">0.00</span></label>
@@ -419,6 +463,25 @@ header h1 span { font-size: 20px; margin-right: 4px; }
         <div class="recluster-actions">
           <button class="btn btn-primary" id="btn-recluster" onclick="doRecluster()">🔄 Re-cluster & Evaluate</button>
           <span class="rc-status" id="rc-status"></span>
+          <div class="optim-controls">
+            <button class="btn btn-optimize" id="btn-optimize" onclick="doOptimize()">🔍 Auto-Optimize</button>
+            <label>Metric
+              <select id="optim-metric">
+                <option value="f1" selected>F1</option>
+                <option value="map">mAP</option>
+                <option value="recall">Recall</option>
+                <option value="precision">Precision</option>
+              </select>
+            </label>
+            <label>Trials
+              <input type="number" id="optim-trials" value="60" min="10" max="200" step="10">
+            </label>
+            <div class="optim-progress" id="optim-progress" style="display:none;">
+              <div class="optim-progress-fill" id="optim-progress-fill"></div>
+            </div>
+            <span class="rc-status" id="optim-status"></span>
+          </div>
+          <div class="optim-result" id="optim-result" style="display:none;"></div>
         </div>
       </div>
     </div>
@@ -884,7 +947,7 @@ function buildPerVideoTable(data) {
   });
 
   const cols = [
-    { key: 'name', label: 'Video', fmt: v => `<span class="video-name" title="${v}">${v}</span>` },
+    { key: 'name', label: 'Video', fmt: v => `<a href="/eval/video/${encodeURIComponent(v)}" class="video-name" title="${v}" style="color:var(--accent);text-decoration:none;">${v}</a>` },
     { key: 'n_windows', label: 'Windows', fmt: fmtInt },
     { key: 'n_preds', label: 'Raw Preds', fmt: fmtInt },
     { key: 'n_post_preds', label: 'Post Preds', fmt: fmtInt },
@@ -1152,6 +1215,115 @@ async function doRecluster() {
   } finally {
     btn.disabled = false;
   }
+}
+
+async function doOptimize() {
+  const btn = document.getElementById('btn-optimize');
+  const statusEl = document.getElementById('optim-status');
+  const progressBar = document.getElementById('optim-progress');
+  const progressFillEl = document.getElementById('optim-progress-fill');
+  const resultEl = document.getElementById('optim-result');
+  const metric = document.getElementById('optim-metric').value;
+  const nTrials = parseInt(document.getElementById('optim-trials').value) || 60;
+
+  btn.disabled = true;
+  btn.classList.add('running');
+  btn.textContent = '⏳ Optimizing…';
+  statusEl.textContent = `0 / ${nTrials}`;
+  statusEl.style.color = 'var(--accent)';
+  progressBar.style.display = 'block';
+  progressFillEl.style.width = '0%';
+  resultEl.style.display = 'none';
+
+  // Fire-and-forget POST to start optimization
+  try {
+    const resp = await fetch('/api/eval/optimize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ n_trials: nTrials, metric }),
+    });
+    const startData = await resp.json();
+    if (startData.error) {
+      statusEl.textContent = `Error: ${startData.error}`;
+      statusEl.style.color = 'var(--red)';
+      btn.disabled = false;
+      btn.classList.remove('running');
+      btn.textContent = '🔍 Auto-Optimize';
+      progressBar.style.display = 'none';
+      return;
+    }
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = 'var(--red)';
+    btn.disabled = false;
+    btn.classList.remove('running');
+    btn.textContent = '🔍 Auto-Optimize';
+    progressBar.style.display = 'none';
+    return;
+  }
+
+  // Poll status until done
+  const t0 = performance.now();
+  const pollId = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/eval/optimize/status');
+      const st = await resp.json();
+
+      const pct = st.trial_total > 0 ? ((st.trial_current / st.trial_total) * 100).toFixed(0) : 0;
+      progressFillEl.style.width = pct + '%';
+      const bestStr = st.best_value != null ? ` · best=${st.best_value.toFixed(4)}` : '';
+      statusEl.textContent = `${st.trial_current} / ${st.trial_total}${bestStr}`;
+
+      if (!st.running && (st.done || st.error)) {
+        clearInterval(pollId);
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+
+        if (st.error) {
+          statusEl.textContent = `Error: ${st.error}`;
+          statusEl.style.color = 'var(--red)';
+        } else if (st.final_results) {
+          const data = st.final_results;
+          const bp = data.best_params;
+
+          // Apply best params to sliders
+          document.getElementById('rc-spatial').value = bp.spatial_threshold;
+          document.getElementById('rc-spatial-val').textContent = Math.round(bp.spatial_threshold);
+          document.getElementById('rc-temporal').value = Math.round(bp.temporal_threshold_ms);
+          document.getElementById('rc-temporal-val').textContent = Math.round(bp.temporal_threshold_ms);
+          document.getElementById('rc-conf').value = bp.confidence_threshold;
+          document.getElementById('rc-conf-val').textContent = bp.confidence_threshold.toFixed(2);
+          document.getElementById('rc-minsamp').value = bp.min_samples;
+          document.getElementById('rc-minsamp-val').textContent = bp.min_samples;
+
+          // Update dashboard with results
+          if (data.results) {
+            currentResults = data.results;
+            showResults(data.results);
+          }
+
+          progressFillEl.style.width = '100%';
+          statusEl.textContent = `✅ Done in ${elapsed}s (${data.n_trials} trials)`;
+          statusEl.style.color = 'var(--green)';
+
+          // Show result summary
+          resultEl.style.display = 'block';
+          resultEl.innerHTML = `
+            <div>Best <b>${data.metric.toUpperCase()}</b>: <span class="best-val">${data.best_value.toFixed(4)}</span></div>
+            <div>Spatial: <b>${bp.spatial_threshold.toFixed(1)}px</b> · 
+                 Temporal: <b>${bp.temporal_threshold_ms.toFixed(0)}ms</b> · 
+                 Conf: <b>${bp.confidence_threshold.toFixed(3)}</b> · 
+                 Min samples: <b>${bp.min_samples}</b></div>
+            <div style="color:var(--text-muted)">${data.n_trials} trials in ${data.elapsed}s (Optuna TPE)</div>
+          `;
+        }
+
+        btn.disabled = false;
+        btn.classList.remove('running');
+        btn.textContent = '🔍 Auto-Optimize';
+        progressBar.style.display = 'none';
+      }
+    } catch(e) { /* network error during poll — retry */ }
+  }, 1000);
 }
 
 // ─── Init ───────────────────────────────────────────────────────────────────

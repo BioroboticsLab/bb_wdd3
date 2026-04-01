@@ -414,6 +414,18 @@ class PredictionEngine:
             max_dets=config['eval']['max_dets'],
         )
 
+        # ── Cross-window overlap averaging (BEFORE offset to frame-space) ──
+        # Windows sharing a crop origin see the same spatial region at different
+        # times.  Averaging grid-cell detections across those windows suppresses
+        # sporadic false positives while preserving consistent detections.
+        from src.utils.dance_eval import average_overlapping_predictions
+        v_names = [video_name] * len(raw_preds)
+        n_before = sum(len(w) for w in raw_preds)
+        raw_preds = average_overlapping_predictions(raw_preds, all_crop_origins, v_names)
+        n_after = sum(len(w) for w in raw_preds)
+        if n_before != n_after:
+            print(f"  Overlap averaging: {n_before} → {n_after} detections", flush=True)
+
         # Offset positions from crop-space to full video space
         for i, window_preds in enumerate(raw_preds):
             ox, oy = all_crop_origins[i]
@@ -815,6 +827,7 @@ class EvaluationEngine:
         self._results_ckpt = None     # checkpoint path of cached results
         self._lock = threading.Lock()
         self._running = False
+        self._thread = None           # reference to background thread
         self._progress = {            # progress state
             'stage': 'idle',          # idle | loading | inference | postprocess | metrics | done | error
             'batch_current': 0,
@@ -846,10 +859,67 @@ class EvaluationEngine:
                 self._cached_config = cache['config']
                 self._results_ckpt = cache.get('ckpt_path')
                 self._cached_run_ids = cache.get('run_ids')
-                self._cached_crop_origins = cache.get('crop_origins')
                 self._cached_original_res = cache.get('original_res')
                 self._cached_video_fps = cache.get('video_fps')
                 self._results = cache.get('results')
+
+                # Always recompute crop origins from source of truth
+                # (fixes stale caches that assumed centered crops)
+                if self._cached_original_res is not None:
+                    from src.utils.dance_eval import (
+                        compute_crop_origins,
+                        deduplicate_gt_dances,
+                        average_overlapping_predictions,
+                        cross_window_cluster_predictions,
+                        compute_dance_level_metrics,
+                    )
+                    test_df = annotations_df[
+                        ~annotations_df['video_name'].isin(train_videos)
+                    ].reset_index(drop=True)
+                    config = self._cached_config or {}
+                    crop_w = config.get('data', {}).get('width', 224)
+                    crop_h = config.get('data', {}).get('height', 224)
+                    self._cached_crop_origins = compute_crop_origins(
+                        test_df, crop_w=crop_w, crop_h=crop_h,
+                        all_original_res=self._cached_original_res,
+                    )
+                    print(f"  🔧 Recomputed crop origins ({len(self._cached_crop_origins)} windows)", flush=True)
+
+                    # Recompute dance-level metrics with corrected origins
+                    if self._results and self._cached_preds:
+                        video_names = self._cached_video_names
+                        video_fps = self._cached_video_fps or {}
+                        video_res = {}
+                        for vn, res in zip(video_names, self._cached_original_res):
+                            video_res[vn] = res
+
+                        gt_dances = deduplicate_gt_dances(test_df)
+                        averaged = average_overlapping_predictions(
+                            self._cached_preds, self._cached_crop_origins, video_names,
+                        )
+                        pp = config.get('post_process', {})
+                        predicted_runs = cross_window_cluster_predictions(
+                            averaged, self._cached_crop_origins, video_names,
+                            self._cached_original_res,
+                            video_fps=video_fps,
+                            spatial_threshold=pp.get('spatial_threshold', 30),
+                            temporal_threshold_sec=pp.get('temporal_threshold', 8) / 30.0,
+                            confidence_threshold=pp.get('confidence_threshold', 0.0),
+                            min_samples=1,
+                            mode=pp.get('mode', 'mean'),
+                        )
+                        dance_metrics = compute_dance_level_metrics(
+                            predicted_runs, gt_dances, video_res,
+                        )
+                        self._results['dance'] = _eval_metrics_to_native(dance_metrics)
+                        print(f"  🔧 Recomputed dance metrics: "
+                              f"mAP={dance_metrics['comprehensive']['map']:.3f}, "
+                              f"Recall={dance_metrics['coverage']['recall']:.3f}, "
+                              f"SpatErr={dance_metrics['spatial']['mean_error']:.4f}",
+                              flush=True)
+                else:
+                    self._cached_crop_origins = cache.get('crop_origins')
+
                 if self._results:
                     self._progress = {'stage': 'done', 'batch_current': 0,
                                       'batch_total': 0, 'message': 'Loaded from cache.'}
@@ -880,10 +950,40 @@ class EvaluationEngine:
 
     @property
     def is_running(self):
+        # Also check if the thread is actually alive — handles cases where
+        # the thread was killed externally (OOM, segfault) without the
+        # finally block executing properly.
+        if self._running and self._thread is not None and not self._thread.is_alive():
+            print("  ⚠️ Eval thread died unexpectedly — resetting state", flush=True)
+            self._running = False
+            self._progress = {
+                'stage': 'error',
+                'batch_current': self._progress.get('batch_current', 0),
+                'batch_total': self._progress.get('batch_total', 0),
+                'message': f'Evaluation thread crashed at batch {self._progress.get("batch_current", "?")}'
+                           f'/{self._progress.get("batch_total", "?")}. '
+                           f'Likely out of memory — try restarting the server.',
+            }
         return self._running
 
     def get_progress(self):
-        return dict(self._progress)
+        progress = dict(self._progress)
+        # Detect inconsistent state: thread is not running but stage suggests
+        # it should be (the thread crashed without updating stage to error/done)
+        active_stages = {'loading', 'inference', 'postprocess', 'metrics'}
+        if not self._running and progress.get('stage') in active_stages:
+            # Check if the thread object is dead
+            if self._thread is None or not self._thread.is_alive():
+                progress['stage'] = 'error'
+                progress['message'] = (
+                    f'Evaluation thread crashed at batch '
+                    f'{progress.get("batch_current", "?")}/'
+                    f'{progress.get("batch_total", "?")}. '
+                    f'Likely out of memory — click Run Evaluation to retry.'
+                )
+                # Also fix the internal state so subsequent calls are consistent
+                self._progress = progress
+        return progress
 
     def get_results(self):
         with self._lock:
@@ -909,12 +1009,12 @@ class EvaluationEngine:
             'message': 'Building validation DataLoader…',
         }
 
-        thread = threading.Thread(
+        self._thread = threading.Thread(
             target=self._run_evaluation,
             args=(prediction_engine, config),
             daemon=True,
         )
-        thread.start()
+        self._thread.start()
         return True
 
     def _run_evaluation(self, pred_engine, config):
@@ -1296,7 +1396,7 @@ class EvaluationEngine:
         """Check if decoded predictions are cached for re-clustering."""
         return self._cached_preds is not None
 
-    def recluster(self, post_params):
+    def recluster(self, post_params, verbose=True):
         """Re-run dance-level clustering with new params.
 
         Single-step pipeline: overlap averaging → DBSCAN → dance metrics.
@@ -1305,6 +1405,7 @@ class EvaluationEngine:
         Args:
             post_params: dict with keys like spatial_threshold, temporal_threshold_ms,
                         confidence_threshold, min_samples, mode.
+            verbose: if False, suppress print output (used during optimization).
         Returns:
             Updated results dict.
         """
@@ -1342,17 +1443,26 @@ class EvaluationEngine:
         if not crop_origins or not original_res:
             raise RuntimeError("No crop origins cached. Run full evaluation first.")
 
-        video_res = {}
-        for vn, res in zip(all_video_names, original_res):
-            video_res[vn] = res
-        gt_dances = deduplicate_gt_dances(
-            annotations_df[~annotations_df['video_name'].isin(train_videos)].reset_index(drop=True)
-        )
+        # Cache invariants (don't re-derive every call)
+        if not hasattr(self, '_rc_cache') or self._rc_cache is None:
+            video_res = {}
+            for vn, res in zip(all_video_names, original_res):
+                video_res[vn] = res
+            gt_dances = deduplicate_gt_dances(
+                annotations_df[~annotations_df['video_name'].isin(train_videos)].reset_index(drop=True)
+            )
+            averaged_preds = average_overlapping_predictions(
+                test_preds, crop_origins, all_video_names
+            )
+            self._rc_cache = {
+                'video_res': video_res,
+                'gt_dances': gt_dances,
+                'averaged_preds': averaged_preds,
+            }
 
-        # 1. Average overlapping windows
-        averaged_preds = average_overlapping_predictions(
-            test_preds, crop_origins, all_video_names
-        )
+        video_res = self._rc_cache['video_res']
+        gt_dances = self._rc_cache['gt_dances']
+        averaged_preds = self._rc_cache['averaged_preds']
 
         # 2. Cross-window DBSCAN clustering → dance-level runs
         predicted_runs = cross_window_cluster_predictions(
@@ -1370,13 +1480,14 @@ class EvaluationEngine:
 
         elapsed = _time.time() - t0
 
-        n_pred_runs = sum(len(v) for v in predicted_runs.values())
-        n_gt_dances = sum(len(v) for v in gt_dances.values())
-        print(f"  Dance-level: {n_pred_runs} predicted runs vs {n_gt_dances} GT dances", flush=True)
-        print(f"  Dance mAP: {dance_metrics['comprehensive']['map']:.3f}, "
-              f"Recall: {dance_metrics['coverage']['recall']:.3f}, "
-              f"Precision: {dance_metrics['coverage']['precision']:.3f}", flush=True)
-        print(f"  ✅ Re-clustered in {elapsed:.1f}s with params: {pp}", flush=True)
+        if verbose:
+            n_pred_runs = sum(len(v) for v in predicted_runs.values())
+            n_gt_dances = sum(len(v) for v in gt_dances.values())
+            print(f"  Dance-level: {n_pred_runs} predicted runs vs {n_gt_dances} GT dances", flush=True)
+            print(f"  Dance mAP: {dance_metrics['comprehensive']['map']:.3f}, "
+                  f"Recall: {dance_metrics['coverage']['recall']:.3f}, "
+                  f"Precision: {dance_metrics['coverage']['precision']:.3f}", flush=True)
+            print(f"  ✅ Re-clustered in {elapsed:.1f}s with params: {pp}", flush=True)
 
         # Build results — reuse cached window-level and per-video metrics
         prev = self._results or {}
@@ -1822,6 +1933,455 @@ def api_eval_recluster():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+# Optimization state (simple module-level for single-user server)
+_optim_state = {
+    'running': False,
+    'trial_current': 0,
+    'trial_total': 0,
+    'best_value': None,
+    'best_params': None,
+    'history': [],
+    'done': False,
+    'error': None,
+    'elapsed': None,
+    'metric': None,
+    'final_results': None,
+}
+_optim_thread = None
+
+
+@app.route("/api/eval/optimize", methods=["POST"])
+def api_eval_optimize():
+    """Start Bayesian hyperparameter optimization in background thread.
+
+    Uses Optuna TPE to maximize the chosen metric (default: dance F1).
+    Returns 202 immediately. Poll /api/eval/optimize/status for progress.
+    """
+    global _optim_thread
+
+    if not evaluation_engine.has_cached_preds():
+        return jsonify({"error": "No cached predictions. Run full evaluation first."}), 400
+    if evaluation_engine.is_running:
+        return jsonify({"error": "Evaluation is currently running."}), 409
+    if _optim_state['running']:
+        return jsonify({"error": "Optimization already running."}), 409
+
+    params = request.get_json(force=True, silent=True) or {}
+    n_trials = int(params.get('n_trials', 60))
+    metric = params.get('metric', 'f1')  # f1, map, recall, precision
+    ranges = params.get('ranges', {})
+
+    # Search ranges (defaults match slider ranges)
+    sp_lo = float(ranges.get('spatial_min', 5))
+    sp_hi = float(ranges.get('spatial_max', 200))
+    tp_lo = float(ranges.get('temporal_ms_min', 50))
+    tp_hi = float(ranges.get('temporal_ms_max', 5000))
+    cf_lo = float(ranges.get('conf_min', 0.0))
+    cf_hi = float(ranges.get('conf_max', 0.5))
+    ms_lo = int(ranges.get('min_samples_min', 1))
+    ms_hi = int(ranges.get('min_samples_max', 5))
+
+    _optim_state.update(
+        running=True, trial_current=0, trial_total=n_trials,
+        best_value=None, best_params=None, history=[],
+        done=False, error=None, elapsed=None, metric=metric,
+        final_results=None,
+    )
+
+    def _run_optimization():
+        import optuna, time as _time
+
+        def objective(trial):
+            spatial = trial.suggest_float('spatial_threshold', sp_lo, sp_hi)
+            temporal_ms = trial.suggest_float('temporal_threshold_ms', tp_lo, tp_hi, log=True)
+            conf = trial.suggest_float('confidence_threshold', cf_lo, cf_hi)
+            min_samp = trial.suggest_int('min_samples', ms_lo, ms_hi)
+
+            pp = {
+                'spatial_threshold': spatial,
+                'temporal_threshold_ms': temporal_ms,
+                'confidence_threshold': conf,
+                'min_samples': min_samp,
+                'mode': 'mean',
+            }
+            results = evaluation_engine.recluster(pp, verbose=False)
+            dance = results.get('dance', {})
+
+            # Extract the target metric
+            cov = dance.get('coverage', {})
+            comp = dance.get('comprehensive', {})
+            if metric == 'f1':
+                recall = cov.get('recall', 0)
+                precision = cov.get('precision', 0)
+                value = 2 * precision * recall / (precision + recall + 1e-9)
+            elif metric == 'map':
+                value = comp.get('map', 0)
+            elif metric == 'recall':
+                value = cov.get('recall', 0)
+            elif metric == 'precision':
+                value = cov.get('precision', 0)
+            else:
+                value = comp.get('map', 0)
+
+            _optim_state['trial_current'] = trial.number + 1
+            _optim_state['history'].append({
+                'trial': trial.number,
+                'params': pp,
+                'value': float(value),
+                'dance_metrics': {
+                    'recall': cov.get('recall'),
+                    'precision': cov.get('precision'),
+                    'map': comp.get('map'),
+                    'mean_f1': comp.get('mean_f1'),
+                },
+            })
+            if _optim_state['best_value'] is None or value > _optim_state['best_value']:
+                _optim_state['best_value'] = float(value)
+                _optim_state['best_params'] = pp
+
+            return value
+
+        try:
+            t0 = _time.time()
+            optuna.logging.set_verbosity(optuna.logging.WARNING)
+            study = optuna.create_study(direction='maximize',
+                                        sampler=optuna.samplers.TPESampler(seed=42))
+            study.optimize(objective, n_trials=n_trials)
+            elapsed = _time.time() - t0
+
+            best = study.best_params
+            best_pp = {
+                'spatial_threshold': best['spatial_threshold'],
+                'temporal_threshold_ms': best['temporal_threshold_ms'],
+                'confidence_threshold': best['confidence_threshold'],
+                'min_samples': best['min_samples'],
+                'mode': 'mean',
+            }
+            # Apply the best params as a final recluster so the dashboard updates
+            final_results = evaluation_engine.recluster(best_pp)
+
+            _optim_state['final_results'] = {
+                'best_params': best_pp,
+                'best_value': float(study.best_value),
+                'metric': metric,
+                'n_trials': n_trials,
+                'elapsed': round(elapsed, 1),
+                'history': _optim_state['history'],
+                'results': final_results,
+            }
+            _optim_state['elapsed'] = round(elapsed, 1)
+            _optim_state['done'] = True
+
+            print(f"  🔍 Optimization complete: {n_trials} trials in {elapsed:.1f}s", flush=True)
+            print(f"     Best {metric}={study.best_value:.4f}: "
+                  f"spatial={best['spatial_threshold']:.1f}, "
+                  f"temporal_ms={best['temporal_threshold_ms']:.0f}, "
+                  f"conf={best['confidence_threshold']:.3f}, "
+                  f"min_samples={best['min_samples']}", flush=True)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            _optim_state['error'] = str(e)
+            _optim_state['done'] = True
+        finally:
+            _optim_state['running'] = False
+
+    import threading
+    _optim_thread = threading.Thread(target=_run_optimization, daemon=True)
+    _optim_thread.start()
+
+    return jsonify({"status": "started", "n_trials": n_trials, "metric": metric}), 202
+
+
+@app.route("/api/eval/optimize/status")
+def api_eval_optimize_status():
+    """Poll optimization progress. Returns final results when done."""
+    return jsonify(_optim_state)
+
+
+@app.route("/api/eval/optimize/cancel", methods=["POST"])
+def api_eval_optimize_cancel():
+    """Force-reset stuck optimization state."""
+    _optim_state.update(running=False, done=False, error=None, final_results=None)
+    return jsonify({"status": "cancelled"})
+
+# ---------------------------------------------------------------------------
+# Per-Video Eval Inspector
+# ---------------------------------------------------------------------------
+
+@app.route("/eval/video/<path:video_name>")
+def eval_video_page(video_name):
+    """Serve the per-video evaluation inspector page."""
+    return render_template("eval_video.html")
+
+
+@app.route("/api/eval/video/<path:video_name>")
+def api_eval_video(video_name):
+    """Get cached eval data for a specific video.
+
+    Returns decoded predictions, GTs, dance-level match pairs, and
+    per-video metrics — all from the cached eval engine state.
+    """
+    if not evaluation_engine.has_cached_preds():
+        return jsonify({"error": "No cached predictions. Run full evaluation first."}), 400
+
+    engine = evaluation_engine
+    all_video_names = engine._cached_video_names
+    test_preds = engine._cached_preds
+    test_gts = engine._cached_gts
+    crop_origins = engine._cached_crop_origins
+    original_res = engine._cached_original_res
+    video_fps = engine._cached_video_fps or {}
+    config = engine._cached_config
+
+    # Filter windows for this video
+    mask = np.array([str(v) == video_name for v in all_video_names])
+    indices = np.where(mask)[0]
+
+    if len(indices) == 0:
+        return jsonify({"error": f"Video '{video_name}' not in eval set."}), 404
+
+    # Collect per-window predictions and GTs
+    v_preds = [test_preds[i] for i in indices]
+    v_gts = [test_gts[i] for i in indices]
+    v_origins = [crop_origins[i] for i in indices] if crop_origins else []
+    v_res = [original_res[i] for i in indices] if original_res else []
+
+    # Get original resolution for this video
+    orig_h, orig_w = v_res[0] if v_res else (224, 224)
+    fps = video_fps.get(video_name, 15.0)
+
+    # ── Dance-level data (from cached eval results) ──
+    from src.utils.dance_eval import (
+        deduplicate_gt_dances,
+        average_overlapping_predictions,
+        cross_window_cluster_predictions,
+    )
+
+    # GT dances for this video
+    test_df = annotations_df[
+        ~annotations_df['video_name'].isin(train_videos)
+    ].reset_index(drop=True)
+    gt_dances_all = deduplicate_gt_dances(test_df)
+    gt_dances_video = gt_dances_all.get(video_name, [])
+
+    # Predicted runs for this video (re-compute from cached data)
+    # Allow query-param overrides for re-clustering
+    from flask import request as _req
+    spatial_th = float(_req.args.get('spatial_threshold', config['post_process']['spatial_threshold']))
+    temporal_th_ms = float(_req.args.get('temporal_threshold_ms', config['post_process']['temporal_threshold']))
+    conf_th = float(_req.args.get('confidence_threshold', config['post_process']['confidence_threshold']))
+    min_samp = int(_req.args.get('min_samples', 1))
+
+    if v_origins and v_res:
+        v_names = [video_name] * len(indices)
+        averaged = average_overlapping_predictions(v_preds, v_origins, v_names)
+        predicted_runs_dict = cross_window_cluster_predictions(
+            averaged, v_origins, v_names, v_res,
+            video_fps={video_name: fps},
+            spatial_threshold=spatial_th,
+            temporal_threshold_sec=temporal_th_ms / 1000.0,
+            confidence_threshold=conf_th,
+            min_samples=min_samp,
+            mode=config['post_process'].get('mode', 'mean'),
+        )
+        predicted_runs = predicted_runs_dict.get(video_name, [])
+    else:
+        predicted_runs = []
+
+    # ── Compute per-video dance-level matches ──
+    # Match predicted_runs ↔ gt_dances using greedy position+IoU+angle
+    matches = _match_dances_for_video(
+        predicted_runs, gt_dances_video, orig_h, orig_w,
+    )
+
+    # Flatten per-window preds to a single list with frame-space positions
+    all_frame_preds = []
+    for w_idx, (window_preds, origin) in enumerate(zip(v_preds, v_origins)):
+        x_min, y_min = origin if origin else (0, 0)
+        for pred in window_preds:
+            crop_x, crop_y = pred['position']
+            all_frame_preds.append({
+                'confidence': float(pred['confidence']),
+                'position': [float(crop_x + x_min), float(crop_y + y_min)],
+                'direction': [float(pred['direction'][0]), float(pred['direction'][1])],
+                'temporal_offsets': [float(pred['temporal_offsets'][0]),
+                                    float(pred['temporal_offsets'][1])],
+            })
+
+    result = {
+        'video_name': video_name,
+        'n_windows': int(len(indices)),
+        'fps': fps,
+        'resolution': [int(orig_w), int(orig_h)],
+        'gt_dances': _eval_metrics_to_native(gt_dances_video),
+        'predicted_runs': _eval_metrics_to_native(predicted_runs),
+        'matches': _eval_metrics_to_native(matches),
+        'raw_preds': _eval_metrics_to_native(all_frame_preds),
+        'checkpoint': (engine._results or {}).get('checkpoint', {}),
+    }
+    return jsonify(result)
+
+
+def _match_dances_for_video(predicted_runs, gt_dances, orig_h, orig_w):
+    """Match predicted runs ↔ GT dances for a single video.
+
+    Returns list of match dicts with classification (TP/FP/FN) and
+    per-pair metrics (position error, temporal IoU, angular error).
+    """
+    if not gt_dances and not predicted_runs:
+        return {'pairs': [], 'tp': 0, 'fp': 0, 'fn': 0}
+
+    # Normalize GT positions to [0,1]
+    gt_norm = []
+    for d in gt_dances:
+        gt_norm.append({
+            **d,
+            'position_norm': [d['position'][0] / orig_w, d['position'][1] / orig_h],
+        })
+
+    matched_gt = set()
+    matched_pred = set()
+    pairs = []
+
+    # Greedy matching: sort preds by confidence, match closest GT
+    sorted_preds = sorted(enumerate(predicted_runs), key=lambda x: x[1]['confidence'], reverse=True)
+
+    for pred_idx, pred in sorted_preds:
+        best_cost = float('inf')
+        best_gt_idx = None
+
+        for gt_idx, gt in enumerate(gt_norm):
+            if gt_idx in matched_gt:
+                continue
+
+            # Position distance (normalized)
+            pos_dist = np.sqrt(
+                (pred['position'][0] - gt['position_norm'][0])**2 +
+                (pred['position'][1] - gt['position_norm'][1])**2
+            )
+
+            # Temporal IoU
+            gt_s, gt_e = gt['temporal_offsets']
+            pr_s, pr_e = pred['temporal_offsets']
+            inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
+            union = max(gt_e, pr_e) - min(gt_s, pr_s)
+            tiou = inter / union if union > 0 else 0
+
+            # Angular error
+            gt_d = np.array(gt['direction'])
+            pr_d = np.array(pred['direction'])
+            gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
+            pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
+            ang_err = float(np.degrees(np.arccos(np.clip(np.dot(gt_d, pr_d), -1.0, 1.0))))
+
+            # Accept if close enough (lenient thresholds for visualization)
+            if pos_dist <= 0.15 and tiou >= 0.05:
+                cost = pos_dist + (1 - tiou) + ang_err / 180.0
+                if cost < best_cost:
+                    best_cost = cost
+                    best_gt_idx = gt_idx
+
+        if best_gt_idx is not None:
+            gt = gt_norm[best_gt_idx]
+            gt_orig = gt_dances[best_gt_idx]
+            matched_gt.add(best_gt_idx)
+            matched_pred.add(pred_idx)
+
+            # Compute detailed metrics
+            gt_s, gt_e = gt['temporal_offsets']
+            pr_s, pr_e = pred['temporal_offsets']
+            inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
+            union = max(gt_e, pr_e) - min(gt_s, pr_s)
+            tiou = inter / union if union > 0 else 0
+
+            gt_d = np.array(gt['direction'])
+            pr_d = np.array(pred['direction'])
+            gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
+            pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
+            ang_err = float(np.degrees(np.arccos(np.clip(np.dot(gt_d, pr_d), -1, 1))))
+
+            pos_dist = np.sqrt(
+                (pred['position'][0] - gt['position_norm'][0])**2 +
+                (pred['position'][1] - gt['position_norm'][1])**2
+            )
+
+            pairs.append({
+                'type': 'TP',
+                'gt': {
+                    'waggle_run_id': gt_orig['waggle_run_id'],
+                    'position': gt_orig['position'],
+                    'direction': gt_orig['direction'],
+                    'temporal_offsets': gt_orig['temporal_offsets'],
+                },
+                'pred': {
+                    'position_norm': pred['position'],
+                    'position_px': [pred['position'][0] * orig_w,
+                                    pred['position'][1] * orig_h],
+                    'direction': pred['direction'],
+                    'temporal_offsets': pred['temporal_offsets'],
+                    'confidence': pred['confidence'],
+                    'n_detections': pred.get('n_detections', 1),
+                },
+                'metrics': {
+                    'position_error_norm': float(pos_dist),
+                    'position_error_px': float(pos_dist * max(orig_w, orig_h)),
+                    'temporal_iou': float(tiou),
+                    'angular_error': float(ang_err),
+                },
+            })
+
+    # FP: unmatched predictions
+    for pred_idx, pred in enumerate(predicted_runs):
+        if pred_idx not in matched_pred:
+            pairs.append({
+                'type': 'FP',
+                'gt': None,
+                'pred': {
+                    'position_norm': pred['position'],
+                    'position_px': [pred['position'][0] * orig_w,
+                                    pred['position'][1] * orig_h],
+                    'direction': pred['direction'],
+                    'temporal_offsets': pred['temporal_offsets'],
+                    'confidence': pred['confidence'],
+                    'n_detections': pred.get('n_detections', 1),
+                },
+                'metrics': None,
+            })
+
+    # FN: unmatched GTs
+    for gt_idx, gt in enumerate(gt_dances):
+        if gt_idx not in matched_gt:
+            pairs.append({
+                'type': 'FN',
+                'gt': {
+                    'waggle_run_id': gt['waggle_run_id'],
+                    'position': gt['position'],
+                    'direction': gt['direction'],
+                    'temporal_offsets': gt['temporal_offsets'],
+                },
+                'pred': None,
+                'metrics': None,
+            })
+
+    # Sort: TPs first (by temporal start), then FPs, then FNs
+    type_order = {'TP': 0, 'FP': 1, 'FN': 2}
+    pairs.sort(key=lambda p: (
+        type_order[p['type']],
+        p['gt']['temporal_offsets'][0] if p['gt'] else
+        p['pred']['temporal_offsets'][0] if p['pred'] else 0,
+    ))
+
+    return {
+        'pairs': pairs,
+        'tp': len(matched_gt),
+        'fp': len(predicted_runs) - len(matched_pred),
+        'fn': len(gt_dances) - len(matched_gt),
+    }
+
 
 # ---------------------------------------------------------------------------
 # External Video & Inference API

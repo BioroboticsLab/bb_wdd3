@@ -19,9 +19,18 @@ def compute_crop_origins(test_df, crop_w=224, crop_h=224, all_original_res=None)
     """
     Compute the (x_min, y_min) crop origin for each window in test_df.
     
-    During eval, crops are centered on GT (offset=0), so:
-        x_min = clamp(gt_x - crop_w/2, 0, orig_w - crop_w)
-        y_min = clamp(gt_y - crop_h/2, 0, orig_h - crop_h)
+    IMPORTANT: VideoYoloDataset.__getitem__ applies a deterministic random
+    offset (seeded by sample index) even when is_training=False. We must
+    replicate that exact offset here so that decoded crop-space positions
+    map back to the correct frame-space coordinates.
+    
+    The offset logic (dataset.py L142-154):
+        rng = RandomState(seed=idx)
+        margin = int(crop_w * 0.2)
+        max_offset = (crop_w // 2) - margin
+        offset_x = rng.randint(-max_offset, max_offset + 1)
+        offset_y = rng.randint(-max_offset, max_offset + 1)
+        x_min = clamp(gt_x - crop_w/2 + offset_x, 0, orig_w - crop_w)
     
     Args:
         test_df: DataFrame with x1, y1 columns (GT pixel positions)
@@ -32,6 +41,12 @@ def compute_crop_origins(test_df, crop_w=224, crop_h=224, all_original_res=None)
     Returns:
         list of (x_min, y_min) tuples, one per window
     """
+    # Replicate dataset's deterministic random offset
+    margin_x = int(crop_w * 0.2)
+    margin_y = int(crop_h * 0.2)
+    max_offset_x = (crop_w // 2) - margin_x
+    max_offset_y = (crop_h // 2) - margin_y
+    
     origins = []
     for i in range(len(test_df)):
         row = test_df.iloc[i]
@@ -42,8 +57,15 @@ def compute_crop_origins(test_df, crop_w=224, crop_h=224, all_original_res=None)
         else:
             orig_h, orig_w = 9999, 9999
         
-        x_min = max(0, min(int(orig_w - crop_w), int(gt_x - crop_w / 2)))
-        y_min = max(0, min(int(orig_h - crop_h), int(gt_y - crop_h / 2)))
+        # Same RNG seed as VideoYoloDataset.__getitem__ (dataset.py L143)
+        rng = np.random.RandomState(seed=i)
+        offset_x = rng.randint(-max_offset_x, max_offset_x + 1)
+        offset_y = rng.randint(-max_offset_y, max_offset_y + 1)
+        
+        x_min_ideal = int(gt_x - crop_w / 2) + offset_x
+        y_min_ideal = int(gt_y - crop_h / 2) + offset_y
+        x_min = max(0, min(int(orig_w - crop_w), x_min_ideal))
+        y_min = max(0, min(int(orig_h - crop_h), y_min_ideal))
         origins.append((x_min, y_min))
     
     return origins
