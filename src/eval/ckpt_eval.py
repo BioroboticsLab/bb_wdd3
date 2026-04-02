@@ -182,9 +182,9 @@ def main(args):
 
 
         compute_pass_rates(test_preds=test_preds, test_gts=test_gts, 
-                           pos_threshold=config['eval']['pos_thresholds'],
-                           iou_threshold=config['eval']['iou_thresholds'],
-                           angular_threshold=config['eval']['num_woangular_thresholdsrkers'])
+                           pos_threshold=config['eval']['pos_thresholds'][0],
+                           iou_threshold=config['eval']['iou_thresholds'][0],
+                           angular_threshold=config['eval']['angular_thresholds'][0])
 
        
         # Draw gt and predictions onto frames and saves as video
