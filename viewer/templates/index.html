@@ -1088,21 +1088,22 @@ kbd {
         <div class="cluster-params">
           <div class="cluster-slider-group">
             <label class="cluster-slider-label">
-              Spatial ε <span class="cluster-slider-val" id="cl-spatial-val">30</span>px
+              Spatial ε <span class="cluster-slider-val" id="cl-spatial-val">30</span> ref-px
             </label>
             <input type="range" class="cluster-slider" id="cl-spatial"
                    min="5" max="200" step="1" value="30">
+            <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">at 1000px ref width</span>
           </div>
           <div class="cluster-slider-group">
             <label class="cluster-slider-label">
-              Temporal ε <span class="cluster-slider-val" id="cl-temporal-val">8</span> frames
+              Temporal ε <span class="cluster-slider-val" id="cl-temporal-val">300</span> ms
             </label>
             <input type="range" class="cluster-slider" id="cl-temporal"
-                   min="1" max="120" step="1" value="8">
+                   min="50" max="5000" step="50" value="300">
           </div>
           <div class="cluster-slider-group">
             <label class="cluster-slider-label">
-              Min confidence <span class="cluster-slider-val" id="cl-conf-val">0.0</span>
+              Min confidence <span class="cluster-slider-val" id="cl-conf-val">0.00</span>
             </label>
             <input type="range" class="cluster-slider" id="cl-conf"
                    min="0" max="1" step="0.01" value="0">
@@ -1114,16 +1115,6 @@ kbd {
             <input type="range" class="cluster-slider" id="cl-minsamp"
                    min="1" max="10" step="1" value="1">
             <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">1 = all core · higher = noise filter</span>
-          </div>
-          <div class="cluster-toggle-row">
-            <label class="pi-toggle">
-              <input type="checkbox" id="cl-outliers">
-              <span>Remove outliers (density)</span>
-            </label>
-            <select class="cluster-method-select" id="cl-method">
-              <option value="dbscan">DBSCAN</option>
-              <option value="hdbscan">HDBSCAN</option>
-            </select>
           </div>
           <div class="cluster-action-row">
             <button class="cluster-apply-btn" id="cl-apply" title="Re-run clustering with current parameters">🔄 Apply</button>
@@ -1167,8 +1158,8 @@ const state = {
   predConfThreshold: 0.5, // confidence threshold for display
   predictions: null,      // { raw: [...], postprocessed: [...] }
   predictionsLoading: false,
-  clusterData: null,      // { raw, consolidated, labels, filtered_indices, ... }
-  clusterParams: { spatial_threshold: 30, temporal_threshold: 8, confidence_threshold: 0.0, min_samples: 1, remove_outliers: false, clustering_method: 'dbscan', mode: 'median' },
+  clusterData: null,      // { raw, consolidated, n_clusters, n_noise, params }
+  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, mode: 'median' },
   checkpointInfo: null,
   showModelView: false,
   showPipeline: false,
@@ -3236,14 +3227,11 @@ function updateClusterStats() {
   if (!d) return;
   const statsEl = $('#cl-stats');
   const totalRaw = d.raw.length;
-  const filtered = d.filtered_indices.length;
-  const outliers = d.outlier_indices.length;
-  const belowConf = totalRaw - filtered - outliers;
+  const totalDets = d.consolidated.reduce((s, c) => s + (c.n_detections || 1), 0);
   statsEl.innerHTML = `
     <span class="stat-highlight">${totalRaw}</span> raw detections →
-    <span class="stat-highlight">${d.n_clusters}</span> clusters${d.n_noise > 0 ? ` · <span style="color:#ef4444;">${d.n_noise} noise</span>` : ''}<br>
-    <span class="stat-muted">${filtered} used · ${outliers > 0 ? outliers + ' outliers removed · ' : ''}${belowConf > 0 ? belowConf + ' below confidence' : ''}</span>
-    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold}px · t=${d.params.temporal_threshold}f · min_samples=${d.params.min_samples || 1} · ${d.params.clustering_method}</span>` : ''}
+    <span class="stat-highlight">${d.n_clusters}</span> clusters${d.n_noise > 0 ? ` · <span style="color:#ef4444;">${d.n_noise} noise</span>` : ''}
+    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold} ref-px · t=${d.params.temporal_threshold_ms}ms · min_samples=${d.params.min_samples || 1}</span>` : ''}
   `;
   statsEl.style.display = 'block';
 }
@@ -3254,62 +3242,22 @@ function buildClusterLegend() {
   const legendEl = $('#cl-legend');
   legendEl.innerHTML = d.consolidated.map((c, i) => {
     const color = CLUSTER_COLORS[i % CLUSTER_COLORS.length];
-    const n = c.num_original_detections;
-    const tRange = `${c.temporal_offsets[0]}–${c.temporal_offsets[1]}`;
-    return `<span class="cluster-legend-item" title="Cluster ${c.cluster_id}: ${n} detections, frames ${tRange}, conf=${(c.confidence*100).toFixed(0)}%">
+    const n = c.n_detections || 1;
+    const tRange = `${Math.round(c.temporal_offsets[0])}–${Math.round(c.temporal_offsets[1])}`;
+    return `<span class="cluster-legend-item" title="Cluster ${i}: ${n} detections, frames ${tRange}, conf=${(c.confidence*100).toFixed(0)}%">
       <span class="cluster-legend-swatch" style="background:${color}"></span>
-      C${c.cluster_id} (${n})
+      C${i} (${n})
     </span>`;
   }).join('');
 }
 
 function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
   const d = state.clusterData;
-  if (!d || !d.raw || !d.consolidated) return;
+  if (!d || !d.consolidated) return;
   const s = 1 / zoomLevel;
   const pad = Math.round(state.videoFps);
 
-  // Build a map: raw_index → cluster_index (into consolidated array)
-  const rawToCluster = {};
-  d.consolidated.forEach((c, ci) => {
-    if (c.member_indices) {
-      c.member_indices.forEach(ri => { rawToCluster[ri] = ci; });
-    }
-  });
-
-  // Also build a set of outlier indices for distinct rendering
-  const outlierSet = new Set(d.outlier_indices || []);
-
-  // Pass 1: draw spider lines from raw detections to their centroids
-  for (let ri = 0; ri < d.raw.length; ri++) {
-    const pred = d.raw[ri];
-    const [tStart, tEnd] = pred.temporal_offsets;
-    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
-    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
-    if (!isActive && !isGhost) continue;
-
-    const ci = rawToCluster[ri];
-    if (ci === undefined) continue; // noise or not in any cluster
-
-    const centroid = d.consolidated[ci];
-    const color = CLUSTER_COLORS[ci % CLUSTER_COLORS.length];
-    const alpha = isActive ? 0.4 : 0.12;
-
-    const [px, py] = pred.position;
-    const [cx, cy] = centroid.position;
-
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(cx, cy);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(1 * s, 0.3);
-    ctx.setLineDash([Math.max(3 * s, 1), Math.max(3 * s, 1)]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  // Pass 2: draw raw detection dots
+  // Pass 1: draw raw detection dots (all as grey since we no longer have per-detection cluster labels)
   for (let ri = 0; ri < d.raw.length; ri++) {
     const pred = d.raw[ri];
     const [tStart, tEnd] = pred.temporal_offsets;
@@ -3321,23 +3269,16 @@ function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
     if (!isActive && !isGhost) continue;
 
     const [px, py] = pred.position;
-    const isOutlier = outlierSet.has(ri);
-    const ci = rawToCluster[ri];
-    const color = isOutlier ? '#666' : (ci !== undefined ? CLUSTER_COLORS[ci % CLUSTER_COLORS.length] : '#888');
-    const alpha = isActive ? 0.85 : 0.25;
-
-    const dotR = Math.max(3.5 * s, 1.2);
+    const alpha = isActive ? 0.5 : 0.15;
+    const dotR = Math.max(3 * s, 1);
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.arc(px, py, dotR, 0, Math.PI * 2);
-    ctx.fillStyle = color;
+    ctx.fillStyle = '#888';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-    ctx.lineWidth = Math.max(0.8 * s, 0.3);
-    ctx.stroke();
   }
 
-  // Pass 3: draw centroid diamonds with direction arrows
+  // Pass 2: draw centroid diamonds with direction arrows
   for (let ci = 0; ci < d.consolidated.length; ci++) {
     const c = d.consolidated[ci];
     const [tStart, tEnd] = c.temporal_offsets;
@@ -3390,9 +3331,9 @@ function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
       ctx.lineWidth = Math.max(2 * s, 0.7);
       ctx.stroke();
 
-      // Label: cluster ID + member count
+      // Label: cluster index + member count
       const fontSize = Math.max(10 * s, 4);
-      const label = `C${c.cluster_id} (${c.num_original_detections})`;
+      const label = `C${ci} (${c.n_detections || 1})`;
       ctx.font = `bold ${fontSize}px Inter`;
       ctx.textAlign = 'left';
       const lx = cx + 10 * s;
@@ -3449,11 +3390,9 @@ $('#cl-apply').addEventListener('click', async () => {
 
   state.clusterParams = {
     spatial_threshold: parseFloat($('#cl-spatial').value),
-    temporal_threshold: parseInt($('#cl-temporal').value),
+    temporal_threshold_ms: parseFloat($('#cl-temporal').value),
     confidence_threshold: parseFloat($('#cl-conf').value),
     min_samples: parseInt($('#cl-minsamp').value),
-    remove_outliers: $('#cl-outliers').checked,
-    clustering_method: $('#cl-method').value,
     mode: 'median',
   };
 
@@ -3478,12 +3417,10 @@ $('#cl-apply').addEventListener('click', async () => {
 // Reset button
 $('#cl-reset').addEventListener('click', () => {
   $('#cl-spatial').value = 30; $('#cl-spatial-val').textContent = '30';
-  $('#cl-temporal').value = 8; $('#cl-temporal-val').textContent = '8';
+  $('#cl-temporal').value = 300; $('#cl-temporal-val').textContent = '300';
   $('#cl-conf').value = 0; $('#cl-conf-val').textContent = '0.00';
   $('#cl-minsamp').value = 1; $('#cl-minsamp-val').textContent = '1';
-  $('#cl-outliers').checked = false;
-  $('#cl-method').value = 'dbscan';
-  state.clusterParams = { spatial_threshold: 30, temporal_threshold: 8, confidence_threshold: 0.0, min_samples: 1, remove_outliers: false, clustering_method: 'dbscan', mode: 'median' };
+  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, mode: 'median' };
 });
 
 

@@ -418,7 +418,7 @@ class PredictionEngine:
         # Windows sharing a crop origin see the same spatial region at different
         # times.  Averaging grid-cell detections across those windows suppresses
         # sporadic false positives while preserving consistent detections.
-        from src.utils.dance_eval import average_overlapping_predictions
+        from src.utils.dance_eval import average_overlapping_predictions, cross_window_cluster_predictions
         v_names = [video_name] * len(raw_preds)
         n_before = sum(len(w) for w in raw_preds)
         raw_preds = average_overlapping_predictions(raw_preds, all_crop_origins, v_names)
@@ -426,7 +426,44 @@ class PredictionEngine:
         if n_before != n_after:
             print(f"  Overlap averaging: {n_before} → {n_after} detections", flush=True)
 
-        # Offset positions from crop-space to full video space
+        # ── Cluster using the SAME path as the eval pipeline ──
+        # cross_window_cluster_predictions: crop-space → +offset → normalize → DBSCAN
+        video_resolutions = [(original_h, original_w)] * len(raw_preds)
+        video_fps_val = 15.0  # default fps for annotated crops
+        try:
+            import cv2 as _cv2
+            _cap = _cv2.VideoCapture(os.path.join(VIDEO_DIR, video_name))
+            video_fps_val = float(_cap.get(_cv2.CAP_PROP_FPS)) or 15.0
+            _cap.release()
+        except Exception:
+            pass
+
+        predicted_runs = cross_window_cluster_predictions(
+            raw_preds, all_crop_origins, v_names, video_resolutions,
+            video_fps={video_name: video_fps_val},
+            spatial_threshold=config['post_process']['spatial_threshold'],
+            temporal_threshold_sec=config['post_process'].get('temporal_threshold_ms', 300) / 1000.0,
+            confidence_threshold=config['post_process']['confidence_threshold'],
+            min_samples=config['post_process'].get('min_samples', 1),
+            mode=config['post_process'].get('mode', 'mean'),
+        )
+
+        # Convert normalized [0,1] → pixel space for frontend rendering
+        post_serializable = []
+        for pred in predicted_runs.get(video_name, []):
+            post_serializable.append({
+                'position': [pred['position'][0] * original_w, pred['position'][1] * original_h],
+                'direction': pred['direction'],
+                'temporal_offsets': pred['temporal_offsets'],
+                'confidence': pred['confidence'],
+                'n_detections': pred.get('n_detections', 1),
+            })
+
+        # Save crop-space copy BEFORE adding offsets (for re-clustering cache)
+        import copy
+        crop_space_preds_copy = copy.deepcopy(raw_preds)
+
+        # Offset raw positions from crop-space to full video space (for raw view)
         for i, window_preds in enumerate(raw_preds):
             ox, oy = all_crop_origins[i]
             for pred in window_preds:
@@ -437,29 +474,12 @@ class PredictionEngine:
 
         # Add window metadata to each raw prediction and flatten
         raw_serializable = []
-        all_preds_flat = []  # flat pool for cross-window clustering
         for i, window_preds in enumerate(raw_preds):
             for pred in window_preds:
                 pred['window_start'] = int(all_starts[i])
                 pred['window_end'] = int(all_ends[i])
                 pred['waggle_run_id'] = int(all_run_ids[i])
-                all_preds_flat.append(pred)
             raw_serializable.extend(window_preds)
-
-        # Run postprocessing: cluster ALL predictions across ALL windows together
-        # (not per-window) so overlapping windows merge properly
-        from src.utils.postprocess import postprocess_predictions
-        post_result = postprocess_predictions(
-            all_preds_flat,
-            spatial_threshold=config['post_process']['spatial_threshold'],
-            temporal_threshold=config['post_process']['temporal_threshold'],
-            confidence_threshold=config['post_process']['confidence_threshold'],
-            strategy=config['post_process']['strategy'],
-            mode=config['post_process']['mode'],
-            remove_outliers=config['post_process'].get('outlier_detection', False),
-            outlier_method='isolation_forest',
-        )
-        post_serializable = post_result['filtered_predictions']
 
         # Convert numpy types to Python native for JSON serialization
         def _to_native(obj):
@@ -485,6 +505,13 @@ class PredictionEngine:
             'raw': raw_serializable,
             'postprocessed': post_serializable,
             'n_windows': len(all_starts),
+            # Cache crop-space data for re-clustering via /api/cluster/
+            '_crop_space_preds': crop_space_preds_copy,  # overlap-averaged, crop-space (before offset)
+            '_crop_origins': all_crop_origins,
+            '_video_resolutions': video_resolutions,
+            '_video_fps': video_fps_val,
+            '_original_h': original_h,
+            '_original_w': original_w,
         }
 
 
@@ -683,19 +710,47 @@ class SlidingWindowInference:
             if (win_idx + 1) % 50 == 0 or win_idx == total_windows - 1:
                 print(f"    Window {win_idx + 1}/{total_windows} — {len(all_detections)} raw detections")
 
-        # Post-process: cluster all detections across windows
-        from src.utils.postprocess import postprocess_predictions
-        post_result = postprocess_predictions(
-            all_detections,
+        # Post-process: cluster all detections using unified dance_eval pipeline
+        from src.utils.dance_eval import cross_window_cluster_predictions
+
+        # Group flat detections back into per-window lists for cross_window_cluster_predictions
+        window_det_map = {}  # start_frame → list of dets
+        for det in all_detections:
+            ws = det['window_start']
+            if ws not in window_det_map:
+                window_det_map[ws] = []
+            window_det_map[ws].append(det)
+
+        per_window_preds = []
+        crop_origins = []
+        video_resolutions = []
+        for s in starts:
+            per_window_preds.append(window_det_map.get(s, []))
+            crop_origins.append((0, 0))  # full-frame → no crop offset
+            video_resolutions.append((vid_height, vid_width))
+
+        v_names = [video_name] * len(per_window_preds)
+
+        predicted_runs = cross_window_cluster_predictions(
+            per_window_preds, crop_origins, v_names, video_resolutions,
+            video_fps={video_name: vid_fps},
             spatial_threshold=config['post_process']['spatial_threshold'],
-            temporal_threshold=config['post_process']['temporal_threshold'],
+            temporal_threshold_sec=config['post_process'].get('temporal_threshold_ms', 300) / 1000.0,
             confidence_threshold=config['post_process']['confidence_threshold'],
-            strategy=config['post_process']['strategy'],
-            mode=config['post_process']['mode'],
-            remove_outliers=config['post_process'].get('outlier_detection', False),
-            outlier_method='isolation_forest',
+            min_samples=config['post_process'].get('min_samples', 1),
+            mode=config['post_process'].get('mode', 'mean'),
         )
-        post_preds = post_result['filtered_predictions']
+
+        # Convert normalized [0,1] → pixel space for frontend rendering
+        post_preds = []
+        for pred in predicted_runs.get(video_name, []):
+            post_preds.append({
+                'position': [pred['position'][0] * vid_width, pred['position'][1] * vid_height],
+                'direction': pred['direction'],
+                'temporal_offsets': pred['temporal_offsets'],
+                'confidence': pred['confidence'],
+                'n_detections': pred.get('n_detections', 1),
+            })
 
         # Ensure JSON serializable
         def _to_native(obj):
@@ -722,6 +777,13 @@ class SlidingWindowInference:
                 'width': vid_width, 'height': vid_height,
                 'total_frames': total_frames, 'fps': vid_fps,
             },
+            # Cache for re-clustering via /api/cluster/
+            '_crop_space_preds': per_window_preds,
+            '_crop_origins': crop_origins,
+            '_video_resolutions': video_resolutions,
+            '_video_fps': vid_fps,
+            '_original_h': vid_height,
+            '_original_w': vid_width,
         }
 
         print(f"  {video_name}: {len(all_detections)} raw → {len(post_preds)} post-processed")
@@ -1647,51 +1709,84 @@ def api_predictions(video_name):
 def api_cluster(video_name):
     """Re-cluster raw predictions with custom parameters.
 
-    Accepts JSON body with clustering parameters and returns consolidated
-    predictions plus the raw→cluster mapping (which raw detection belongs
-    to which cluster). This powers the "Clustered" view mode and the
-    interactive parameter sliders in the Pipeline Inspector.
-    """
-    from src.utils.postprocess import cluster_and_consolidate_waggles
+    Uses the same clustering pipeline as the eval dashboard
+    (cross_window_cluster_predictions from dance_eval.py) for consistency.
 
-    # Get raw predictions from whichever cache has them
-    raw_preds = None
+    Accepts JSON body with:
+      spatial_threshold: DBSCAN eps in reference pixels (at 1000px width)
+      temporal_threshold_ms: temporal proximity in milliseconds
+      confidence_threshold: minimum confidence to include
+      min_samples: DBSCAN min_samples
+      mode: 'mean' or 'median'
+    """
+    from src.utils.dance_eval import cross_window_cluster_predictions
+
+    # Get cached crop-space predictions (stored by _run_inference)
     cached = prediction_engine._cache.get(video_name)
+    crop_space_preds = None
+    crop_origins = None
+    video_resolutions = None
+    video_fps_val = 15.0
+    orig_h, orig_w = 480, 640
+
     if cached:
-        raw_preds = cached.get('raw')
-    if raw_preds is None:
+        crop_space_preds = cached.get('_crop_space_preds')
+        crop_origins = cached.get('_crop_origins')
+        video_resolutions = cached.get('_video_resolutions')
+        video_fps_val = cached.get('_video_fps', 15.0)
+        orig_h = cached.get('_original_h', 480)
+        orig_w = cached.get('_original_w', 640)
+
+    if crop_space_preds is None:
+        # Fallback: check sliding window inference cache
         sw_cached = sliding_inference.get_results(video_name)
         if sw_cached:
-            raw_preds = sw_cached.get('raw')
-    if raw_preds is None:
+            crop_space_preds = sw_cached.get('_crop_space_preds')
+            crop_origins = sw_cached.get('_crop_origins')
+            video_resolutions = sw_cached.get('_video_resolutions')
+            video_fps_val = sw_cached.get('_video_fps', 15.0)
+            orig_h = sw_cached.get('_original_h', 480)
+            orig_w = sw_cached.get('_original_w', 640)
+
+    if crop_space_preds is None:
         return jsonify({"error": "No cached predictions for this video. Run inference first."}), 404
 
-    # Parse clustering parameters from request body
+    # Parse clustering parameters from request body (same units as eval page)
     params = request.get_json() or {}
     spatial_threshold = float(params.get('spatial_threshold', 30.0))
-    temporal_threshold = int(params.get('temporal_threshold', 8))
+    temporal_threshold_ms = float(params.get('temporal_threshold_ms', 300))
     confidence_threshold = float(params.get('confidence_threshold', 0.0))
-    remove_outliers = bool(params.get('remove_outliers', False))
-    outlier_method = params.get('outlier_method', 'density')
-    outlier_min_neighbors = int(params.get('outlier_min_neighbors', 2))
-    clustering_method = params.get('clustering_method', 'dbscan')
     min_samples = int(params.get('min_samples', 1))
     mode = params.get('mode', 'median')
 
-    # Run clustering with mapping
-    result = cluster_and_consolidate_waggles(
-        raw_preds,
+    # Run clustering using the unified eval pipeline
+    import copy
+    preds_copy = copy.deepcopy(crop_space_preds)
+    v_names = [video_name] * len(preds_copy)
+
+    predicted_runs = cross_window_cluster_predictions(
+        preds_copy, crop_origins, v_names, video_resolutions,
+        video_fps={video_name: video_fps_val},
         spatial_threshold=spatial_threshold,
-        temporal_threshold=temporal_threshold,
-        min_confidence=confidence_threshold,
-        mode=mode,
-        remove_outliers=remove_outliers,
-        outlier_method=outlier_method,
-        outlier_min_neighbors=outlier_min_neighbors,
-        clustering_method=clustering_method,
-        return_mapping=True,
+        temporal_threshold_sec=temporal_threshold_ms / 1000.0,
+        confidence_threshold=confidence_threshold,
         min_samples=min_samples,
+        mode=mode,
     )
+
+    # Convert normalized [0,1] → pixel space for frontend canvas rendering
+    consolidated = []
+    for pred in predicted_runs.get(video_name, []):
+        consolidated.append({
+            'position': [pred['position'][0] * orig_w, pred['position'][1] * orig_h],
+            'direction': pred['direction'],
+            'temporal_offsets': pred['temporal_offsets'],
+            'confidence': pred['confidence'],
+            'n_detections': pred.get('n_detections', 1),
+        })
+
+    # Also provide the raw predictions (frame-space) for overlay
+    raw_preds = cached.get('raw', []) if cached else []
 
     # Convert numpy types for JSON serialization
     def _to_native(obj):
@@ -1709,18 +1804,13 @@ def api_cluster(video_name):
 
     return jsonify(_to_native({
         'raw': raw_preds,
-        'consolidated': result['consolidated'],
-        'labels': result['labels'],
-        'filtered_indices': result['filtered_indices'],
-        'outlier_indices': result['outlier_indices'],
-        'n_clusters': result['n_clusters'],
-        'n_noise': result['n_noise'],
+        'consolidated': consolidated,
+        'n_clusters': len(consolidated),
+        'n_noise': len(raw_preds) - sum(c.get('n_detections', 1) for c in consolidated),
         'params': {
             'spatial_threshold': spatial_threshold,
-            'temporal_threshold': temporal_threshold,
+            'temporal_threshold_ms': temporal_threshold_ms,
             'confidence_threshold': confidence_threshold,
-            'remove_outliers': remove_outliers,
-            'clustering_method': clustering_method,
             'min_samples': min_samples,
             'mode': mode,
         },

@@ -76,18 +76,20 @@ val:
     batch_size: 32
 
 post_process:
-  spatial_threshold: 30
-  temporal_threshold: 8
-  confidence_threshold: 0.0 # disable confidence filtering bcs only max=5 prediction pass
-  strategy: 'cluster_consolidate' # support various stategies see 
-  mode: 'median'
-  outlier_detection: False
+  spatial_threshold: 193      # DBSCAN eps in ref-px (at 1000px ref width), Optuna-optimized
+  temporal_threshold_ms: 489  # temporal proximity in ms, Optuna-optimized
+  confidence_threshold: 0.48  # min confidence to include, Optuna-optimized
+  min_samples: 1              # DBSCAN min_samples, Optuna-optimized
+  mode: 'mean'
+  # Per-window keys (used by main.py / ckpt_eval.py via batch_postprocess_predictions)
+  temporal_threshold: 8       # frames
+  strategy: 'cluster_consolidate'
 
 # Loss parameters
 loss:
   lambda_obj: 6.0
   lambda_coord: 7.5
-  lambda_noobj: 0.2
+  lambda_noobj: 0.01
   lambda_direction: 7.5
   lambda_temporal: 7.5 
   use_varifocal: False  # use varifocal loss to link confidence with localization quality
