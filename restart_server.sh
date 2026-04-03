@@ -30,7 +30,7 @@ if [ -n "$PIDS_SERVER" ]; then
     kill -9 $PIDS_SERVER 2>/dev/null
 fi
 
-EXTERNAL="/mnt/horus/bee_videos_tim_ood"
+EXTERNAL="/mnt/horus/bee_dance_videos_tim"
 
 echo "Starting server on port $PORT..."
 exec "$VENV" "$SERVER" --host 0.0.0.0 --port $PORT --checkpoint "$CHECKPOINT" --external-videos "$EXTERNAL"
