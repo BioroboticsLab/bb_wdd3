@@ -362,8 +362,8 @@ def main(args):
                                                             confidence_threshold=config['post_process']['confidence_threshold'], 
                                                             strategy=config['post_process']['strategy'], 
                                                             mode=config['post_process']['mode'],
-                                                            remove_outliers=config['post_process']['outlier_detection'],
-                                                            outlier_method='isolation_forest')
+                                                            remove_outliers=False,
+                                                            min_samples=config['post_process'].get('min_samples', 1))
             
             test_metrics = get_eval_metrics(test_preds, test_gts, 
                                             pos_thresholds=config['eval']['pos_thresholds'],

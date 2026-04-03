@@ -53,6 +53,11 @@ def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoc
             'Dir': f'{total_direction_loss / num_batches:.4f}',
             'Temp': f'{total_temporal_loss / num_batches:.4f}',
         })
+        
+        # Log progress every 100 batches (works in log files unlike tqdm)
+        if (batch_idx + 1) % 100 == 0:
+            n = num_batches
+            print(f"  [{batch_idx+1}/{len(train_loader)}] Loss={total_loss/n:.4f} Obj={total_obj_loss/n:.4f} NoObj={total_no_obj_loss/n:.4f} Pos={total_position_loss/n:.4f} Dir={total_direction_loss/n:.4f} Temp={total_temporal_loss/n:.4f}", flush=True)
     
     # Calculate averages
     avg_val_loss = total_loss / num_batches

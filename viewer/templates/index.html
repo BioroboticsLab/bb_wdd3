@@ -932,8 +932,8 @@ kbd {
     <button class="btn" id="btn-predictions" title="Toggle predictions (P)">🔮 Predictions</button>
     <div class="pred-controls" id="pred-controls" style="display:none;">
       <select class="pred-mode-select" id="pred-mode-select" title="Prediction view mode">
-        <option value="postprocessed">Post-processed</option>
-        <option value="raw">Raw (per-window)</option>
+        <option value="raw">Raw (decoded)</option>
+        <option value="averaged" selected>Averaged</option>
         <option value="clustered">🔗 Clustered</option>
       </select>
       <div class="pred-conf-group">
@@ -1154,9 +1154,9 @@ const state = {
   annotations: [],        // waggle runs for current video
   showAnnotations: true,
   showPredictions: false,
-  predictionMode: 'postprocessed', // 'raw', 'postprocessed', or 'clustered'
+  predictionMode: 'averaged', // 'raw', 'averaged', or 'clustered'
   predConfThreshold: 0.5, // confidence threshold for display
-  predictions: null,      // { raw: [...], postprocessed: [...] }
+  predictions: null,      // { raw: [...], averaged: [...] }
   predictionsLoading: false,
   clusterData: null,      // { raw, consolidated, n_clusters, n_noise, params }
   clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, mode: 'median' },
@@ -1351,7 +1351,7 @@ async function selectVideo(videoName, isExternal = false) {
         const cached = await fetch(`/api/infer/${videoName}/results`);
         if (cached.ok) {
           const data = await cached.json();
-          state.predictions = { raw: data.raw, postprocessed: data.postprocessed };
+          state.predictions = { raw: data.raw, averaged: data.averaged };
           state.showPredictions = true;
           state.checkpointInfo = data.checkpoint;
           $('#btn-predictions').classList.add('active');
@@ -1359,7 +1359,7 @@ async function selectVideo(videoName, isExternal = false) {
           updateCheckpointBadge();
           loadAndRenderFrame(state.currentFrame);
           renderTimeline();
-          console.log(`Loaded cached inference: ${data.raw.length} raw, ${data.postprocessed.length} post-processed`);
+          console.log(`Loaded cached inference: ${data.raw.length} raw, ${data.averaged.length} averaged`);
         }
       } catch (e) { /* no cached results yet */ }
     }
@@ -1635,7 +1635,7 @@ function drawPredictions(ctx, frameIdx, zoomLevel) {
 
   const preds = state.predictionMode === 'raw'
     ? state.predictions.raw
-    : state.predictions.postprocessed;
+    : state.predictions.averaged;
 
   if (!preds || preds.length === 0) return;
 
@@ -1877,7 +1877,7 @@ function renderTimeline() {
     } else {
       const preds = state.predictionMode === 'raw'
         ? state.predictions.raw
-        : state.predictions.postprocessed;
+        : state.predictions.averaged;
 
       if (preds) {
         // Divider line
@@ -2032,10 +2032,10 @@ async function fetchPredictions() {
 
   try {
     const data = await api(`/api/predictions/${state.currentVideo}`);
-    state.predictions = { raw: data.raw, postprocessed: data.postprocessed };
+    state.predictions = { raw: data.raw, averaged: data.averaged };
     state.checkpointInfo = data.checkpoint;
     updateCheckpointBadge();
-    console.log(`Predictions loaded: ${data.raw.length} raw, ${data.postprocessed.length} post-processed (${data.n_windows} windows)`);
+    console.log(`Predictions loaded: ${data.raw.length} raw, ${data.averaged.length} averaged (${data.n_windows} windows)`);
   } catch (err) {
     console.error('Failed to fetch predictions:', err);
     state.predictions = null;
@@ -3142,7 +3142,7 @@ async function runInference() {
     }
 
     const data = await resp.json();
-    state.predictions = { raw: data.raw, postprocessed: data.postprocessed };
+    state.predictions = { raw: data.raw, averaged: data.averaged };
     state.checkpointInfo = data.checkpoint;
     state.showPredictions = true;
     $('#btn-predictions').classList.add('active');
@@ -3153,7 +3153,7 @@ async function runInference() {
     $('#infer-progress-fill').style.width = '100%';
     $('#infer-progress-text').textContent = '100%';
 
-    console.log(`Inference complete: ${data.raw.length} raw → ${data.postprocessed.length} post-processed (${data.n_windows} windows)`);
+    console.log(`Inference complete: ${data.raw.length} raw → ${data.averaged.length} averaged (${data.n_windows} windows)`);
 
     // Refresh display
     loadAndRenderFrame(state.currentFrame);

@@ -239,7 +239,7 @@ class PredictionEngine:
         self.config = None
         self.checkpoint_path = None
         self.checkpoint_meta = {}  # epoch, best_score, etc.
-        self._cache = {}  # video_name -> {raw: [...], postprocessed: [...]}
+        self._cache = {}  # video_name -> {raw: [...], averaged: [...]}
         self._lock = threading.Lock()
 
     @property
@@ -312,7 +312,7 @@ class PredictionEngine:
         config = self.config
         video_rows = annotations_df[annotations_df['video_name'] == video_name]
         if len(video_rows) == 0:
-            return {'raw': [], 'postprocessed': [], 'n_windows': 0}
+            return {'raw': [], 'averaged': [], 'n_windows': 0}
 
         # Build test transform (same as training eval)
         test_transform = T.Compose([
@@ -397,7 +397,7 @@ class PredictionEngine:
                 batch_tensors = []
 
         if not all_outputs:
-            return {'raw': [], 'postprocessed': [], 'n_windows': 0}
+            return {'raw': [], 'averaged': [], 'n_windows': 0}
 
         # Concatenate all outputs
         all_outputs = torch.cat(all_outputs, dim=0)
@@ -418,52 +418,51 @@ class PredictionEngine:
         # Windows sharing a crop origin see the same spatial region at different
         # times.  Averaging grid-cell detections across those windows suppresses
         # sporadic false positives while preserving consistent detections.
-        from src.utils.dance_eval import average_overlapping_predictions, cross_window_cluster_predictions
+        from src.utils.dance_eval import average_overlapping_predictions
+        import copy
         v_names = [video_name] * len(raw_preds)
-        n_before = sum(len(w) for w in raw_preds)
-        raw_preds = average_overlapping_predictions(raw_preds, all_crop_origins, v_names)
-        n_after = sum(len(w) for w in raw_preds)
-        if n_before != n_after:
-            print(f"  Overlap averaging: {n_before} → {n_after} detections", flush=True)
 
-        # ── Cluster using the SAME path as the eval pipeline ──
-        # cross_window_cluster_predictions: crop-space → +offset → normalize → DBSCAN
-        video_resolutions = [(original_h, original_w)] * len(raw_preds)
-        video_fps_val = 15.0  # default fps for annotated crops
+        # Save decoded detections BEFORE averaging for the "raw" view
+        decoded_preds_copy = copy.deepcopy(raw_preds)
+        n_before = sum(len(w) for w in raw_preds)
+
+        # Get video fps for fps-aware temporal sub-grouping
+        import cv2 as _cv2
+        video_fps_val = 15.0
         try:
-            import cv2 as _cv2
             _cap = _cv2.VideoCapture(os.path.join(VIDEO_DIR, video_name))
             video_fps_val = float(_cap.get(_cv2.CAP_PROP_FPS)) or 15.0
             _cap.release()
         except Exception:
             pass
 
-        predicted_runs = cross_window_cluster_predictions(
-            raw_preds, all_crop_origins, v_names, video_resolutions,
+        raw_preds = average_overlapping_predictions(
+            raw_preds, all_crop_origins, v_names,
             video_fps={video_name: video_fps_val},
-            spatial_threshold=config['post_process']['spatial_threshold'],
-            temporal_threshold_sec=config['post_process'].get('temporal_threshold_ms', 300) / 1000.0,
-            confidence_threshold=config['post_process']['confidence_threshold'],
-            min_samples=config['post_process'].get('min_samples', 1),
-            mode=config['post_process'].get('mode', 'mean'),
         )
+        n_after = sum(len(w) for w in raw_preds)
+        if n_before != n_after:
+            print(f"  Overlap averaging: {n_before} → {n_after} detections", flush=True)
 
-        # Convert normalized [0,1] → pixel space for frontend rendering
-        post_serializable = []
-        for pred in predicted_runs.get(video_name, []):
-            post_serializable.append({
-                'position': [pred['position'][0] * original_w, pred['position'][1] * original_h],
-                'direction': pred['direction'],
-                'temporal_offsets': pred['temporal_offsets'],
-                'confidence': pred['confidence'],
-                'n_detections': pred.get('n_detections', 1),
-            })
-
-        # Save crop-space copy BEFORE adding offsets (for re-clustering cache)
-        import copy
+        # Save crop-space copy of averaged preds (for re-clustering cache)
         crop_space_preds_copy = copy.deepcopy(raw_preds)
 
-        # Offset raw positions from crop-space to full video space (for raw view)
+        # ── Build "raw" (decoded) view: pre-averaging detections in frame-space ──
+        raw_serializable = []
+        for i, window_preds in enumerate(decoded_preds_copy):
+            ox, oy = all_crop_origins[i]
+            for pred in window_preds:
+                pred['position'] = [
+                    pred['position'][0] + ox,
+                    pred['position'][1] + oy,
+                ]
+                pred['window_start'] = int(all_starts[i])
+                pred['window_end'] = int(all_ends[i])
+                pred['waggle_run_id'] = int(all_run_ids[i])
+            raw_serializable.extend(window_preds)
+
+        # ── Build "averaged" view: overlap-averaged detections in frame-space ──
+        # Offset averaged positions from crop-space to full video space
         for i, window_preds in enumerate(raw_preds):
             ox, oy = all_crop_origins[i]
             for pred in window_preds:
@@ -472,14 +471,52 @@ class PredictionEngine:
                     pred['position'][1] + oy,
                 ]
 
-        # Add window metadata to each raw prediction and flatten
-        raw_serializable = []
+        # Build waggle run lookup for temporal matching
+        waggle_runs = {}  # run_id → (waggle_start, waggle_end)
+        for _, row in video_rows.iterrows():
+            rid = int(row['waggle_run_id'])
+            ws, we = int(row['waggle_start']), int(row['waggle_end'])
+            if rid not in waggle_runs:
+                waggle_runs[rid] = (ws, we)
+            else:
+                # Extend to full temporal extent
+                waggle_runs[rid] = (
+                    min(waggle_runs[rid][0], ws),
+                    max(waggle_runs[rid][1], we),
+                )
+
+        def _best_run_for_pred(pred):
+            """Find waggle run with best temporal IoU for a prediction."""
+            ps, pe = pred['temporal_offsets']
+            best_iou, best_rid = 0, -1
+            for rid, (ws, we) in waggle_runs.items():
+                inter = max(0, min(pe, we) - max(ps, ws))
+                union = max(pe, we) - min(ps, ws)
+                iou = inter / union if union > 0 else 0
+                if iou > best_iou:
+                    best_iou = iou
+                    best_rid = rid
+            if best_rid >= 0:
+                return best_rid
+            # No temporal overlap — assign to nearest run within 1 window
+            best_dist, best_rid = 999999, -1
+            for rid, (ws, we) in waggle_runs.items():
+                dist = min(abs(ps - we), abs(pe - ws))
+                if dist < best_dist:
+                    best_dist = dist
+                    best_rid = rid
+            return best_rid if best_dist <= 16 else -1
+
+        averaged_serializable = []
         for i, window_preds in enumerate(raw_preds):
             for pred in window_preds:
                 pred['window_start'] = int(all_starts[i])
                 pred['window_end'] = int(all_ends[i])
-                pred['waggle_run_id'] = int(all_run_ids[i])
-            raw_serializable.extend(window_preds)
+                pred['waggle_run_id'] = _best_run_for_pred(pred)
+            averaged_serializable.extend(window_preds)
+
+        # ── Resolution info for clustering cache ──
+        video_resolutions = [(original_h, original_w)] * len(raw_preds)
 
         # Convert numpy types to Python native for JSON serialization
         def _to_native(obj):
@@ -497,16 +534,16 @@ class PredictionEngine:
             return obj
 
         raw_serializable = [_to_native(p) for p in raw_serializable]
-        post_serializable = [_to_native(p) for p in post_serializable]
+        averaged_serializable = [_to_native(p) for p in averaged_serializable]
 
-        print(f"  {video_name}: {len(raw_serializable)} raw -> {len(post_serializable)} post-processed")
+        print(f"  {video_name}: {len(raw_serializable)} raw → {len(averaged_serializable)} averaged")
 
         return {
             'raw': raw_serializable,
-            'postprocessed': post_serializable,
+            'averaged': averaged_serializable,
             'n_windows': len(all_starts),
             # Cache crop-space data for re-clustering via /api/cluster/
-            '_crop_space_preds': crop_space_preds_copy,  # overlap-averaged, crop-space (before offset)
+            '_crop_space_preds': crop_space_preds_copy,
             '_crop_origins': all_crop_origins,
             '_video_resolutions': video_resolutions,
             '_video_fps': video_fps_val,
@@ -711,7 +748,10 @@ class SlidingWindowInference:
                 print(f"    Window {win_idx + 1}/{total_windows} — {len(all_detections)} raw detections")
 
         # Post-process: cluster all detections using unified dance_eval pipeline
-        from src.utils.dance_eval import cross_window_cluster_predictions
+        from src.utils.dance_eval import (
+            average_overlapping_predictions,
+            cross_window_cluster_predictions,
+        )
 
         # Group flat detections back into per-window lists for cross_window_cluster_predictions
         window_det_map = {}  # start_frame → list of dets
@@ -724,12 +764,27 @@ class SlidingWindowInference:
         per_window_preds = []
         crop_origins = []
         video_resolutions = []
+        window_ranges = []
         for s in starts:
             per_window_preds.append(window_det_map.get(s, []))
             crop_origins.append((0, 0))  # full-frame → no crop offset
             video_resolutions.append((vid_height, vid_width))
+            window_ranges.append((s, min(s + window_size, total_frames)))
 
         v_names = [video_name] * len(per_window_preds)
+
+        # ── Overlap averaging (same as annotation path) ──
+        # With temporal-overlap-aware denominator, this works correctly
+        # for full-frame: only ~2 temporally overlapping windows affect
+        # the denominator, not the total number of windows.
+        n_before = sum(len(w) for w in per_window_preds)
+        per_window_preds = average_overlapping_predictions(
+            per_window_preds, crop_origins, v_names,
+            window_ranges=window_ranges,
+        )
+        n_after = sum(len(w) for w in per_window_preds)
+        if n_before != n_after:
+            print(f"  Overlap averaging: {n_before} → {n_after} detections", flush=True)
 
         predicted_runs = cross_window_cluster_predictions(
             per_window_preds, crop_origins, v_names, video_resolutions,
@@ -771,7 +826,7 @@ class SlidingWindowInference:
 
         result = {
             'raw': all_detections,
-            'postprocessed': post_preds,
+            'averaged': post_preds,
             'n_windows': total_windows,
             'video_info': {
                 'width': vid_width, 'height': vid_height,
@@ -1699,7 +1754,7 @@ def api_predictions(video_name):
 
     return jsonify({
         "raw": result['raw'],
-        "postprocessed": result['postprocessed'],
+        "averaged": result['averaged'],
         "n_windows": result['n_windows'],
         "checkpoint": prediction_engine.checkpoint_meta,
     })
@@ -2527,7 +2582,7 @@ def api_infer(video_name):
         result = sliding_inference.run_inference(video_name, temporal_stride=temporal_stride)
         return jsonify({
             'raw': result['raw'],
-            'postprocessed': result['postprocessed'],
+            'averaged': result['averaged'],
             'n_windows': result['n_windows'],
             'video_info': result['video_info'],
             'checkpoint': prediction_engine.checkpoint_meta,
@@ -2547,7 +2602,7 @@ def api_infer_status(video_name):
         return jsonify({
             'status': 'done',
             'n_raw': len(cached['raw']),
-            'n_postprocessed': len(cached['postprocessed']),
+            'n_averaged': len(cached['averaged']),
         })
 
     current, total = sliding_inference.get_progress(video_name)
@@ -2570,7 +2625,7 @@ def api_infer_results(video_name):
         return jsonify({"error": "No results. Run inference first."}), 404
     return jsonify({
         'raw': cached['raw'],
-        'postprocessed': cached['postprocessed'],
+        'averaged': cached['averaged'],
         'n_windows': cached['n_windows'],
         'video_info': cached['video_info'],
         'checkpoint': prediction_engine.checkpoint_meta,

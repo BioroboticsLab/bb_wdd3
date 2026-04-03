@@ -87,9 +87,9 @@ post_process:
 
 # Loss parameters
 loss:
-  lambda_obj: 6.0
+  lambda_obj: 12.0
   lambda_coord: 7.5
-  lambda_noobj: 0.01
+  lambda_noobj: 0.02
   lambda_direction: 7.5
   lambda_temporal: 7.5 
   use_varifocal: False  # use varifocal loss to link confidence with localization quality

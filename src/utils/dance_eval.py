@@ -121,16 +121,24 @@ def deduplicate_gt_dances(test_df):
 
 # ─── Cross-window overlap averaging ──────────────────────────────────────────
 
-def average_overlapping_predictions(per_window_preds, crop_origins, video_names):
+def average_overlapping_predictions(per_window_preds, crop_origins, video_names,
+                                     window_ranges=None, video_fps=None,
+                                     max_temporal_gap_sec=1.0):
     """
     Average predictions across overlapping temporal windows that share the
     same spatial crop.
     
     Windows are grouped by (video_name, crop_origin). Within each group,
     predictions are matched by grid_cell index. For each cell, confidence
-    is averaged across ALL windows in the group (windows with no detection
-    at that cell contribute 0 to the average). This naturally suppresses
-    sporadic false positives while preserving consistent detections.
+    is averaged using a **temporal-overlap-aware denominator**: only windows
+    whose temporal range overlaps the detection's temporal extent contribute
+    to the denominator.
+    
+    Before averaging, detections at the same grid cell are split into
+    temporally coherent sub-groups (gap > max_temporal_gap_sec starts a
+    new group). This prevents merging detections from different bees that
+    happen to occupy the same cell at different times — critical when many
+    temporally distant windows share one crop origin (low-res videos).
     
     Args:
         per_window_preds: list of lists of prediction dicts, one list per window.
@@ -138,6 +146,15 @@ def average_overlapping_predictions(per_window_preds, crop_origins, video_names)
             temporal_offsets, grid_cell (list [i,j,k]).
         crop_origins: list of (x_min, y_min) per window
         video_names: list of video name strings per window
+        window_ranges: optional list of (start_frame, end_frame) per window.
+            If None, inferred from the detections' temporal_offsets within
+            each window (min start, max end). Falls back to group-size
+            denominator for windows with no detections.
+        video_fps: dict {video_name: fps} or None (defaults to 15fps).
+            Used to convert max_temporal_gap_sec to frames.
+        max_temporal_gap_sec: maximum temporal gap in seconds between
+            consecutive detections at the same grid cell before they are
+            split into separate sub-groups. Default 1.0s.
     
     Returns:
         list of lists of averaged prediction dicts (same outer length as input,
@@ -146,6 +163,23 @@ def average_overlapping_predictions(per_window_preds, crop_origins, video_names)
     """
     if not per_window_preds:
         return []
+    
+    # ── 0. Build window temporal ranges ──
+    # Each window needs a [start, end] range so we can count temporal overlaps.
+    if window_ranges is not None:
+        w_ranges = list(window_ranges)
+    else:
+        # Infer from detections: use min/max of temporal_offsets per window.
+        # Windows with no detections get None (they can't contribute to overlap
+        # counts anyway since they have no detections to average).
+        w_ranges = []
+        for preds in per_window_preds:
+            if preds:
+                t_starts = [p['temporal_offsets'][0] for p in preds]
+                t_ends = [p['temporal_offsets'][1] for p in preds]
+                w_ranges.append((min(t_starts), max(t_ends)))
+            else:
+                w_ranges.append(None)
     
     # ── 1. Group windows by (video_name, crop_origin) ──
     groups = defaultdict(list)  # key → list of (window_index, preds)
@@ -161,6 +195,11 @@ def average_overlapping_predictions(per_window_preds, crop_origins, video_names)
     for key, window_list in groups.items():
         n_windows = len(window_list)
         
+        # Precompute temporal ranges for all windows in this group
+        group_ranges = []  # (start, end) or None per window in group
+        for w_idx, _ in window_list:
+            group_ranges.append(w_ranges[w_idx])
+        
         # Collect all detections by grid cell
         # cell_key → list of prediction dicts (one per window that detected it)
         cell_preds = defaultdict(list)
@@ -170,42 +209,79 @@ def average_overlapping_predictions(per_window_preds, crop_origins, video_names)
                 cell_key = tuple(gc)
                 cell_preds[cell_key].append(pred)
         
-        # Average each cell
+        # Average each cell — but first split by temporal coherence.
+        # The same grid cell can fire for DIFFERENT bees at different times
+        # when many temporally distant windows share one crop origin (e.g.
+        # 67 windows from 8 runs at a low-res 480×270 video).  Without
+        # splitting, detections from run #4 (frame 158) and run #9 (frame
+        # 403) at the same cell get merged into one detection spanning
+        # frames 158–419, crushing confidence and creating a bogus extent.
+        vname = key[0]
+        fps = (video_fps or {}).get(vname, 15.0)
+        max_gap_frames = max_temporal_gap_sec * fps
+        
         averaged = []
         for cell_key, preds_for_cell in cell_preds.items():
-            n_detections = len(preds_for_cell)
+            # Split into temporally coherent sub-groups:
+            # sort by temporal midpoint, then cut where consecutive
+            # detections are more than max_gap_frames apart.
+            preds_for_cell.sort(
+                key=lambda p: (p['temporal_offsets'][0] + p['temporal_offsets'][1]) / 2
+            )
+            sub_groups = [[preds_for_cell[0]]]
+            for pred in preds_for_cell[1:]:
+                prev_end = sub_groups[-1][-1]['temporal_offsets'][1]
+                curr_start = pred['temporal_offsets'][0]
+                if curr_start - prev_end > max_gap_frames:
+                    sub_groups.append([pred])
+                else:
+                    sub_groups[-1].append(pred)
             
-            # Confidence: sum of detected confidences / total windows in group
-            avg_conf = sum(p['confidence'] for p in preds_for_cell) / n_windows
-            
-            # Position: mean of detected positions
-            avg_pos = [
-                sum(p['position'][0] for p in preds_for_cell) / n_detections,
-                sum(p['position'][1] for p in preds_for_cell) / n_detections,
-            ]
-            
-            # Direction: mean of detected directions → re-normalize to unit
-            avg_dir = [
-                sum(p['direction'][0] for p in preds_for_cell) / n_detections,
-                sum(p['direction'][1] for p in preds_for_cell) / n_detections,
-            ]
-            norm = (avg_dir[0]**2 + avg_dir[1]**2) ** 0.5
-            if norm > 1e-8:
-                avg_dir = [avg_dir[0] / norm, avg_dir[1] / norm]
-            
-            # Temporal: union (earliest start, latest end)
-            t_start = min(p['temporal_offsets'][0] for p in preds_for_cell)
-            t_end = max(p['temporal_offsets'][1] for p in preds_for_cell)
-            
-            averaged.append({
-                'confidence': avg_conf,
-                'position': avg_pos,
-                'direction': avg_dir,
-                'temporal_offsets': [t_start, t_end],
-                'grid_cell': list(cell_key),
-                'n_detections': n_detections,
-                'n_windows': n_windows,
-            })
+            for sub_preds in sub_groups:
+                n_detections = len(sub_preds)
+                
+                # Detection's temporal extent (union within this sub-group)
+                det_t_start = min(p['temporal_offsets'][0] for p in sub_preds)
+                det_t_end = max(p['temporal_offsets'][1] for p in sub_preds)
+                
+                # Count windows in this group whose temporal range overlaps
+                # the detection's temporal extent
+                n_overlapping = 0
+                for wr in group_ranges:
+                    if wr is None:
+                        n_overlapping += 1
+                    else:
+                        w_start, w_end = wr
+                        if w_start <= det_t_end and w_end >= det_t_start:
+                            n_overlapping += 1
+                
+                denom = max(n_overlapping, 1)
+                
+                avg_conf = sum(p['confidence'] for p in sub_preds) / denom
+                
+                avg_pos = [
+                    sum(p['position'][0] for p in sub_preds) / n_detections,
+                    sum(p['position'][1] for p in sub_preds) / n_detections,
+                ]
+                
+                avg_dir = [
+                    sum(p['direction'][0] for p in sub_preds) / n_detections,
+                    sum(p['direction'][1] for p in sub_preds) / n_detections,
+                ]
+                norm = (avg_dir[0]**2 + avg_dir[1]**2) ** 0.5
+                if norm > 1e-8:
+                    avg_dir = [avg_dir[0] / norm, avg_dir[1] / norm]
+                
+                averaged.append({
+                    'confidence': avg_conf,
+                    'position': avg_pos,
+                    'direction': avg_dir,
+                    'temporal_offsets': [det_t_start, det_t_end],
+                    'grid_cell': list(cell_key),
+                    'n_detections': n_detections,
+                    'n_overlapping': n_overlapping,
+                    'n_windows': n_windows,
+                })
         
         # Assign averaged predictions to the first window in the group
         first_w_idx = window_list[0][0]

@@ -199,8 +199,8 @@ def main(args):
                                                         confidence_threshold=config['post_process']['confidence_threshold'], 
                                                         strategy=config['post_process']['strategy'], 
                                                         mode=config['post_process']['mode'],
-                                                        remove_outliers=config['post_process']['outlier_detection'],
-                                                        outlier_method='isolation_forest')
+                                                        remove_outliers=False,
+                                                        min_samples=config['post_process'].get('min_samples', 1))
 
         # Can postprocess entire predictions no need for limit to 16 sequences, its only needed when we visualise
         #save_preds_to_csv(test_preds, f'raw_predictions_epoch_{epoch}.csv', 'raw', './outputs/preds_csv')
