@@ -1062,6 +1062,13 @@ class EvaluationEngine:
                       f" (results={'yes' if self._results else 'preds only'})", flush=True)
             except Exception as e:
                 print(f"  ⚠️ Failed to load eval cache: {e}", flush=True)
+                # Invalidate partially-loaded state
+                self._cached_preds = None
+                self._cached_gts = None
+                self._cached_video_names = None
+                self._cached_crop_origins = None
+                self._cached_original_res = None
+                self._results = None
 
     def _save_disk_cache(self, ckpt_path=None):
         """Save decoded predictions + results to disk for persistence across restarts."""
@@ -2074,8 +2081,9 @@ def api_eval_run():
 
     # Check if results already cached for this checkpoint (compare epoch, not path,
     # since best.pth gets overwritten during training)
+    # Also require cached predictions (crop origins etc.) so recluster will work.
     cached = evaluation_engine.get_results()
-    if cached:
+    if cached and evaluation_engine.has_cached_preds():
         cached_epoch = cached.get('checkpoint', {}).get('epoch')
         model_epoch = prediction_engine.checkpoint_meta.get('epoch')
         if cached_epoch == model_epoch:

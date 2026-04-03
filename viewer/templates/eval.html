@@ -383,6 +383,18 @@ header h1 span { font-size: 20px; margin-right: 4px; }
   padding: 10px 0 0; line-height: 1.8;
 }
 .optim-result .best-val { color: #a78bfa; font-weight: 700; font-size: 14px; }
+.btn-apply-config {
+  margin-top: 8px;
+  background: var(--purple-dim); border-color: rgba(139, 92, 246, 0.4);
+  color: var(--purple);
+}
+.btn-apply-config:hover:not(:disabled) {
+  background: var(--purple); color: #fff; border-color: var(--purple);
+}
+.btn-apply-config.applied {
+  background: var(--green-dim); border-color: rgba(34, 197, 94, 0.4);
+  color: var(--green); cursor: default;
+}
 </style>
 </head>
 <body>
@@ -446,6 +458,10 @@ header h1 span { font-size: 20px; margin-right: 4px; }
             <input type="range" id="rc-minsamp" min="1" max="10" step="1" value="1">
           </div>
           <div class="recluster-group">
+            <label>Direction Threshold (°) <span class="rc-val" id="rc-dirthresh-val">30</span></label>
+            <input type="range" id="rc-dirthresh" min="0" max="90" step="5" value="30">
+          </div>
+          <div class="recluster-group">
             <label>Clustering Method</label>
             <select id="rc-method">
               <option value="dbscan" selected>DBSCAN</option>
@@ -482,6 +498,7 @@ header h1 span { font-size: 20px; margin-right: 4px; }
             <span class="rc-status" id="optim-status"></span>
           </div>
           <div class="optim-result" id="optim-result" style="display:none;"></div>
+          <button class="btn btn-apply-config" id="btn-apply-config" style="display:none;" onclick="applyToConfig()">💾 Apply to Config</button>
         </div>
       </div>
     </div>
@@ -1039,6 +1056,10 @@ function showResults(data) {
     document.getElementById('rc-minsamp').value = pc.min_samples;
     document.getElementById('rc-minsamp-val').textContent = pc.min_samples;
   }
+  if (pc.direction_threshold_deg != null) {
+    document.getElementById('rc-dirthresh').value = pc.direction_threshold_deg;
+    document.getElementById('rc-dirthresh-val').textContent = pc.direction_threshold_deg;
+  }
   if (pc.clustering_method) document.getElementById('rc-method').value = pc.clustering_method;
   if (pc.mode) document.getElementById('rc-mode').value = pc.mode;
 
@@ -1171,6 +1192,9 @@ document.getElementById('rc-conf').addEventListener('input', e => {
 document.getElementById('rc-minsamp').addEventListener('input', e => {
   document.getElementById('rc-minsamp-val').textContent = e.target.value;
 });
+document.getElementById('rc-dirthresh').addEventListener('input', e => {
+  document.getElementById('rc-dirthresh-val').textContent = e.target.value;
+});
 
 async function doRecluster() {
   const btn = document.getElementById('btn-recluster');
@@ -1185,6 +1209,7 @@ async function doRecluster() {
     temporal_threshold: Math.round(parseInt(document.getElementById('rc-temporal').value) / 1000.0 * 30),  // frames at 30fps for window-level
     confidence_threshold: parseFloat(document.getElementById('rc-conf').value),
     min_samples: parseInt(document.getElementById('rc-minsamp').value),
+    direction_threshold_deg: parseFloat(document.getElementById('rc-dirthresh').value),
     clustering_method: document.getElementById('rc-method').value,
     mode: document.getElementById('rc-mode').value,
     strategy: 'cluster_consolidate',
@@ -1294,6 +1319,10 @@ async function doOptimize() {
           document.getElementById('rc-conf-val').textContent = bp.confidence_threshold.toFixed(2);
           document.getElementById('rc-minsamp').value = bp.min_samples;
           document.getElementById('rc-minsamp-val').textContent = bp.min_samples;
+          if (bp.direction_threshold_deg != null) {
+            document.getElementById('rc-dirthresh').value = bp.direction_threshold_deg;
+            document.getElementById('rc-dirthresh-val').textContent = Math.round(bp.direction_threshold_deg);
+          }
 
           // Update dashboard with results
           if (data.results) {
@@ -1312,9 +1341,18 @@ async function doOptimize() {
             <div>Spatial: <b>${bp.spatial_threshold.toFixed(1)}px</b> · 
                  Temporal: <b>${bp.temporal_threshold_ms.toFixed(0)}ms</b> · 
                  Conf: <b>${bp.confidence_threshold.toFixed(3)}</b> · 
-                 Min samples: <b>${bp.min_samples}</b></div>
+                 Min samples: <b>${bp.min_samples}</b> · 
+                 Direction: <b>${(bp.direction_threshold_deg || 30).toFixed(0)}°</b></div>
             <div style="color:var(--text-muted)">${data.n_trials} trials in ${data.elapsed}s (Optuna TPE)</div>
           `;
+
+          // Show "Apply to Config" button
+          const applyBtn = document.getElementById('btn-apply-config');
+          applyBtn.style.display = 'inline-flex';
+          applyBtn.classList.remove('applied');
+          applyBtn.disabled = false;
+          applyBtn.textContent = '💾 Apply to Config';
+          applyBtn._bestParams = bp;
         }
 
         btn.disabled = false;
@@ -1324,6 +1362,40 @@ async function doOptimize() {
       }
     } catch(e) { /* network error during poll — retry */ }
   }, 1000);
+}
+
+async function applyToConfig() {
+  const btn = document.getElementById('btn-apply-config');
+  const params = btn._bestParams;
+  if (!params) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Saving…';
+
+  try {
+    const resp = await fetch('/api/config/update_post_process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        spatial_threshold: params.spatial_threshold,
+        temporal_threshold_ms: params.temporal_threshold_ms,
+        confidence_threshold: params.confidence_threshold,
+        min_samples: params.min_samples,
+        direction_threshold_deg: params.direction_threshold_deg,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      btn.textContent = `❌ ${data.error}`;
+      btn.disabled = false;
+    } else {
+      btn.textContent = `✅ Saved (backup: ${data.backup})`;
+      btn.classList.add('applied');
+    }
+  } catch (e) {
+    btn.textContent = `❌ ${e.message}`;
+    btn.disabled = false;
+  }
 }
 
 // ─── Init ───────────────────────────────────────────────────────────────────

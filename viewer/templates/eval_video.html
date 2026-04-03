@@ -388,6 +388,10 @@ kbd {
         <label>Min Samples (DBSCAN) <span class="rc-val" id="rc-minsamp-val">1</span></label>
         <input type="range" id="rc-minsamp" min="1" max="10" step="1" value="1">
       </div>
+      <div class="rc-group">
+        <label>Direction threshold (°) <span class="rc-val" id="rc-dirthresh-val">30</span></label>
+        <input type="range" id="rc-dirthresh" min="0" max="90" step="5" value="30">
+      </div>
       <div class="rc-actions">
         <button class="rc-btn" id="btn-recluster" onclick="doRecluster()">🔄 Re-cluster</button>
         <span class="rc-status" id="rc-status"></span>
@@ -1075,7 +1079,7 @@ window.addEventListener('resize', () => {
 });
 
 // ─── Re-cluster controls ────────────────────────────────────────────────────
-['rc-spatial', 'rc-temporal', 'rc-conf', 'rc-minsamp'].forEach(id => {
+['rc-spatial', 'rc-temporal', 'rc-conf', 'rc-minsamp', 'rc-dirthresh'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('input', () => {
@@ -1096,6 +1100,7 @@ async function doRecluster() {
     temporal_threshold_ms: $('rc-temporal').value,
     confidence_threshold: $('rc-conf').value,
     min_samples: $('rc-minsamp').value,
+    direction_threshold_deg: $('rc-dirthresh').value,
   });
 
   try {

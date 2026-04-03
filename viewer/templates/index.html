@@ -35,8 +35,6 @@
       <span class="pred-loading" id="pred-loading" style="display:none;">⏳ Computing...</span>
     </div>
     <button class="btn" id="btn-zoom" title="Cycle zoom: 1× → 2× → 4× → 8× (Z)">🔍 1×</button>
-    <button class="btn" id="btn-model-view" title="Toggle model view panel (M)" style="display:none;">🤖 Model View</button>
-    <button class="btn" id="btn-pipeline" title="Toggle pipeline inspector (I)">🔬 Inspector</button>
     <button class="btn" id="btn-eval" title="Open evaluation dashboard" onclick="window.open('/eval', '_blank')" style="background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.3);color:#22c55e;">📊 Evaluate</button>
   </div>
 </header>
@@ -378,17 +376,12 @@ function openRightPanel(paneName) {
   // Update state flags
   state.showModelView = (paneName === 'modelview');
   state.showPipeline = (paneName === 'inspector');
-  // Update header button highlights
-  $('#btn-model-view').classList.toggle('active', paneName === 'modelview');
-  $('#btn-pipeline').classList.toggle('active', paneName === 'inspector');
 }
 
 function closeRightPanel() {
   $('#right-panel').classList.remove('open');
   state.showModelView = false;
   state.showPipeline = false;
-  $('#btn-model-view').classList.remove('active');
-  $('#btn-pipeline').classList.remove('active');
 }
 
 // Tab click handler
@@ -1836,8 +1829,7 @@ function drawCropBox(ctx, crop, zoomLevel) {
   ctx.restore();
 }
 
-// Model view button and events
-$('#btn-model-view').addEventListener('click', toggleModelView);
+// Model view events
 
 $('#mv-btn-augment').addEventListener('click', () => {
   state.showAugmented = !state.showAugmented;
@@ -1882,7 +1874,7 @@ function togglePipeline() {
   if (state.currentVideo) piLoadRows();
 }
 
-$('#btn-pipeline').addEventListener('click', togglePipeline);
+// (Inspector opened via right-panel tab or keyboard 'I')
 
 // Crop mode toggle
 $('#pi-crop-mode').addEventListener('change', () => {

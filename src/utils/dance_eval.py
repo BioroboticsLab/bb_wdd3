@@ -303,6 +303,7 @@ def cross_window_cluster_predictions(
     confidence_threshold=0.5,
     min_samples=1,
     mode='mean',
+    direction_threshold_deg=30.0,
 ):
     """
     Map per-window crop-space predictions to frame-space, pool per video,
@@ -322,6 +323,9 @@ def cross_window_cluster_predictions(
         confidence_threshold: minimum confidence to include
         min_samples: DBSCAN min_samples
         mode: 'mean' or 'median' for consolidation
+        direction_threshold_deg: angular separation (degrees) beyond which
+            detections are unlikely to cluster. Uses unit-vector chord distance.
+            0 = direction dimension disabled. Default 30°.
     
     Returns:
         dict: {video_name: [predicted_run_dict, ...]}
@@ -381,11 +385,15 @@ def cross_window_cluster_predictions(
             result[vname] = []
             continue
         
-        # Build feature matrix: [norm_x, norm_y, time_seconds]
+        # Build feature matrix: [norm_x, norm_y, time_seconds(, dx, dy)]
+        use_direction = direction_threshold_deg > 0
         features = []
         for p in preds:
             nx, ny = p['position_norm']
-            features.append([nx, ny, p['t_mid_sec']])
+            row = [nx, ny, p['t_mid_sec']]
+            if use_direction:
+                row.extend(p['direction'])
+            features.append(row)
         features = np.array(features)
         
         # Spatial eps in normalized space
@@ -397,6 +405,15 @@ def cross_window_cluster_predictions(
         
         scaled_features = features.copy()
         scaled_features[:, 2] *= temporal_scale  # scale temporal dimension
+        
+        # Scale direction (unit vectors) so that direction_threshold_deg
+        # angular difference ≈ norm_spatial_eps in Euclidean distance.
+        # Chord distance between unit vectors: d = 2·sin(θ/2)
+        if use_direction:
+            max_chord = 2.0 * np.sin(np.radians(direction_threshold_deg) / 2.0)
+            dir_scale = norm_spatial_eps / max_chord if max_chord > 1e-8 else 0.0
+            scaled_features[:, 3] *= dir_scale
+            scaled_features[:, 4] *= dir_scale
         
         clustering = DBSCAN(
             eps=norm_spatial_eps,
@@ -434,13 +451,12 @@ def cross_window_cluster_predictions(
             d_norm = np.sqrt(dir_mean[0]**2 + dir_mean[1]**2) + 1e-8
             dir_mean = [dir_mean[0] / d_norm, dir_mean[1] / d_norm]
             
-            # Temporal: use median start/end (more robust than min/max)
-            if mode == 'median':
-                t_start = float(np.median(temporals[:, 0]))
-                t_end = float(np.median(temporals[:, 1]))
-            else:
-                t_start = float(np.mean(temporals[:, 0]))
-                t_end = float(np.mean(temporals[:, 1]))
+            # Temporal: use min/max (union) — the cluster's temporal extent
+            # is the full span across all member detections, not their average.
+            # This is consistent with average_overlapping_predictions (L244-245)
+            # and deduplicate_gt_dances (L109-110).
+            t_start = float(np.min(temporals[:, 0]))
+            t_end = float(np.max(temporals[:, 1]))
             
             # Confidence: max
             conf = float(np.max(confidences))

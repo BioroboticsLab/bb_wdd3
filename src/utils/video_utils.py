@@ -328,16 +328,17 @@ def train_val_split_videos(video_names, train_ratio=0.9, seed=42):
     """
     import pandas as pd
     
-    video_df = pd.DataFrame({'video_name': list(set(video_names))})
+    # Sort to ensure deterministic ordering regardless of Python hash randomization
+    video_df = pd.DataFrame({'video_name': sorted(set(video_names))})
     video_df['stem'] = video_df['video_name'].apply(get_base_video_stem)
     video_df['category'] = video_df['stem'].apply(get_video_category)
     
-    # Deduplicate to stem level for splitting
-    stem_df = video_df[['stem', 'category']].drop_duplicates()
+    # Deduplicate to stem level for splitting — sorted input ensures stable order
+    stem_df = video_df[['stem', 'category']].drop_duplicates().sort_values('stem')
     
     train_stems = set()
     for _cat, group in stem_df.groupby('category'):
-        stems = np.random.RandomState(seed).permutation(group['stem'].values)
+        stems = np.random.RandomState(seed).permutation(sorted(group['stem'].values))
         n_train = int(train_ratio * len(stems))
         train_stems.update(stems[:n_train])
     
