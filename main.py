@@ -73,9 +73,9 @@ def main(args):
         train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
         #test_df  = balance_sample(test_df,  config['data']['data_fraction_divisor'])
     
-    total_videos = len(video_df)
+    n_unique_videos = data['video_name'].nunique()
     print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")
-    print(f"Train videos: {len(train_videos)} | Test videos: {total_videos - len(train_videos)}")
+    print(f"Train videos: {len(train_videos)} | Test videos: {n_unique_videos - len(train_videos)}")
 
     transforms = T.Compose([
         T.ToPILImage(),

@@ -2,6 +2,7 @@ from tqdm import tqdm
 import torch
 import datetime
 import os
+import wandb
 import torch.nn as nn
 
 def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoch, scaler, ema):
@@ -58,6 +59,16 @@ def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoc
         if (batch_idx + 1) % 100 == 0:
             n = num_batches
             print(f"  [{batch_idx+1}/{len(train_loader)}] Loss={total_loss/n:.4f} Obj={total_obj_loss/n:.4f} NoObj={total_no_obj_loss/n:.4f} Pos={total_position_loss/n:.4f} Dir={total_direction_loss/n:.4f} Temp={total_temporal_loss/n:.4f}", flush=True)
+            wandb.log({
+                'batch/total_loss':     total_loss / n,
+                'batch/object_loss':    total_obj_loss / n,
+                'batch/no_object_loss': total_no_obj_loss / n,
+                'batch/position_loss':  total_position_loss / n,
+                'batch/direction_loss': total_direction_loss / n,
+                'batch/temporal_loss':  total_temporal_loss / n,
+                'batch/lr':            optimizer.param_groups[0]['lr'],
+                'batch/step':          epoch * len(train_loader) + batch_idx,
+            })
     
     # Calculate averages
     avg_val_loss = total_loss / num_batches
