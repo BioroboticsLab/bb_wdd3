@@ -166,7 +166,8 @@ main { display: flex; flex: 1; overflow: hidden; }
   background: #000;
   min-height: 200px;
 }
-#frame-canvas { max-width: 100%; max-height: 100%; display: block; }
+/* Canvas fills container, maintaining aspect ratio via JS sizing */
+#frame-canvas { display: block; }
 #loading-overlay {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;

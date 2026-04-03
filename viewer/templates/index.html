@@ -315,6 +315,44 @@ const tlCanvas = $('#timeline-canvas');
 const tlCtx = tlCanvas.getContext('2d');
 
 // ==========================================================================
+//  Canvas sizing — fills container while preserving video aspect ratio
+// ==========================================================================
+function resizeCanvas() {
+  if (!state.videoWidth || !state.videoHeight) return;
+
+  const container = document.getElementById('canvas-container');
+  const cw = container.clientWidth;
+  const ch = container.clientHeight;
+  if (!cw || !ch) return;
+
+  const videoAR = state.videoWidth / state.videoHeight;
+  const containerAR = cw / ch;
+
+  let displayW, displayH;
+  if (videoAR > containerAR) {
+    // Video is wider than container → fit to width
+    displayW = cw;
+    displayH = cw / videoAR;
+  } else {
+    // Video is taller than container → fit to height
+    displayH = ch;
+    displayW = ch * videoAR;
+  }
+
+  // CSS display size (fills container, preserving aspect ratio)
+  canvas.style.width = Math.round(displayW) + 'px';
+  canvas.style.height = Math.round(displayH) + 'px';
+
+  // Canvas backing resolution: use at least the video resolution
+  // so we keep full detail when the video is larger than the display.
+  // For low-res videos, the display size is larger, so we match that.
+  const backingW = Math.max(state.videoWidth, Math.round(displayW));
+  const backingH = Math.max(state.videoHeight, Math.round(displayH));
+  canvas.width = backingW;
+  canvas.height = backingH;
+}
+
+// ==========================================================================
 //  API helpers
 // ==========================================================================
 async function api(path) {
@@ -470,9 +508,8 @@ async function selectVideo(videoName, isExternal = false) {
     state.videoFps = info.fps || 15;
     state.annotations = annotations;
 
-    // Set canvas size to video resolution
-    canvas.width = state.videoWidth;
-    canvas.height = state.videoHeight;
+    // Size canvas to fill container at correct aspect ratio
+    resizeCanvas();
 
     renderRunList();
 
@@ -629,27 +666,41 @@ function getZoomCenter(frameIdx) {
 
 function renderFrameOnCanvas(img, frameIdx) {
   const Z = state.zoomLevel;
+  const vw = state.videoWidth;
+  const vh = state.videoHeight;
+  const cw = canvas.width;
+  const ch = canvas.height;
+
+  // Scale factor: maps video coordinates → canvas pixels
+  const scaleX = cw / vw;
+  const scaleY = ch / vh;
 
   ctx.save();
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, cw, ch);
 
+  // Transform: video coords → canvas coords, then apply zoom
   if (Z > 1) {
-    // Compute viewport centered on the bee
     const center = getZoomCenter(frameIdx);
-    const viewW = canvas.width / Z;
-    const viewH = canvas.height / Z;
+    // Viewport size in video coords
+    const viewW = vw / Z;
+    const viewH = vh / Z;
 
     // Clamp so we don't go outside the video
     let ox = center.x - viewW / 2;
     let oy = center.y - viewH / 2;
-    ox = Math.max(0, Math.min(ox, canvas.width - viewW));
-    oy = Math.max(0, Math.min(oy, canvas.height - viewH));
+    ox = Math.max(0, Math.min(ox, vw - viewW));
+    oy = Math.max(0, Math.min(oy, vh - viewH));
 
-    ctx.scale(Z, Z);
+    // Scale video→canvas, then zoom and translate in video space
+    ctx.scale(scaleX * Z, scaleY * Z);
     ctx.translate(-ox, -oy);
+  } else {
+    // 1× zoom: just scale video to fill canvas
+    ctx.scale(scaleX, scaleY);
   }
 
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  // Draw image in video coordinates (0,0 to vw,vh)
+  ctx.drawImage(img, 0, 0, vw, vh);
 
   if (state.showAnnotations) {
     const gtStyle = state.showPredictions ? 'background' : 'normal';
@@ -668,16 +719,16 @@ function renderFrameOnCanvas(img, frameIdx) {
 
   ctx.restore();
 
-  // Zoom indicator overlay (drawn outside the transform)
+  // Zoom indicator overlay (drawn outside the transform, in canvas coords)
   if (Z > 1) {
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.roundRect(canvas.width - 70, 10, 60, 28, 6);
+    ctx.roundRect(cw - 70, 10, 60, 28, 6);
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 14px Inter';
     ctx.textAlign = 'center';
-    ctx.fillText(`${Z}×`, canvas.width - 40, 30);
+    ctx.fillText(`${Z}×`, cw - 40, 30);
     ctx.restore();
   }
 }
@@ -1324,24 +1375,23 @@ function showAnnStatus(msg, type) {
 canvas.addEventListener('click', (e) => {
   if (!annEditMode) return;
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const cx = (e.clientX - rect.left) * scaleX;
-  const cy = (e.clientY - rect.top) * scaleY;
+  // Convert screen coords → video coords
+  const vx = (e.clientX - rect.left) / rect.width * state.videoWidth;
+  const vy = (e.clientY - rect.top) / rect.height * state.videoHeight;
 
   if (e.shiftKey) {
     // Set direction from current position to click point
     const px = parseFloat($('#ann-x').value) || 0;
     const py = parseFloat($('#ann-y').value) || 0;
-    const dx = cx - px;
-    const dy = cy - py;
+    const dx = vx - px;
+    const dy = vy - py;
     const len = Math.sqrt(dx*dx + dy*dy) || 1;
     if ($('#ann-dx')) $('#ann-dx').value = (dx/len).toFixed(3);
     if ($('#ann-dy')) $('#ann-dy').value = (dy/len).toFixed(3);
   } else {
     // Set position
-    if ($('#ann-x')) $('#ann-x').value = cx.toFixed(1);
-    if ($('#ann-y')) $('#ann-y').value = cy.toFixed(1);
+    if ($('#ann-x')) $('#ann-x').value = vx.toFixed(1);
+    if ($('#ann-y')) $('#ann-y').value = vy.toFixed(1);
   }
 });
 
@@ -1576,6 +1626,10 @@ document.addEventListener('keydown', (e) => {
 
 // Resize handler
 window.addEventListener('resize', () => {
+  resizeCanvas();
+  if (state.currentVideo && state.frameCache.has(state.currentFrame)) {
+    renderFrameOnCanvas(state.frameCache.get(state.currentFrame), state.currentFrame);
+  }
   renderTimeline();
 });
 
