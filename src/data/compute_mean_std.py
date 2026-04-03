@@ -48,14 +48,13 @@ def main():
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    video_df = pd.DataFrame({'video_name': data['video_name'].unique()})
-    video_df['category'] = video_df['video_name'].apply(get_video_category)
-
-    train_videos = set()
-    for category, group in video_df.groupby('category'):
-        vids = np.random.RandomState(SEED).permutation(group['video_name'].values)
-        n_train = int(config['data']['train_ratio'] * len(vids))
-        train_videos.update(vids[:n_train])
+    # Stem-based split to match training (prevents info-leak between variants)
+    from src.utils.video_utils import train_val_split_videos
+    train_videos, _ = train_val_split_videos(
+        data['video_name'].unique(),
+        train_ratio=config['data']['train_ratio'],
+        seed=SEED
+    )
     
     train_df = data[data['video_name'].isin(train_videos)].reset_index(drop=True)
 

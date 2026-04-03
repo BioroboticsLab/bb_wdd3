@@ -61,11 +61,14 @@ def get_base_and_variant(video_name: str):
         039_576_440_30fps.mp4        →  ('039', 576, 440, '30fps')
         039_1152_880_30fps_30fps.mp4 →  ('039', 1152, 880, '30fps_30fps')
         001_576_440.mp4              →  ('001', 576, 440, 'native')
+        083_1152_880_ds15fps.mp4     →  ('083', 1152, 880, 'ds15fps')
+        T9_960_540_ds30fps.mp4       →  ('T9',  960, 540, 'ds30fps')
         C1_11_03_25_..._480_270.mp4  →  ('C1_11_03_25_...', 480, 270, 'native')
     """
     name = video_name.replace(".mp4", "")
-    # Match: <base>_<width>_<height>[_<N>fps[_<N>fps...]]
-    match = re.match(r"^(.+?)_(\d+)_(\d+)((?:_\d+fps)*)$", name)
+    # Match: <base>_<width>_<height>[_<fps_suffix>]
+    # fps_suffix can be _Nfps, _dsNfps, or _Nfps_Nfps (doubled)
+    match = re.match(r"^(.+?)_(\d+)_(\d+)((?:_(?:ds)?\d+fps)*)$", name)
     if match:
         base = match.group(1)
         w, h = int(match.group(2)), int(match.group(3))
@@ -208,21 +211,18 @@ print("Building recording index …")
 recording_index = build_recording_index(annotations_df)
 print(f"  {len(recording_index)} base recordings")
 
-# Compute train/val split (replicate main.py exactly)
+# Compute train/val split (stem-based to prevent info-leak between variants)
 print("Computing train/val split …")
-from src.utils.video_utils import get_video_category
+from src.utils.video_utils import train_val_split_videos
 with open(CONFIG_PATH) as _f:
     _config = yaml.safe_load(_f)
 _SEED = 42
 _train_ratio = _config['data']['train_ratio']
-_video_df = pd.DataFrame({'video_name': annotations_df['video_name'].unique()})
-_video_df['category'] = _video_df['video_name'].apply(get_video_category)
-train_videos = set()
-for _cat, _group in _video_df.groupby('category'):
-    _vids = np.random.RandomState(_SEED).permutation(_group['video_name'].values)
-    _n_train = int(_train_ratio * len(_vids))
-    train_videos.update(_vids[:_n_train])
-val_videos = set(_video_df['video_name'].values) - train_videos
+train_videos, val_videos = train_val_split_videos(
+    annotations_df['video_name'].unique(),
+    train_ratio=_train_ratio,
+    seed=_SEED
+)
 print(f"  {len(train_videos)} train / {len(val_videos)} val videos")
 
 # Load GT overrides (sidecar JSON for annotation edits)
