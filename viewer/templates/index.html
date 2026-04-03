@@ -6,919 +6,8 @@
 <title>Waggle Dance Annotation Viewer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root {
-  --bg-primary: #0c0c18;
-  --bg-secondary: #12122a;
-  --bg-tertiary: #1a1a3e;
-  --bg-card: #1e1e42;
-  --border: #2a2a5a;
-  --text-primary: #e8e8f0;
-  --text-secondary: #9898b8;
-  --text-muted: #6868a0;
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --green: #22c55e;
-  --green-ghost: rgba(34, 197, 94, 0.25);
-  --amber: #f59e0b;
-  --red: #ef4444;
-  --scrollbar-bg: #1a1a3e;
-  --scrollbar-thumb: #3a3a6a;
-}
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  font-family: 'Inter', -apple-system, sans-serif;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  height: 100vh;
-  overflow: hidden;
-  user-select: none;
-}
-/* Allow text selection in pipeline inspector metadata */
-.pi-metadata, .pi-metadata * {
-  user-select: text;
-  cursor: text;
-}
-.pi-metadata .meta-val {
-  cursor: text;
-}
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+<link rel="stylesheet" href="/static/viewer.css">
 
-/* Layout */
-#app { display: flex; flex-direction: column; height: 100vh; }
-header {
-  display: flex; align-items: center; gap: 16px;
-  padding: 10px 20px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
-header h1 span { font-size: 18px; margin-right: 4px; }
-#search-box {
-  flex: 0 0 200px;
-  padding: 6px 12px; border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.2s;
-}
-#search-box:focus { border-color: var(--accent); }
-#search-box::placeholder { color: var(--text-muted); }
-.header-actions { display: flex; gap: 8px; margin-left: auto; }
-.btn {
-  padding: 6px 14px; border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 12px; font-weight: 500;
-  cursor: pointer; transition: all 0.15s;
-  white-space: nowrap;
-}
-.btn:hover { background: var(--bg-card); border-color: var(--accent); }
-.btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn-icon { padding: 6px 10px; font-size: 14px; }
-
-main { display: flex; flex: 1; overflow: hidden; }
-
-/* Sidebar */
-#sidebar {
-  width: 240px; min-width: 240px;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  overflow: hidden;
-}
-#sidebar-header {
-  padding: 12px 14px 8px;
-  font-size: 11px; font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  border-bottom: 1px solid var(--border);
-}
-#rec-list {
-  flex: 1; overflow-y: auto;
-  padding: 4px 0;
-}
-.rec-item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 14px;
-  cursor: pointer; transition: background 0.1s;
-  font-size: 13px;
-  border-left: 3px solid transparent;
-}
-.rec-item:hover { background: var(--bg-tertiary); }
-.rec-item.selected {
-  background: var(--bg-tertiary);
-  border-left-color: var(--accent);
-}
-.rec-item .name { font-weight: 500; }
-.rec-item .count {
-  font-size: 11px; color: var(--text-muted);
-  background: var(--bg-card); padding: 2px 7px;
-  border-radius: 10px;
-}
-/* Train/Val split badges */
-.split-badge {
-  font-size: 9px; font-weight: 700;
-  width: 16px; height: 16px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 3px;
-  flex-shrink: 0;
-  margin-right: 6px;
-}
-.split-train {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
-  border: 1px solid rgba(34, 197, 94, 0.3);
-}
-.split-val {
-  background: rgba(251, 191, 36, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(251, 191, 36, 0.3);
-}
-.split-train-border { border-bottom: 2px solid rgba(34, 197, 94, 0.4); }
-.split-val-border { border-bottom: 2px solid rgba(251, 191, 36, 0.4); }
-
-/* Viewer */
-#viewer {
-  flex: 1; display: flex; flex-direction: column;
-  overflow: hidden; padding: 0;
-}
-#variant-tabs {
-  display: flex; gap: 4px; padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0; flex-wrap: wrap;
-  background: var(--bg-secondary);
-}
-.variant-tab {
-  padding: 5px 12px; border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px; font-weight: 500;
-  cursor: pointer; transition: all 0.15s;
-}
-.variant-tab:hover { border-color: var(--accent); color: var(--text-primary); }
-.variant-tab.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
-.variant-tab.unavailable { opacity: 0.35; cursor: not-allowed; }
-
-/* Canvas area */
-#canvas-container {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  overflow: hidden; position: relative;
-  background: #000;
-  min-height: 200px;
-}
-#frame-canvas { max-width: 100%; max-height: 100%; display: block; }
-#loading-overlay {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  font-size: 14px; color: var(--text-secondary);
-  pointer-events: none; opacity: 0;
-  transition: opacity 0.2s;
-}
-#loading-overlay.visible { opacity: 1; }
-#empty-state {
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  color: var(--text-muted); font-size: 14px;
-}
-#empty-state .icon { font-size: 48px; }
-
-/* Controls */
-#controls {
-  display: flex; align-items: center; gap: 12px;
-  padding: 8px 16px;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.ctrl-group { display: flex; align-items: center; gap: 4px; }
-.ctrl-btn {
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 6px; border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 14px; cursor: pointer;
-  transition: all 0.1s;
-}
-.ctrl-btn:hover { background: var(--bg-card); border-color: var(--accent); }
-.ctrl-btn.play-btn { width: 40px; height: 40px; font-size: 16px; }
-#frame-info {
-  font-size: 12px; color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  min-width: 180px;
-}
-#frame-info strong { color: var(--text-primary); }
-#speed-slider { width: 80px; accent-color: var(--accent); }
-#speed-label { font-size: 11px; color: var(--text-muted); min-width: 30px; }
-.ctrl-divider {
-  width: 1px; height: 24px;
-  background: var(--border); margin: 0 4px;
-}
-
-/* Timeline */
-#timeline-container {
-  padding: 6px 16px 4px;
-  background: var(--bg-secondary);
-  flex-shrink: 0;
-}
-#timeline-canvas {
-  width: 100%; height: 36px;
-  cursor: pointer; border-radius: 4px;
-  display: block;
-}
-
-/* Waggle run list */
-#run-list {
-  display: flex; gap: 6px; padding: 6px 16px 10px;
-  overflow-x: auto;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.run-chip {
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 10px; border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  font-size: 11px; cursor: pointer;
-  transition: all 0.15s; white-space: nowrap;
-  flex-shrink: 0;
-}
-.run-chip:hover { border-color: var(--accent); }
-.run-chip.active { border-color: var(--green); background: rgba(34, 197, 94, 0.1); }
-.run-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  flex-shrink: 0;
-}
-.run-frames { color: var(--text-muted); }
-
-/* Keyboard hint */
-#kbd-hint {
-  font-size: 10px; color: var(--text-muted);
-  margin-left: auto; white-space: nowrap;
-}
-kbd {
-  padding: 1px 5px; border-radius: 3px;
-  background: var(--bg-card); border: 1px solid var(--border);
-  font-family: inherit; font-size: 10px;
-}
-
-/* Model View Panel */
-#model-view-panel {
-  width: 0; min-width: 0;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
-  transition: width 0.25s ease, min-width 0.25s ease, padding 0.25s ease;
-  display: flex; flex-direction: column;
-  padding: 0;
-}
-#model-view-panel.open {
-  width: 320px; min-width: 320px;
-  padding: 12px;
-}
-#model-view-panel .mv-title {
-  font-size: 12px; font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  margin-bottom: 10px;
-  display: none;
-}
-#model-view-panel.open .mv-title { display: block; }
-.mv-section {
-  margin-bottom: 14px;
-  display: none;
-}
-#model-view-panel.open .mv-section { display: block; }
-.mv-label {
-  font-size: 11px; font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-}
-.mv-canvas-wrap {
-  position: relative;
-  width: 224px; height: 224px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: #000;
-  margin: 0 auto;
-}
-.mv-canvas-wrap canvas {
-  width: 224px; height: 224px;
-  display: block;
-}
-.mv-meta {
-  font-size: 11px; color: var(--text-muted);
-  margin-top: 6px;
-  line-height: 1.5;
-}
-.mv-meta strong { color: var(--text-primary); }
-.mv-meta .ratio-bar {
-  display: inline-block;
-  height: 8px;
-  background: var(--accent);
-  border-radius: 3px;
-  vertical-align: middle;
-  margin-left: 4px;
-}
-.mv-btn-row {
-  display: flex; gap: 6px;
-  margin-top: 8px;
-}
-.mv-btn {
-  padding: 4px 10px; border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 11px; cursor: pointer;
-  transition: all 0.15s;
-}
-.mv-btn:hover { border-color: var(--accent); background: var(--bg-card); }
-.mv-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.mv-aug-list {
-  font-size: 10px; color: var(--text-muted);
-  margin-top: 6px;
-  line-height: 1.6;
-}
-.mv-aug-list span {
-  display: inline-block;
-  padding: 1px 6px;
-  background: var(--bg-card);
-  border-radius: 3px;
-  margin: 1px 2px;
-}
-
-/* Pipeline Inspector Panel */
-#pipeline-panel {
-  width: 0; min-width: 0;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
-  overflow: hidden;
-  transition: width 0.25s ease, min-width 0.25s ease, padding 0.25s ease;
-  display: flex; flex-direction: column;
-  padding: 0;
-}
-#pipeline-panel.open {
-  width: 520px; min-width: 520px;
-  padding: 12px;
-  overflow: hidden;
-}
-.pi-header {
-  display: none;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  flex-shrink: 0;
-}
-#pipeline-panel.open .pi-header { display: flex; }
-.pi-title {
-  font-size: 13px; font-weight: 600;
-  color: var(--text-primary);
-}
-.pi-row-selector {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; color: var(--text-secondary);
-}
-.pi-row-selector select {
-  padding: 3px 6px; border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary); color: var(--text-primary);
-  font-size: 11px; cursor: pointer;
-}
-.pi-row-info {
-  font-size: 10px; color: var(--text-muted);
-}
-.pi-tabs {
-  display: none;
-  gap: 2px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
-  flex-shrink: 0;
-}
-#pipeline-panel.open .pi-tabs { display: flex; }
-.pi-tab {
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 10px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.pi-tab:hover { background: var(--bg-card); color: var(--text-primary); }
-.pi-tab.active {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-.pi-content {
-  display: none;
-  min-height: 0;
-  position: relative;
-  flex: 1 1 0;
-  overflow-y: auto;
-}
-#pipeline-panel.open .pi-content { display: flex; flex-direction: column; }
-.pi-loading {
-  font-size: 12px; color: var(--amber);
-  text-align: center; padding: 20px;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-.pi-empty {
-  font-size: 11px; color: var(--text-muted);
-  text-align: center; padding: 20px;
-}
-.pi-options {
-  display: none;
-  margin-bottom: 4px;
-  flex-shrink: 0;
-}
-#pipeline-panel.open .pi-options { display: block; }
-.pi-toggle {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; color: var(--text-secondary);
-  cursor: pointer;
-}
-.pi-toggle input[type="checkbox"] {
-  accent-color: var(--accent);
-}
-.pi-player-wrap {
-  margin-top: 4px;
-  flex-shrink: 0;
-}
-.pi-player-label {
-  font-size: 10px; color: var(--text-muted);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-#pi-player-canvas {
-  width: 100%;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: #000;
-  display: block;
-}
-.pi-player-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-.pi-play-btn {
-  width: 28px; height: 28px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
-}
-.pi-play-btn:hover { background: var(--accent); color: #fff; }
-.pi-scrubber {
-  flex: 1;
-  height: 4px;
-  -webkit-appearance: none; appearance: none;
-  background: var(--bg-card); border-radius: 2px;
-  outline: none; cursor: pointer;
-}
-.pi-scrubber::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 14px; height: 14px;
-  border-radius: 50%; background: var(--accent);
-  cursor: pointer;
-}
-.pi-frame-info {
-  font-size: 10px; color: var(--text-muted);
-  min-width: 40px; text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.pi-redraw-overlay {
-  position: absolute;
-  top: 8px; right: 8px;
-  background: rgba(30, 30, 40, 0.85);
-  color: #f59e0b;
-  border: 1px solid rgba(245, 158, 11, 0.4);
-  border-radius: 6px;
-  padding: 5px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  backdrop-filter: blur(4px);
-  transition: all 0.15s;
-  z-index: 5;
-}
-.pi-redraw-overlay:hover {
-  background: rgba(245, 158, 11, 0.25);
-  border-color: #f59e0b;
-  color: #fff;
-}
-.pi-metadata {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-card);
-  border-radius: 6px;
-  padding: 10px;
-  line-height: 1.7;
-  flex: 1 1 0;
-  min-height: 60px;
-  overflow-y: auto;
-}
-.pi-metadata .meta-key {
-  color: var(--text-muted);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-.pi-metadata .meta-val {
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.pi-metadata table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10px;
-}
-.pi-metadata th {
-  text-align: left; padding: 2px 6px;
-  color: var(--text-muted); font-weight: 500;
-  border-bottom: 1px solid var(--border);
-}
-.pi-metadata td {
-  padding: 2px 6px;
-  font-variant-numeric: tabular-nums;
-}
-.pi-heatmap {
-  display: block; margin: 8px auto;
-  image-rendering: pixelated;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-.pi-pred-list {
-  margin-top: 6px;
-}
-.pi-pred-item {
-  padding: 4px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
-  margin-bottom: 3px;
-  font-size: 10px;
-  display: flex; justify-content: space-between;
-}
-
-/* Crop variance grid */
-.pi-variance-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 6px;
-  margin-top: 8px;
-}
-.pi-variance-item {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: #000;
-  position: relative;
-}
-.pi-variance-item canvas {
-  width: 100%;
-  display: block;
-}
-.pi-variance-label {
-  position: absolute;
-  bottom: 0; left: 0; right: 0;
-  padding: 2px 6px;
-  background: rgba(0,0,0,0.7);
-  font-size: 9px;
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-/* Augmented transform controls */
-.pi-aug-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  flex-shrink: 0;
-}
-.pi-aug-controls .pi-aug-btn {
-  padding: 4px 10px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.pi-aug-controls .pi-aug-btn:hover {
-  border-color: var(--accent);
-  background: var(--bg-card);
-}
-.pi-aug-controls .pi-aug-btn.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.pi-aug-info-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 6px;
-}
-.pi-aug-info-list span {
-  display: inline-block;
-  padding: 1px 6px;
-  background: var(--bg-card);
-  border-radius: 3px;
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-/* Prediction controls */
-.pred-controls {
-  display: flex; align-items: center; gap: 6px;
-  margin-left: 8px;
-  padding-left: 8px;
-  border-left: 1px solid var(--border);
-}
-.pred-mode-select {
-  padding: 4px 8px; border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 11px; cursor: pointer;
-  outline: none;
-}
-.pred-mode-select:focus { border-color: var(--accent); }
-.pred-conf-group {
-  display: flex; align-items: center; gap: 4px;
-}
-.pred-conf-slider {
-  width: 80px; height: 4px;
-  -webkit-appearance: none; appearance: none;
-  background: var(--bg-card); border-radius: 2px;
-  outline: none; cursor: pointer;
-}
-.pred-conf-slider::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 12px; height: 12px;
-  border-radius: 50%; background: var(--accent);
-  cursor: pointer;
-}
-.pred-conf-label {
-  font-size: 10px; color: var(--text-secondary);
-  min-width: 55px; font-variant-numeric: tabular-nums;
-}
-.ckpt-badge {
-  font-size: 10px; color: var(--text-muted);
-  background: var(--bg-card);
-  padding: 2px 8px; border-radius: 10px;
-  max-width: 160px; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
-}
-.pred-loading {
-  font-size: 11px; color: var(--amber);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-/* External Videos Section */
-#ext-section {
-  border-top: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  overflow: hidden;
-  flex-shrink: 0;
-  max-height: 40%;
-}
-#ext-header {
-  padding: 10px 14px 6px;
-  font-size: 11px; font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: space-between;
-  transition: color 0.15s;
-}
-#ext-header:hover { color: var(--text-secondary); }
-#ext-header .ext-count {
-  font-size: 10px; font-weight: 400;
-  background: var(--bg-card); padding: 1px 7px;
-  border-radius: 10px;
-}
-#ext-list {
-  flex: 1; overflow-y: auto;
-  padding: 2px 0;
-}
-.ext-item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 14px;
-  cursor: pointer; transition: background 0.1s;
-  font-size: 12px;
-  border-left: 3px solid transparent;
-}
-.ext-item:hover { background: var(--bg-tertiary); }
-.ext-item.selected {
-  background: var(--bg-tertiary);
-  border-left-color: #8b5cf6;
-}
-.ext-item .ext-name {
-  font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; max-width: 130px;
-}
-.ext-item .ext-info {
-  font-size: 10px; color: var(--text-muted);
-  white-space: nowrap;
-}
-.ext-badge {
-  font-size: 9px; font-weight: 700;
-  width: 16px; height: 16px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 3px; flex-shrink: 0; margin-right: 6px;
-  background: rgba(139, 92, 246, 0.15);
-  color: #8b5cf6;
-  border: 1px solid rgba(139, 92, 246, 0.3);
-}
-
-/* Infer button in controls area */
-#infer-controls {
-  display: none;
-  align-items: center;
-  gap: 8px;
-  margin-left: 8px;
-  padding-left: 8px;
-  border-left: 1px solid var(--border);
-}
-#btn-infer {
-  padding: 5px 14px; border-radius: 6px;
-  border: 1px solid #8b5cf6;
-  background: rgba(139, 92, 246, 0.15);
-  color: #c4b5fd;
-  font-size: 12px; font-weight: 600;
-  cursor: pointer; transition: all 0.15s;
-  white-space: nowrap;
-}
-#btn-infer:hover {
-  background: #8b5cf6; color: #fff;
-}
-#btn-infer:disabled {
-  opacity: 0.4; cursor: not-allowed;
-}
-#btn-infer.running {
-  animation: pulse 1.5s ease-in-out infinite;
-  background: rgba(245, 158, 11, 0.2);
-  border-color: #f59e0b;
-  color: #f59e0b;
-  cursor: wait;
-}
-#infer-progress {
-  display: none;
-  align-items: center; gap: 6px;
-}
-#infer-progress-bar {
-  width: 100px; height: 6px;
-  background: var(--bg-card); border-radius: 3px;
-  overflow: hidden;
-}
-#infer-progress-fill {
-  height: 100%; width: 0%;
-  background: linear-gradient(90deg, #8b5cf6, #c084fc);
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-#infer-progress-text {
-  font-size: 10px; color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 40px;
-}
-
-/* Cluster Inspector Controls */
-.cluster-params {
-  background: var(--bg-card);
-  border-radius: 8px;
-  padding: 10px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.cluster-slider-group {
-  display: flex; flex-direction: column; gap: 3px;
-}
-.cluster-slider-label {
-  font-size: 10px; color: var(--text-muted);
-  text-transform: uppercase; letter-spacing: 0.3px;
-  display: flex; justify-content: space-between; align-items: center;
-}
-.cluster-slider-val {
-  color: var(--accent); font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.cluster-slider {
-  width: 100%; height: 4px;
-  -webkit-appearance: none; appearance: none;
-  background: var(--bg-tertiary); border-radius: 2px;
-  outline: none; cursor: pointer;
-}
-.cluster-slider::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 14px; height: 14px;
-  border-radius: 50%; background: var(--accent);
-  cursor: pointer; transition: transform 0.1s;
-}
-.cluster-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-}
-.cluster-toggle-row {
-  display: flex; justify-content: space-between; align-items: center;
-  gap: 8px;
-}
-.cluster-method-select {
-  padding: 3px 8px; border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 10px; cursor: pointer; outline: none;
-}
-.cluster-method-select:focus { border-color: var(--accent); }
-.cluster-action-row {
-  display: flex; gap: 6px; margin-top: 2px;
-}
-.cluster-apply-btn {
-  flex: 1; padding: 6px 12px; border-radius: 6px;
-  border: 1px solid rgba(139, 92, 246, 0.5);
-  background: rgba(139, 92, 246, 0.15);
-  color: #c4b5fd; font-size: 11px; font-weight: 600;
-  cursor: pointer; transition: all 0.15s;
-}
-.cluster-apply-btn:hover {
-  background: #8b5cf6; color: #fff;
-}
-.cluster-apply-btn:disabled {
-  opacity: 0.4; cursor: not-allowed;
-}
-.cluster-reset-btn {
-  padding: 6px 12px; border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary); font-size: 11px;
-  cursor: pointer; transition: all 0.15s;
-}
-.cluster-reset-btn:hover {
-  border-color: var(--text-muted); color: var(--text-primary);
-}
-.cluster-stats {
-  margin-top: 8px; padding: 8px 10px;
-  background: var(--bg-card); border-radius: 6px;
-  font-size: 11px; color: var(--text-secondary);
-  line-height: 1.8;
-  font-variant-numeric: tabular-nums;
-}
-.cluster-stats .stat-highlight {
-  color: #c4b5fd; font-weight: 600;
-}
-.cluster-stats .stat-muted {
-  color: var(--text-muted);
-}
-.cluster-legend {
-  margin-top: 8px;
-  display: flex; flex-wrap: wrap; gap: 4px;
-  max-height: 120px; overflow-y: auto;
-}
-.cluster-legend-item {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 7px; border-radius: 10px;
-  font-size: 9px; font-weight: 500;
-  background: var(--bg-card);
-  cursor: pointer; transition: all 0.15s;
-  border: 1px solid transparent;
-}
-.cluster-legend-item:hover {
-  border-color: var(--border);
-  filter: brightness(1.2);
-}
-.cluster-legend-swatch {
-  width: 8px; height: 8px; border-radius: 50%;
-  flex-shrink: 0;
-}
-</style>
 </head>
 <body>
 <div id="app">
@@ -991,7 +80,7 @@ kbd {
       <label id="speed-label">1×</label>
       <input type="range" id="speed-slider" min="0.25" max="4" step="0.25" value="1">
       <div id="kbd-hint">
-      <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>A</kbd> annotations &nbsp;<kbd>P</kbd> predictions &nbsp;<kbd>Z</kbd> zoom &nbsp;<kbd>M</kbd> model &nbsp;<kbd>R</kbd> random
+      <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>A</kbd> annotations &nbsp;<kbd>P</kbd> predictions &nbsp;<kbd>Z</kbd> zoom &nbsp;<kbd>N</kbd> new GT &nbsp;<kbd>Del</kbd> delete &nbsp;<kbd>R</kbd> random
       </div>
       <div id="infer-controls">
         <button id="btn-infer" title="Run full-frame inference on this video">🔬 Run Inference</button>
@@ -1008,122 +97,152 @@ kbd {
       <canvas id="timeline-canvas"></canvas>
     </div>
 
-    <div id="run-list"></div>
   </section>
 
-  <!-- Model View Panel -->
-  <aside id="model-view-panel">
-    <div class="mv-title">🤖 Model View</div>
+  <!-- Unified Right Panel (tabbed: Annotations / Inspector / Model View) -->
+  <aside id="right-panel">
+    <div class="rp-tabs">
+      <button class="rp-tab active" data-pane="annotations">📋 Annotations</button>
+      <button class="rp-tab" data-pane="inspector">🔬 Inspector</button>
+      <button class="rp-tab" data-pane="modelview">🤖 Model</button>
+    </div>
+    <div class="rp-body">
 
-    <div class="mv-section">
-      <div class="mv-label">Crop (224×224) — what the model sees</div>
-      <div class="mv-canvas-wrap">
-        <canvas id="mv-crop-canvas" width="224" height="224"></canvas>
+      <!-- ─── Annotations Pane ─── -->
+      <div class="rp-pane active" id="pane-annotations">
+        <div class="ann-header">
+          <span class="ann-count" id="ann-count">0 runs</span>
+          <button class="btn-ann-add" id="btn-ann-add">+ Add Run</button>
+        </div>
+        <div class="ann-list" id="ann-list"></div>
+        <div id="ann-editor-container"></div>
+        <div class="ann-tip" id="ann-tip">
+          Click a run to jump to it. Use <kbd>N</kbd> to add new, <kbd>Delete</kbd> to remove selected.
+        </div>
       </div>
-      <div class="mv-meta" id="mv-crop-meta"></div>
-    </div>
 
-    <div class="mv-section">
-      <div class="mv-label">Augmented view</div>
-      <div class="mv-btn-row">
-        <button class="mv-btn" id="mv-btn-augment">Show Augmented</button>
-        <button class="mv-btn" id="mv-btn-reroll">🎲 Re-roll</button>
+      <!-- ─── Inspector Pane (moved from pipeline-panel) ─── -->
+      <div class="rp-pane" id="pane-inspector">
+        <div class="pi-header" style="display:flex;">
+          <span class="pi-title">🔬 Pipeline Inspector</span>
+          <div class="pi-row-selector">
+            <label>Row:</label>
+            <select id="pi-row-select"></select>
+            <span id="pi-row-info" class="pi-row-info"></span>
+          </div>
+        </div>
+        <div class="pi-tabs" id="pi-tabs" style="display:flex;">
+          <button class="pi-tab active" data-stage="raw">1. Raw</button>
+          <button class="pi-tab" data-stage="crop">2. Crop</button>
+          <button class="pi-tab" data-stage="transform">3. Transform</button>
+          <button class="pi-tab" data-stage="augment">4. Augment</button>
+          <button class="pi-tab" data-stage="sample">5. Sample</button>
+          <button class="pi-tab" data-stage="target">6. Target</button>
+          <button class="pi-tab" data-stage="output">7. Output</button>
+          <button class="pi-tab" data-stage="cluster" style="border-color:rgba(139,92,246,0.4);color:#c4b5fd;">🔗 Cluster</button>
+        </div>
+        <div class="pi-options" style="display:block;">
+          <label class="pi-toggle" title="Training mode uses random crop offset (position varies). Inference mode centers crop on bee (always grid 14,14).">
+            <input type="checkbox" id="pi-crop-mode">
+            <span>Training crop (random offset)</span>
+          </label>
+        </div>
+        <div class="pi-content" id="pi-content" style="display:flex;flex-direction:column;">
+          <div class="pi-loading" id="pi-loading" style="display:none;">⏳ Loading stage...</div>
+          <div class="pi-empty" id="pi-empty">Select a video and click a tab to inspect the pipeline.</div>
+          <!-- Video player for frames -->
+          <div class="pi-player-wrap" id="pi-player-wrap" style="display:none;">
+            <div class="pi-player-label" id="pi-player-label">Frames</div>
+            <div style="position:relative; width:100%;">
+              <canvas id="pi-player-canvas" width="480" height="480" style="width:100%; display:block;"></canvas>
+              <button class="pi-redraw-overlay" id="pi-aug-redraw" title="Re-roll augmentations with a new random seed" style="display:none;">🎲 Re-draw</button>
+            </div>
+            <div class="pi-player-controls">
+              <button class="pi-play-btn" id="pi-play-btn" title="Play/Pause">▶</button>
+              <input type="range" class="pi-scrubber" id="pi-scrubber" min="0" max="15" value="0">
+              <span class="pi-frame-info" id="pi-frame-info">0/0</span>
+            </div>
+          </div>
+          <div class="pi-metadata" id="pi-metadata"></div>
+          <!-- Cluster Inspector Panel -->
+          <div id="pi-cluster-panel" style="display:none;">
+            <div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.6;">
+              Visualise how raw per-window detections are merged into consolidated waggle events via DBSCAN clustering.
+              Adjust parameters below and press <b>Apply</b> to re-cluster.
+            </div>
+            <div class="cluster-params">
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Spatial ε <span class="cluster-slider-val" id="cl-spatial-val">30</span> ref-px
+                </label>
+                <input type="range" class="cluster-slider" id="cl-spatial"
+                       min="5" max="200" step="1" value="30">
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">at 1000px ref width</span>
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Temporal ε <span class="cluster-slider-val" id="cl-temporal-val">300</span> ms
+                </label>
+                <input type="range" class="cluster-slider" id="cl-temporal"
+                       min="50" max="5000" step="50" value="300">
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Min confidence <span class="cluster-slider-val" id="cl-conf-val">0.00</span>
+                </label>
+                <input type="range" class="cluster-slider" id="cl-conf"
+                       min="0" max="1" step="0.01" value="0">
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Min samples <span class="cluster-slider-val" id="cl-minsamp-val">1</span>
+                </label>
+                <input type="range" class="cluster-slider" id="cl-minsamp"
+                       min="1" max="10" step="1" value="1">
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">1 = all core · higher = noise filter</span>
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Direction ε <span class="cluster-slider-val" id="cl-dirthresh-val">30</span>°
+                </label>
+                <input type="range" class="cluster-slider" id="cl-dirthresh"
+                       min="0" max="90" step="5" value="30">
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">0 = disabled · angular separation for clustering</span>
+              </div>
+              <div class="cluster-action-row">
+                <button class="cluster-apply-btn" id="cl-apply" title="Re-run clustering with current parameters">🔄 Apply</button>
+                <button class="cluster-reset-btn" id="cl-reset" title="Reset to config defaults">↩ Reset</button>
+              </div>
+            </div>
+            <div class="cluster-stats" id="cl-stats" style="display:none;"></div>
+            <div class="cluster-legend" id="cl-legend"></div>
+          </div>
+        </div>
       </div>
-      <div class="mv-canvas-wrap" id="mv-aug-wrap" style="display:none; margin-top:8px;">
-        <canvas id="mv-aug-canvas" width="224" height="224"></canvas>
-      </div>
-      <div class="mv-aug-list" id="mv-aug-info"></div>
-    </div>
-  </aside>
 
-  <!-- Pipeline Inspector Panel (replaces old Model View) -->
-  <aside id="pipeline-panel">
-    <div class="pi-header">
-      <span class="pi-title">🔬 Pipeline Inspector</span>
-      <div class="pi-row-selector">
-        <label>Row:</label>
-        <select id="pi-row-select"></select>
-        <span id="pi-row-info" class="pi-row-info"></span>
-      </div>
-    </div>
-    <div class="pi-tabs" id="pi-tabs">
-      <button class="pi-tab active" data-stage="raw">1. Raw</button>
-      <button class="pi-tab" data-stage="crop">2. Crop</button>
-      <button class="pi-tab" data-stage="transform">3. Transform</button>
-      <button class="pi-tab" data-stage="augment">4. Augment</button>
-      <button class="pi-tab" data-stage="sample">5. Sample</button>
-      <button class="pi-tab" data-stage="target">6. Target</button>
-      <button class="pi-tab" data-stage="output">7. Output</button>
-      <button class="pi-tab" data-stage="cluster" style="border-color:rgba(139,92,246,0.4);color:#c4b5fd;">🔗 Cluster</button>
-    </div>
-    <div class="pi-options">
-      <label class="pi-toggle" title="Training mode uses random crop offset (position varies). Inference mode centers crop on bee (always grid 14,14).">
-        <input type="checkbox" id="pi-crop-mode">
-        <span>Training crop (random offset)</span>
-      </label>
-    </div>
-    <div class="pi-content" id="pi-content">
-      <div class="pi-loading" id="pi-loading" style="display:none;">⏳ Loading stage...</div>
-      <div class="pi-empty" id="pi-empty">Select a video and click a tab to inspect the pipeline.</div>
-      <!-- Video player for frames -->
-      <div class="pi-player-wrap" id="pi-player-wrap" style="display:none;">
-        <div class="pi-player-label" id="pi-player-label">Frames</div>
-        <div style="position:relative; width:100%;">
-          <canvas id="pi-player-canvas" width="480" height="480" style="width:100%; display:block;"></canvas>
-          <button class="pi-redraw-overlay" id="pi-aug-redraw" title="Re-roll augmentations with a new random seed" style="display:none;">🎲 Re-draw</button>
+      <!-- ─── Model View Pane (moved from model-view-panel) ─── -->
+      <div class="rp-pane" id="pane-modelview">
+        <div class="mv-title" style="display:block;">🤖 Model View</div>
+        <div class="mv-section" style="display:block;">
+          <div class="mv-label">Crop (224×224) — what the model sees</div>
+          <div class="mv-canvas-wrap">
+            <canvas id="mv-crop-canvas" width="224" height="224"></canvas>
+          </div>
+          <div class="mv-meta" id="mv-crop-meta"></div>
         </div>
-        <div class="pi-player-controls">
-          <button class="pi-play-btn" id="pi-play-btn" title="Play/Pause">▶</button>
-          <input type="range" class="pi-scrubber" id="pi-scrubber" min="0" max="15" value="0">
-          <span class="pi-frame-info" id="pi-frame-info">0/0</span>
+        <div class="mv-section" style="display:block;">
+          <div class="mv-label">Augmented view</div>
+          <div class="mv-btn-row">
+            <button class="mv-btn" id="mv-btn-augment">Show Augmented</button>
+            <button class="mv-btn" id="mv-btn-reroll">🎲 Re-roll</button>
+          </div>
+          <div class="mv-canvas-wrap" id="mv-aug-wrap" style="display:none; margin-top:8px;">
+            <canvas id="mv-aug-canvas" width="224" height="224"></canvas>
+          </div>
+          <div class="mv-aug-list" id="mv-aug-info"></div>
         </div>
       </div>
-      <div class="pi-metadata" id="pi-metadata"></div>
-      <!-- Cluster Inspector Panel -->
-      <div id="pi-cluster-panel" style="display:none;">
-        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.6;">
-          Visualise how raw per-window detections are merged into consolidated waggle events via DBSCAN clustering.
-          Adjust parameters below and press <b>Apply</b> to re-cluster.
-        </div>
-        <div class="cluster-params">
-          <div class="cluster-slider-group">
-            <label class="cluster-slider-label">
-              Spatial ε <span class="cluster-slider-val" id="cl-spatial-val">30</span> ref-px
-            </label>
-            <input type="range" class="cluster-slider" id="cl-spatial"
-                   min="5" max="200" step="1" value="30">
-            <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">at 1000px ref width</span>
-          </div>
-          <div class="cluster-slider-group">
-            <label class="cluster-slider-label">
-              Temporal ε <span class="cluster-slider-val" id="cl-temporal-val">300</span> ms
-            </label>
-            <input type="range" class="cluster-slider" id="cl-temporal"
-                   min="50" max="5000" step="50" value="300">
-          </div>
-          <div class="cluster-slider-group">
-            <label class="cluster-slider-label">
-              Min confidence <span class="cluster-slider-val" id="cl-conf-val">0.00</span>
-            </label>
-            <input type="range" class="cluster-slider" id="cl-conf"
-                   min="0" max="1" step="0.01" value="0">
-          </div>
-          <div class="cluster-slider-group">
-            <label class="cluster-slider-label">
-              Min samples <span class="cluster-slider-val" id="cl-minsamp-val">1</span>
-            </label>
-            <input type="range" class="cluster-slider" id="cl-minsamp"
-                   min="1" max="10" step="1" value="1">
-            <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">1 = all core · higher = noise filter</span>
-          </div>
-          <div class="cluster-action-row">
-            <button class="cluster-apply-btn" id="cl-apply" title="Re-run clustering with current parameters">🔄 Apply</button>
-            <button class="cluster-reset-btn" id="cl-reset" title="Reset to config defaults">↩ Reset</button>
-          </div>
-        </div>
-        <div class="cluster-stats" id="cl-stats" style="display:none;"></div>
-        <div class="cluster-legend" id="cl-legend"></div>
-      </div>
+
     </div>
   </aside>
 </main>
@@ -1159,7 +278,7 @@ const state = {
   predictions: null,      // { raw: [...], averaged: [...] }
   predictionsLoading: false,
   clusterData: null,      // { raw, consolidated, n_clusters, n_noise, params }
-  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, mode: 'median' },
+  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median' },
   checkpointInfo: null,
   showModelView: false,
   showPipeline: false,
@@ -1203,6 +322,41 @@ async function api(path) {
   if (!resp.ok) throw new Error(`API ${path}: ${resp.status}`);
   return resp.json();
 }
+
+// ==========================================================================
+//  Right panel tabs
+// ==========================================================================
+function openRightPanel(paneName) {
+  const panel = $('#right-panel');
+  panel.classList.add('open');
+  panel.classList.toggle('wide', paneName === 'inspector');
+  // Switch active tab
+  document.querySelectorAll('.rp-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.pane === paneName);
+  });
+  document.querySelectorAll('.rp-pane').forEach(p => {
+    p.classList.toggle('active', p.id === `pane-${paneName}`);
+  });
+  // Update state flags
+  state.showModelView = (paneName === 'modelview');
+  state.showPipeline = (paneName === 'inspector');
+  // Update header button highlights
+  $('#btn-model-view').classList.toggle('active', paneName === 'modelview');
+  $('#btn-pipeline').classList.toggle('active', paneName === 'inspector');
+}
+
+function closeRightPanel() {
+  $('#right-panel').classList.remove('open');
+  state.showModelView = false;
+  state.showPipeline = false;
+  $('#btn-model-view').classList.remove('active');
+  $('#btn-pipeline').classList.remove('active');
+}
+
+// Tab click handler
+document.querySelectorAll('.rp-tab').forEach(tab => {
+  tab.addEventListener('click', () => openRightPanel(tab.dataset.pane));
+});
 
 // ==========================================================================
 //  Recording list
@@ -1937,45 +1091,262 @@ tlCanvas.addEventListener('click', (e) => {
 });
 
 // ==========================================================================
-//  Waggle run list
+//  Annotation list (in right panel) + GT editing
 // ==========================================================================
+let annEditMode = null; // null | 'add' | 'edit'
+let annEditRunId = null;
+let annSelectedIdx = -1;
+
 function renderRunList() {
-  const list = $('#run-list');
+  const list = $('#ann-list');
+  const count = state.annotations.length;
+  $('#ann-count').textContent = `${count} run${count !== 1 ? 's' : ''}`;
+
   list.innerHTML = state.annotations.map((run, i) => {
     const color = RUN_COLORS[i % RUN_COLORS.length];
     return `
-      <div class="run-chip" data-idx="${i}" data-start="${run.waggle_start}">
-        <span class="run-dot" style="background: ${color}"></span>
-        R${run.run_id}
-        <span class="run-frames">${run.waggle_start}–${run.waggle_end}</span>
+      <div class="ann-item" data-idx="${i}" data-run-id="${run.run_id}">
+        <span class="ann-dot" style="background: ${color}"></span>
+        <span class="ann-id">R${run.run_id}</span>
+        <span class="ann-frames">${run.waggle_start}–${run.waggle_end}</span>
+        <span class="ann-actions">
+          <button class="ann-action-btn edit" title="Edit" data-idx="${i}">✏️</button>
+          <button class="ann-action-btn delete" title="Delete" data-idx="${i}">🗑</button>
+        </span>
       </div>
     `;
   }).join('');
 
-  list.querySelectorAll('.run-chip').forEach(el => {
-    el.addEventListener('click', () => jumpToRun(parseInt(el.dataset.idx)));
+  list.querySelectorAll('.ann-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.ann-action-btn')) return;
+      jumpToRun(parseInt(el.dataset.idx));
+    });
   });
+  list.querySelectorAll('.ann-action-btn.edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startEditAnnotation(parseInt(btn.dataset.idx));
+    });
+  });
+  list.querySelectorAll('.ann-action-btn.delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteAnnotation(parseInt(btn.dataset.idx));
+    });
+  });
+
+  // Auto-open right panel to annotations tab if not open
+  if (count > 0 && !$('#right-panel').classList.contains('open')) {
+    openRightPanel('annotations');
+  }
 }
 
 function jumpToRun(idx) {
   const run = state.annotations[idx];
   if (!run) return;
   stopPlayback();
-  state.focusedRunIdx = idx; // lock zoom to this run
+  state.focusedRunIdx = idx;
+  annSelectedIdx = idx;
   const pad = Math.round(state.videoFps);
   const frame = Math.max(0, run.waggle_start - pad);
   loadAndRenderFrame(frame);
   prefetchAround(frame);
+  updateRunListHighlight();
 }
 
 function updateRunListHighlight() {
-  document.querySelectorAll('.run-chip').forEach((el, i) => {
+  document.querySelectorAll('.ann-item').forEach((el, i) => {
     const run = state.annotations[i];
     if (!run) return;
     const active = state.currentFrame >= run.waggle_start && state.currentFrame <= run.waggle_end;
-    el.classList.toggle('active', active);
+    el.classList.toggle('active-frame', active);
+    el.classList.toggle('selected', i === annSelectedIdx);
   });
 }
+
+// --- Annotation editing ---
+function startAddAnnotation() {
+  annEditMode = 'add';
+  annEditRunId = null;
+  const container = $('#ann-editor-container');
+  container.innerHTML = `
+    <div class="ann-editor">
+      <div class="ann-editor-title">
+        <span class="ann-mode-badge add">NEW</span> Add Waggle Run
+      </div>
+      <div class="ann-field-row">
+        <label>Position</label>
+        <input type="number" id="ann-x" placeholder="x" step="0.1">
+        <input type="number" id="ann-y" placeholder="y" step="0.1">
+      </div>
+      <div class="ann-field-row">
+        <label>Direction</label>
+        <input type="number" id="ann-dx" placeholder="dx" step="0.01">
+        <input type="number" id="ann-dy" placeholder="dy" step="0.01">
+      </div>
+      <div class="ann-field-row">
+        <label>Frames</label>
+        <input type="number" id="ann-start" placeholder="start">
+        <button class="btn-capture" onclick="$('#ann-start').value=state.currentFrame">◀ Current</button>
+        <input type="number" id="ann-end" placeholder="end">
+        <button class="btn-capture" onclick="$('#ann-end').value=state.currentFrame">Current ▶</button>
+      </div>
+      <div class="ann-editor-actions">
+        <button class="btn ann-save-btn" onclick="saveAnnotation()">Save</button>
+        <button class="btn ann-cancel-btn" onclick="cancelAnnotation()">Cancel</button>
+      </div>
+      <div id="ann-status"></div>
+    </div>
+  `;
+  $('#ann-tip').innerHTML = 'Click canvas to set position. <kbd>Shift</kbd>+click for direction endpoint.';
+  document.getElementById('frame-canvas').classList.add('edit-mode');
+}
+
+function startEditAnnotation(idx) {
+  const run = state.annotations[idx];
+  if (!run) return;
+  annEditMode = 'edit';
+  annEditRunId = run.run_id;
+  annSelectedIdx = idx;
+  const container = $('#ann-editor-container');
+  container.innerHTML = `
+    <div class="ann-editor">
+      <div class="ann-editor-title">
+        <span class="ann-mode-badge edit">EDIT</span> Run R${run.run_id}
+      </div>
+      <div class="ann-field-row">
+        <label>Position</label>
+        <input type="number" id="ann-x" value="${run.x.toFixed(1)}" step="0.1">
+        <input type="number" id="ann-y" value="${run.y.toFixed(1)}" step="0.1">
+      </div>
+      <div class="ann-field-row">
+        <label>Direction</label>
+        <input type="number" id="ann-dx" value="${run.dir_x.toFixed(3)}" step="0.01">
+        <input type="number" id="ann-dy" value="${run.dir_y.toFixed(3)}" step="0.01">
+      </div>
+      <div class="ann-field-row">
+        <label>Frames</label>
+        <input type="number" id="ann-start" value="${run.waggle_start}">
+        <button class="btn-capture" onclick="$('#ann-start').value=state.currentFrame">◀ Current</button>
+        <input type="number" id="ann-end" value="${run.waggle_end}">
+        <button class="btn-capture" onclick="$('#ann-end').value=state.currentFrame">Current ▶</button>
+      </div>
+      <div class="ann-editor-actions">
+        <button class="btn ann-save-btn" onclick="saveAnnotation()">Save</button>
+        <button class="btn ann-cancel-btn" onclick="cancelAnnotation()">Cancel</button>
+      </div>
+      <div id="ann-status"></div>
+    </div>
+  `;
+  $('#ann-tip').innerHTML = 'Click canvas to update position. <kbd>Shift</kbd>+click for direction.';
+  document.getElementById('frame-canvas').classList.add('edit-mode');
+  updateRunListHighlight();
+}
+
+function cancelAnnotation() {
+  annEditMode = null;
+  annEditRunId = null;
+  $('#ann-editor-container').innerHTML = '';
+  $('#ann-tip').innerHTML = 'Click a run to jump to it. Use <kbd>N</kbd> to add new, <kbd>Delete</kbd> to remove selected.';
+  document.getElementById('frame-canvas').classList.remove('edit-mode');
+}
+
+async function saveAnnotation() {
+  const x = parseFloat($('#ann-x').value);
+  const y = parseFloat($('#ann-y').value);
+  const dx = parseFloat($('#ann-dx').value);
+  const dy = parseFloat($('#ann-dy').value);
+  const start = parseInt($('#ann-start').value);
+  const end = parseInt($('#ann-end').value);
+
+  if ([x, y, dx, dy, start, end].some(v => isNaN(v))) {
+    showAnnStatus('All fields are required.', 'error');
+    return;
+  }
+  if (end < start) {
+    showAnnStatus('End frame must be ≥ start frame.', 'error');
+    return;
+  }
+
+  const body = { x, y, dir_x: dx, dir_y: dy, waggle_start: start, waggle_end: end };
+  try {
+    let resp;
+    if (annEditMode === 'add') {
+      resp = await fetch(`/api/video/${state.currentVideo}/annotations`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+      });
+    } else {
+      resp = await fetch(`/api/video/${state.currentVideo}/annotations/${annEditRunId}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+      });
+    }
+    const data = await resp.json();
+    if (data.error) { showAnnStatus(data.error, 'error'); return; }
+    showAnnStatus(annEditMode === 'add' ? `Added R${data.run_id}` : `Updated R${annEditRunId}`, 'success');
+    cancelAnnotation();
+    await reloadAnnotations();
+  } catch (e) {
+    showAnnStatus(e.message, 'error');
+  }
+}
+
+async function deleteAnnotation(idx) {
+  const run = state.annotations[idx];
+  if (!run || !confirm(`Delete annotation R${run.run_id}?`)) return;
+  try {
+    await fetch(`/api/video/${state.currentVideo}/annotations/${run.run_id}`, { method: 'DELETE' });
+    await reloadAnnotations();
+  } catch (e) {
+    console.error('Delete failed:', e);
+  }
+}
+
+async function reloadAnnotations() {
+  if (!state.currentVideo) return;
+  const runs = await api(`/api/video/${state.currentVideo}/annotations`);
+  state.annotations = runs;
+  renderRunList();
+  if (state.frameCache.has(state.currentFrame)) {
+    renderFrameOnCanvas(state.frameCache.get(state.currentFrame), state.currentFrame);
+  }
+}
+
+function showAnnStatus(msg, type) {
+  const el = document.getElementById('ann-status');
+  if (!el) return;
+  el.className = `ann-status ${type}`;
+  el.textContent = msg;
+  setTimeout(() => { if (el) el.textContent = ''; }, 3000);
+}
+
+// Canvas click handlers for annotation placement
+canvas.addEventListener('click', (e) => {
+  if (!annEditMode) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const cx = (e.clientX - rect.left) * scaleX;
+  const cy = (e.clientY - rect.top) * scaleY;
+
+  if (e.shiftKey) {
+    // Set direction from current position to click point
+    const px = parseFloat($('#ann-x').value) || 0;
+    const py = parseFloat($('#ann-y').value) || 0;
+    const dx = cx - px;
+    const dy = cy - py;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    if ($('#ann-dx')) $('#ann-dx').value = (dx/len).toFixed(3);
+    if ($('#ann-dy')) $('#ann-dy').value = (dy/len).toFixed(3);
+  } else {
+    // Set position
+    if ($('#ann-x')) $('#ann-x').value = cx.toFixed(1);
+    if ($('#ann-y')) $('#ann-y').value = cy.toFixed(1);
+  }
+});
+
+// Add button
+$('#btn-ann-add').addEventListener('click', startAddAnnotation);
 
 // ==========================================================================
 //  Random recording
@@ -2009,6 +1380,7 @@ $('#btn-random').addEventListener('click', loadRandom);
 $('#btn-annotations').addEventListener('click', () => {
   state.showAnnotations = !state.showAnnotations;
   $('#btn-annotations').classList.toggle('active', state.showAnnotations);
+  if (state.showAnnotations) openRightPanel('annotations');
   if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
 });
 $('#btn-annotations').classList.add('active'); // default on
@@ -2166,6 +1538,7 @@ document.addEventListener('keydown', (e) => {
     case 'KeyA':
       state.showAnnotations = !state.showAnnotations;
       $('#btn-annotations').classList.toggle('active', state.showAnnotations);
+      if (state.showAnnotations) openRightPanel('annotations');
       if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
       break;
     case 'KeyP':
@@ -2182,6 +1555,15 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'KeyI':
       togglePipeline();
+      break;
+    case 'KeyN':
+      if (!annEditMode) startAddAnnotation();
+      break;
+    case 'Delete':
+      if (annSelectedIdx >= 0 && !annEditMode) deleteAnnotation(annSelectedIdx);
+      break;
+    case 'Escape':
+      if (annEditMode) cancelAnnotation();
       break;
     default:
       // Number keys 1-9 → jump to waggle run
@@ -2206,12 +1588,9 @@ const mvAugCanvas = $('#mv-aug-canvas');
 const mvAugCtx = mvAugCanvas.getContext('2d');
 
 function toggleModelView() {
-  state.showModelView = !state.showModelView;
-  $('#model-view-panel').classList.toggle('open', state.showModelView);
-  $('#btn-model-view').classList.toggle('active', state.showModelView);
-  if (state.showModelView && state.currentVideo) {
-    fetchModelView();
-  }
+  openRightPanel('modelview');
+  state.showModelView = true;
+  if (state.currentVideo) fetchModelView();
 }
 
 async function fetchModelView() {
@@ -2444,17 +1823,9 @@ let piCurrentFrame = 0;
 let piPlayInterval = null;
 
 function togglePipeline() {
-  state.showPipeline = !state.showPipeline;
-  $('#pipeline-panel').classList.toggle('open', state.showPipeline);
-  $('#btn-pipeline').classList.toggle('active', state.showPipeline);
-  if (state.showPipeline && state.showModelView) {
-    state.showModelView = false;
-    $('#model-view-panel').classList.remove('open');
-    $('#btn-model-view').classList.remove('active');
-  }
-  if (state.showPipeline && state.currentVideo) {
-    piLoadRows();
-  }
+  openRightPanel('inspector');
+  state.showPipeline = true;
+  if (state.currentVideo) piLoadRows();
 }
 
 $('#btn-pipeline').addEventListener('click', togglePipeline);
@@ -3381,6 +2752,9 @@ $('#cl-conf').addEventListener('input', (e) => {
 $('#cl-minsamp').addEventListener('input', (e) => {
   $('#cl-minsamp-val').textContent = e.target.value;
 });
+$('#cl-dirthresh').addEventListener('input', (e) => {
+  $('#cl-dirthresh-val').textContent = e.target.value;
+});
 
 // Apply button — re-cluster with current slider values
 $('#cl-apply').addEventListener('click', async () => {
@@ -3393,6 +2767,7 @@ $('#cl-apply').addEventListener('click', async () => {
     temporal_threshold_ms: parseFloat($('#cl-temporal').value),
     confidence_threshold: parseFloat($('#cl-conf').value),
     min_samples: parseInt($('#cl-minsamp').value),
+    direction_threshold_deg: parseFloat($('#cl-dirthresh').value),
     mode: 'median',
   };
 
@@ -3420,7 +2795,8 @@ $('#cl-reset').addEventListener('click', () => {
   $('#cl-temporal').value = 300; $('#cl-temporal-val').textContent = '300';
   $('#cl-conf').value = 0; $('#cl-conf-val').textContent = '0.00';
   $('#cl-minsamp').value = 1; $('#cl-minsamp-val').textContent = '1';
-  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, mode: 'median' };
+  $('#cl-dirthresh').value = 30; $('#cl-dirthresh-val').textContent = '30';
+  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median' };
 });
 
 

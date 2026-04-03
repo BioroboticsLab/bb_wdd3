@@ -225,6 +225,22 @@ for _cat, _group in _video_df.groupby('category'):
 val_videos = set(_video_df['video_name'].values) - train_videos
 print(f"  {len(train_videos)} train / {len(val_videos)} val videos")
 
+# Load GT overrides (sidecar JSON for annotation edits)
+from viewer.gt_overrides import (
+    load_overrides, save_overrides, add_annotation as _gt_add,
+    modify_annotation as _gt_modify, delete_annotation as _gt_delete,
+    merge_annotations as _gt_merge, get_next_run_id as _gt_next_id,
+)
+GT_OVERRIDES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'annotations',
+    'gt_overrides.json'
+)
+_gt_overrides = load_overrides(GT_OVERRIDES_PATH)
+_gt_lock = threading.Lock()
+print(f"  GT overrides: {sum(len(v) for v in _gt_overrides['added'].values())} added, "
+      f"{sum(len(v) for v in _gt_overrides['modified'].values())} modified, "
+      f"{sum(len(v) for v in _gt_overrides['deleted'].values())} deleted")
+
 
 # ---------------------------------------------------------------------------
 # Prediction Engine — model loading, inference, caching
@@ -794,6 +810,7 @@ class SlidingWindowInference:
             confidence_threshold=config['post_process']['confidence_threshold'],
             min_samples=config['post_process'].get('min_samples', 1),
             mode=config['post_process'].get('mode', 'mean'),
+            direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
         )
 
         # Convert normalized [0,1] → pixel space for frontend rendering
@@ -1024,6 +1041,7 @@ class EvaluationEngine:
                             confidence_threshold=pp.get('confidence_threshold', 0.0),
                             min_samples=1,
                             mode=pp.get('mode', 'mean'),
+                            direction_threshold_deg=pp.get('direction_threshold_deg', 30.0),
                         )
                         dance_metrics = compute_dance_level_metrics(
                             predicted_runs, gt_dances, video_res,
@@ -1409,6 +1427,7 @@ class EvaluationEngine:
                 confidence_threshold=config['post_process']['confidence_threshold'],
                 min_samples=1,
                 mode=config['post_process'].get('mode', 'mean'),
+                direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
             )
 
             dance_metrics = compute_dance_level_metrics(
@@ -1590,6 +1609,7 @@ class EvaluationEngine:
             confidence_threshold=pp.get('confidence_threshold', 0.5),
             min_samples=pp.get('min_samples', 1),
             mode=pp.get('mode', 'mean'),
+            direction_threshold_deg=pp.get('direction_threshold_deg', 30.0),
         )
 
         # 3. Dance-level metrics
@@ -1697,18 +1717,85 @@ def api_video_info(video_name):
 def api_video_annotations(video_name):
     """Get deduplicated waggle runs for a specific video file.
     Returns empty list for external/unannotated videos.
+    Merges GT overrides (sidecar edits) on the fly.
     """
     base, *_ = get_base_and_variant(video_name)
     if base not in recording_index:
-        # External video — no annotations, return empty list (not 404)
-        return jsonify([])
+        # External video — check if there are any added annotations in overrides
+        with _gt_lock:
+            added = _gt_overrides['added'].get(video_name, [])
+        return jsonify(sorted(added, key=lambda r: r.get('waggle_start', 0)))
 
-    runs = [
+    csv_runs = [
         r for r in recording_index[base]["waggle_runs"].values()
         if r["video_name"] == video_name
     ]
+
+    with _gt_lock:
+        runs = _gt_merge(csv_runs, _gt_overrides, video_name)
+
     runs.sort(key=lambda r: r["waggle_start"])
     return jsonify(runs)
+
+
+@app.route("/api/video/<path:video_name>/annotations", methods=["POST"])
+def api_video_annotations_add(video_name):
+    """Add a new GT annotation for a video.
+    Body: { x, y, dir_x, dir_y, waggle_start, waggle_end }
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    required = ['x', 'y', 'dir_x', 'dir_y', 'waggle_start', 'waggle_end']
+    missing = [k for k in required if k not in data]
+    if missing:
+        return jsonify({"error": f"Missing fields: {missing}"}), 400
+
+    base, *_ = get_base_and_variant(video_name)
+    csv_runs = []
+    if base in recording_index:
+        csv_runs = [
+            r for r in recording_index[base]["waggle_runs"].values()
+            if r["video_name"] == video_name
+        ]
+
+    with _gt_lock:
+        added_runs = _gt_overrides['added'].get(video_name, [])
+        next_id = _gt_next_id(csv_runs, added_runs)
+        run = _gt_add(_gt_overrides, video_name, data, next_run_id=next_id)
+        run['video_name'] = video_name
+        save_overrides(GT_OVERRIDES_PATH, _gt_overrides)
+
+    print(f"  ✅ GT added: R{run['run_id']} in {video_name}", flush=True)
+    return jsonify(run), 201
+
+
+@app.route("/api/video/<path:video_name>/annotations/<int:run_id>", methods=["PUT"])
+def api_video_annotations_update(video_name, run_id):
+    """Update an existing GT annotation.
+    Body: partial update { x?, y?, dir_x?, dir_y?, waggle_start?, waggle_end? }
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    allowed = {'x', 'y', 'dir_x', 'dir_y', 'waggle_start', 'waggle_end'}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({"error": "No valid fields to update."}), 400
+
+    with _gt_lock:
+        _gt_modify(_gt_overrides, video_name, run_id, updates)
+        save_overrides(GT_OVERRIDES_PATH, _gt_overrides)
+
+    print(f"  ✏️  GT modified: R{run_id} in {video_name} → {updates}", flush=True)
+    return jsonify({"success": True, "run_id": run_id, "updated": updates})
+
+
+@app.route("/api/video/<path:video_name>/annotations/<int:run_id>", methods=["DELETE"])
+def api_video_annotations_delete(video_name, run_id):
+    """Delete a GT annotation."""
+    with _gt_lock:
+        _gt_delete(_gt_overrides, video_name, run_id)
+        save_overrides(GT_OVERRIDES_PATH, _gt_overrides)
+
+    print(f"  🗑️  GT deleted: R{run_id} in {video_name}", flush=True)
+    return jsonify({"success": True, "run_id": run_id})
 
 
 @app.route("/api/frame/<path:video_name>/<int:frame_idx>")
@@ -1819,6 +1906,8 @@ def api_cluster(video_name):
     preds_copy = copy.deepcopy(crop_space_preds)
     v_names = [video_name] * len(preds_copy)
 
+    direction_threshold_deg = float(params.get('direction_threshold_deg', 30.0))
+
     predicted_runs = cross_window_cluster_predictions(
         preds_copy, crop_origins, v_names, video_resolutions,
         video_fps={video_name: video_fps_val},
@@ -1827,6 +1916,7 @@ def api_cluster(video_name):
         confidence_threshold=confidence_threshold,
         min_samples=min_samples,
         mode=mode,
+        direction_threshold_deg=direction_threshold_deg,
     )
 
     # Convert normalized [0,1] → pixel space for frontend canvas rendering
@@ -2127,6 +2217,8 @@ def api_eval_optimize():
     cf_hi = float(ranges.get('conf_max', 0.5))
     ms_lo = int(ranges.get('min_samples_min', 1))
     ms_hi = int(ranges.get('min_samples_max', 5))
+    dr_lo = float(ranges.get('direction_deg_min', 0))
+    dr_hi = float(ranges.get('direction_deg_max', 90))
 
     _optim_state.update(
         running=True, trial_current=0, trial_total=n_trials,
@@ -2143,12 +2235,14 @@ def api_eval_optimize():
             temporal_ms = trial.suggest_float('temporal_threshold_ms', tp_lo, tp_hi, log=True)
             conf = trial.suggest_float('confidence_threshold', cf_lo, cf_hi)
             min_samp = trial.suggest_int('min_samples', ms_lo, ms_hi)
+            dir_deg = trial.suggest_float('direction_threshold_deg', dr_lo, dr_hi, step=5)
 
             pp = {
                 'spatial_threshold': spatial,
                 'temporal_threshold_ms': temporal_ms,
                 'confidence_threshold': conf,
                 'min_samples': min_samp,
+                'direction_threshold_deg': dir_deg,
                 'mode': 'mean',
             }
             results = evaluation_engine.recluster(pp, verbose=False)
@@ -2202,6 +2296,7 @@ def api_eval_optimize():
                 'temporal_threshold_ms': best['temporal_threshold_ms'],
                 'confidence_threshold': best['confidence_threshold'],
                 'min_samples': best['min_samples'],
+                'direction_threshold_deg': best['direction_threshold_deg'],
                 'mode': 'mean',
             }
             # Apply the best params as a final recluster so the dashboard updates
@@ -2224,7 +2319,8 @@ def api_eval_optimize():
                   f"spatial={best['spatial_threshold']:.1f}, "
                   f"temporal_ms={best['temporal_threshold_ms']:.0f}, "
                   f"conf={best['confidence_threshold']:.3f}, "
-                  f"min_samples={best['min_samples']}", flush=True)
+                  f"min_samples={best['min_samples']}, "
+                  f"dir_deg={best['direction_threshold_deg']:.0f}", flush=True)
 
         except Exception as e:
             import traceback
@@ -2252,6 +2348,88 @@ def api_eval_optimize_cancel():
     """Force-reset stuck optimization state."""
     _optim_state.update(running=False, done=False, error=None, final_results=None)
     return jsonify({"status": "cancelled"})
+
+
+@app.route("/api/config/update_post_process", methods=["POST"])
+def api_config_update_post_process():
+    """Persist optimized post_process parameters to config.yaml.
+
+    Accepts JSON body with any of:
+      spatial_threshold, temporal_threshold_ms, confidence_threshold,
+      min_samples, direction_threshold_deg
+
+    Creates a timestamped backup before writing.
+    """
+    import datetime
+
+    data = request.get_json(force=True, silent=True) or {}
+    if not data:
+        return jsonify({"error": "No parameters provided."}), 400
+
+    # Allowed keys and their types
+    ALLOWED = {
+        'spatial_threshold': (int, float),
+        'temporal_threshold_ms': (int, float),
+        'confidence_threshold': (int, float),
+        'min_samples': (int,),
+        'direction_threshold_deg': (int, float),
+    }
+
+    updates = {}
+    for key, types in ALLOWED.items():
+        if key in data:
+            val = data[key]
+            if not isinstance(val, types):
+                return jsonify({"error": f"Invalid type for {key}: expected {types}"}), 400
+            updates[key] = val
+
+    if not updates:
+        return jsonify({"error": "No recognized post_process keys in payload."}), 400
+
+    try:
+        # Read current config
+        with open(CONFIG_PATH) as f:
+            config = yaml.safe_load(f)
+
+        # Create timestamped backup
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = CONFIG_PATH + f".bak.{ts}"
+        import shutil
+        shutil.copy2(CONFIG_PATH, backup_path)
+
+        # Update post_process section
+        if 'post_process' not in config:
+            config['post_process'] = {}
+
+        for key, val in updates.items():
+            # Round floats for cleanliness
+            if isinstance(val, float):
+                if key == 'confidence_threshold':
+                    val = round(val, 4)
+                else:
+                    val = round(val, 1) if val == int(val) else round(val, 1)
+                    if val == int(val):
+                        val = int(val)
+            config['post_process'][key] = val
+
+        # Write back
+        with open(CONFIG_PATH, 'w') as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+        print(f"  ✅ Config updated: {updates}  (backup: {os.path.basename(backup_path)})",
+              flush=True)
+
+        return jsonify({
+            "success": True,
+            "updated": updates,
+            "backup": os.path.basename(backup_path),
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 
 # ---------------------------------------------------------------------------
 # Per-Video Eval Inspector
@@ -2320,6 +2498,7 @@ def api_eval_video(video_name):
     temporal_th_ms = float(_req.args.get('temporal_threshold_ms', config['post_process']['temporal_threshold']))
     conf_th = float(_req.args.get('confidence_threshold', config['post_process']['confidence_threshold']))
     min_samp = int(_req.args.get('min_samples', 1))
+    dir_th_deg = float(_req.args.get('direction_threshold_deg', config['post_process'].get('direction_threshold_deg', 30.0)))
 
     if v_origins and v_res:
         v_names = [video_name] * len(indices)
@@ -2332,6 +2511,7 @@ def api_eval_video(video_name):
             confidence_threshold=conf_th,
             min_samples=min_samp,
             mode=config['post_process'].get('mode', 'mean'),
+            direction_threshold_deg=dir_th_deg,
         )
         predicted_runs = predicted_runs_dict.get(video_name, [])
     else:
