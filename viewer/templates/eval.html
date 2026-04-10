@@ -1,0 +1,1457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🐝 Evaluation Dashboard — Waggle Viewer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0c0c18;
+  --bg-secondary: #12122a;
+  --bg-tertiary: #1a1a3e;
+  --bg-card: #1e1e42;
+  --border: #2a2a5a;
+  --text-primary: #e8e8f0;
+  --text-secondary: #9898b8;
+  --text-muted: #6868a0;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --green: #22c55e;
+  --green-dim: rgba(34, 197, 94, 0.15);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245, 158, 11, 0.15);
+  --red: #ef4444;
+  --red-dim: rgba(239, 68, 68, 0.15);
+  --blue: #3b82f6;
+  --blue-dim: rgba(59, 130, 246, 0.15);
+  --purple: #8b5cf6;
+  --purple-dim: rgba(139, 92, 246, 0.15);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: #3a3a6a; border-radius: 3px; }
+
+/* Header */
+header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
+}
+header h1 { font-size: 17px; font-weight: 600; white-space: nowrap; }
+header h1 span { font-size: 20px; margin-right: 4px; }
+.ckpt-info {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--text-secondary);
+}
+.ckpt-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 6px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-size: 11px; font-weight: 500;
+}
+.ckpt-badge .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+}
+.header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+
+.btn {
+  padding: 7px 16px; border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--bg-card); border-color: var(--accent); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary {
+  background: var(--green-dim); border-color: rgba(34, 197, 94, 0.4);
+  color: var(--green);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--green); color: #fff; border-color: var(--green);
+}
+.btn-primary.running {
+  background: var(--amber-dim); border-color: rgba(245, 158, 11, 0.4);
+  color: var(--amber);
+  animation: pulse 1.5s ease-in-out infinite;
+  cursor: wait;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Progress bar */
+.progress-bar-container {
+  width: 200px; height: 6px;
+  background: var(--bg-card); border-radius: 3px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--green));
+  transition: width 0.3s ease;
+}
+.progress-text {
+  font-size: 11px; color: var(--text-muted);
+  min-width: 80px;
+}
+
+/* Content */
+.content { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+/* Status states */
+.state-empty {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 16px;
+  padding: 80px 24px; text-align: center;
+}
+.state-empty .icon { font-size: 64px; }
+.state-empty h2 { font-size: 20px; font-weight: 600; color: var(--text-primary); }
+.state-empty p { font-size: 14px; color: var(--text-secondary); max-width: 500px; }
+
+/* Summary KPI cards */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px; margin-bottom: 24px;
+}
+.kpi-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px 18px;
+  transition: border-color 0.2s;
+}
+.kpi-card:hover { border-color: var(--accent); }
+.kpi-label {
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--text-muted); margin-bottom: 6px;
+}
+.kpi-value {
+  font-size: 28px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-sub {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 4px;
+}
+.kpi-sub .delta-up { color: var(--green); }
+.kpi-sub .delta-down { color: var(--red); }
+.kpi-sub .delta-neutral { color: var(--text-muted); }
+
+/* Accent colors for KPI cards */
+.kpi-card.accent-green .kpi-value { color: var(--green); }
+.kpi-card.accent-amber .kpi-value { color: var(--amber); }
+.kpi-card.accent-blue .kpi-value { color: var(--blue); }
+.kpi-card.accent-purple .kpi-value { color: var(--purple); }
+.kpi-card.accent-red .kpi-value { color: var(--red); }
+
+/* Metric sections */
+.section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.section-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.section-header:hover { background: var(--bg-tertiary); }
+.section-header h3 {
+  font-size: 13px; font-weight: 600;
+  color: var(--text-primary); flex: 1;
+}
+.section-header .section-icon { font-size: 16px; }
+.section-header .toggle { font-size: 12px; color: var(--text-muted); transition: transform 0.2s; }
+.section-header.collapsed .toggle { transform: rotate(-90deg); }
+.section-body { padding: 0; }
+.section-body.collapsed { display: none; }
+
+/* Metrics table */
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.metrics-table th {
+  text-align: left; padding: 8px 18px;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+.metrics-table td {
+  padding: 8px 18px;
+  border-bottom: 1px solid rgba(42, 42, 90, 0.4);
+  font-variant-numeric: tabular-nums;
+}
+.metrics-table tr:last-child td { border-bottom: none; }
+.metrics-table tr:hover td { background: rgba(99, 102, 241, 0.04); }
+.metric-name { color: var(--text-secondary); font-weight: 500; }
+.metric-value { color: var(--text-primary); font-weight: 600; }
+.metric-delta {
+  font-size: 10px; font-weight: 600;
+  padding: 1px 6px; border-radius: 4px;
+}
+.delta-positive { color: var(--green); background: var(--green-dim); }
+.delta-negative { color: var(--red); background: var(--red-dim); }
+.delta-zero { color: var(--text-muted); }
+
+/* Per-video table */
+.video-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.video-table th {
+  text-align: left; padding: 7px 12px;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.video-table th:hover { color: var(--accent); }
+.video-table th .sort-arrow { margin-left: 4px; font-size: 9px; }
+.video-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(42, 42, 90, 0.3);
+  font-variant-numeric: tabular-nums;
+}
+.video-table tr:hover td { background: rgba(99, 102, 241, 0.04); }
+.video-name {
+  font-weight: 500; max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Config panel */
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px; padding: 16px 18px;
+}
+.config-group h4 {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-secondary); margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.config-item {
+  display: flex; justify-content: space-between;
+  padding: 3px 0;
+  font-size: 11px;
+}
+.config-key { color: var(--text-muted); }
+.config-val { color: var(--text-primary); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Tooltips */
+.has-tip { position: relative; cursor: help; }
+.has-tip .tip-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: rgba(99, 102, 241, 0.15); color: var(--accent);
+  font-size: 9px; font-weight: 700; margin-left: 5px;
+  vertical-align: middle; flex-shrink: 0;
+}
+.has-tip .tip-text {
+  visibility: hidden; opacity: 0;
+  position: absolute; z-index: 200;
+  bottom: calc(100% + 8px); left: 0;
+  min-width: 260px; max-width: 360px;
+  padding: 10px 14px; border-radius: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  font-size: 11px; font-weight: 400; line-height: 1.5;
+  color: var(--text-secondary);
+  transition: opacity 0.15s, visibility 0.15s;
+  pointer-events: none;
+  white-space: normal;
+}
+.has-tip:hover .tip-text { visibility: visible; opacity: 1; }
+/* KPI tooltip — position below */
+.kpi-card .has-tip .tip-text { bottom: auto; top: calc(100% + 6px); }
+
+/* Timestamp */
+.timestamp {
+  font-size: 11px; color: var(--text-muted);
+  text-align: right; padding: 8px 18px;
+}
+
+/* Re-cluster panel */
+.recluster-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px; margin-bottom: 16px;
+  overflow: hidden;
+}
+.recluster-panel .section-body { padding: 16px 18px; }
+.recluster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 20px; align-items: end;
+}
+.recluster-group label {
+  display: block; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.recluster-group .rc-val {
+  font-weight: 700; color: var(--accent); margin-left: 4px;
+}
+.recluster-group input[type=range] {
+  width: 100%; accent-color: var(--accent);
+  height: 4px; cursor: pointer;
+}
+.recluster-group select {
+  width: 100%; padding: 5px 8px; border-radius: 6px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text-primary); font-size: 11px;
+}
+.recluster-actions {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  flex-wrap: wrap;
+}
+.recluster-actions .btn { font-size: 11px; padding: 6px 14px; }
+.recluster-actions .rc-status {
+  font-size: 11px; color: var(--text-muted);
+}
+.optim-controls {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border); margin-top: 6px;
+  width: 100%;
+}
+.optim-controls select, .optim-controls input[type=number] {
+  padding: 4px 8px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-card); color: var(--text-primary);
+  font-size: 11px; width: 80px;
+}
+.optim-controls label {
+  font-size: 10px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.btn-optimize {
+  background: var(--purple-dim) !important;
+  border-color: rgba(139, 92, 246, 0.4) !important;
+  color: #c4b5fd !important;
+}
+.btn-optimize:hover:not(:disabled) {
+  background: var(--purple) !important; color: #fff !important;
+}
+.btn-optimize.running {
+  animation: pulse 1.5s ease-in-out infinite;
+  cursor: wait;
+}
+.optim-progress {
+  width: 120px; height: 5px;
+  background: var(--bg-card); border-radius: 3px;
+  overflow: hidden;
+}
+.optim-progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #8b5cf6, #c084fc);
+  border-radius: 3px; transition: width 0.3s ease;
+}
+.optim-result {
+  font-size: 11px; color: var(--text-secondary);
+  padding: 10px 0 0; line-height: 1.8;
+}
+.optim-result .best-val { color: #a78bfa; font-weight: 700; font-size: 14px; }
+.btn-apply-config {
+  margin-top: 8px;
+  background: var(--purple-dim); border-color: rgba(139, 92, 246, 0.4);
+  color: var(--purple);
+}
+.btn-apply-config:hover:not(:disabled) {
+  background: var(--purple); color: #fff; border-color: var(--purple);
+}
+.btn-apply-config.applied {
+  background: var(--green-dim); border-color: rgba(34, 197, 94, 0.4);
+  color: var(--green); cursor: default;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>📊</span> Evaluation Dashboard</h1>
+  <div class="ckpt-info" id="ckpt-info">
+    <span style="color:var(--text-muted)">No checkpoint</span>
+  </div>
+  <div class="header-right">
+    <div id="progress-area" style="display:none; align-items:center; gap:10px;">
+      <div class="progress-bar-container">
+        <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+      <span class="progress-text" id="progress-text">0%</span>
+    </div>
+    <button class="btn btn-primary" id="btn-run" disabled>
+      <span id="btn-run-icon">▶</span>
+      <span id="btn-run-text">Run Evaluation</span>
+    </button>
+  </div>
+</header>
+
+<div class="content" id="content">
+  <!-- Initial state -->
+  <div class="state-empty" id="state-empty">
+    <div class="icon">📊</div>
+    <h2>Model Evaluation</h2>
+    <p>Run the full STD-mAP evaluation pipeline on the validation split. This computes comprehensive detection metrics including spatial, temporal, and directional accuracy — before and after post-processing.</p>
+    <p style="font-size:12px; color:var(--text-muted);" id="status-hint">Checking server status…</p>
+  </div>
+
+  <!-- Results (hidden until evaluation completes) -->
+  <div id="results-container" style="display:none;">
+    <!-- KPI Summary Cards -->
+    <div class="kpi-grid" id="kpi-grid"></div>
+
+    <!-- Re-cluster Controls -->
+    <div class="recluster-panel section" id="section-recluster" style="display:none;">
+      <div class="section-header" onclick="toggleSection('recluster')">
+        <span class="section-icon">🔧</span>
+        <h3>Re-cluster with Different Parameters <span style="font-size:11px;color:var(--text-muted);font-weight:400;">(instant — reuses cached inference)</span></h3>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="section-body" id="body-recluster">
+        <div class="recluster-grid">
+          <div class="recluster-group">
+            <label>Spatial Threshold (px) <span class="rc-val" id="rc-spatial-val">30</span></label>
+            <input type="range" id="rc-spatial" min="5" max="200" step="1" value="30">
+          </div>
+          <div class="recluster-group">
+            <label>Temporal Threshold (ms) <span class="rc-val" id="rc-temporal-val">300</span></label>
+            <input type="range" id="rc-temporal" min="50" max="5000" step="50" value="300">
+          </div>
+          <div class="recluster-group">
+            <label>Confidence Threshold <span class="rc-val" id="rc-conf-val">0.00</span></label>
+            <input type="range" id="rc-conf" min="0" max="1" step="0.01" value="0">
+          </div>
+          <div class="recluster-group">
+            <label>Min Samples (DBSCAN) <span class="rc-val" id="rc-minsamp-val">1</span></label>
+            <input type="range" id="rc-minsamp" min="1" max="10" step="1" value="1">
+          </div>
+          <div class="recluster-group">
+            <label>Direction Threshold (°) <span class="rc-val" id="rc-dirthresh-val">30</span></label>
+            <input type="range" id="rc-dirthresh" min="0" max="90" step="5" value="30">
+          </div>
+          <div class="recluster-group">
+            <label>Clustering Method</label>
+            <select id="rc-method">
+              <option value="dbscan" selected>DBSCAN</option>
+              <option value="hdbscan">HDBSCAN</option>
+            </select>
+          </div>
+          <div class="recluster-group">
+            <label>Aggregation Mode</label>
+            <select id="rc-mode">
+              <option value="median" selected>Median</option>
+              <option value="mean">Mean</option>
+            </select>
+          </div>
+        </div>
+        <div class="recluster-actions">
+          <button class="btn btn-primary" id="btn-recluster" onclick="doRecluster()">🔄 Re-cluster & Evaluate</button>
+          <span class="rc-status" id="rc-status"></span>
+          <div class="optim-controls">
+            <button class="btn btn-optimize" id="btn-optimize" onclick="doOptimize()">🔍 Auto-Optimize</button>
+            <label>Metric
+              <select id="optim-metric">
+                <option value="f1" selected>F1</option>
+                <option value="map">mAP</option>
+                <option value="recall">Recall</option>
+                <option value="precision">Precision</option>
+              </select>
+            </label>
+            <label>Trials
+              <input type="number" id="optim-trials" value="60" min="10" max="200" step="10">
+            </label>
+            <div class="optim-progress" id="optim-progress" style="display:none;">
+              <div class="optim-progress-fill" id="optim-progress-fill"></div>
+            </div>
+            <span class="rc-status" id="optim-status"></span>
+          </div>
+          <div class="optim-result" id="optim-result" style="display:none;"></div>
+          <button class="btn btn-apply-config" id="btn-apply-config" style="display:none;" onclick="applyToConfig()">💾 Apply to Config</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dance-Level Results (primary) -->
+    <div class="section" id="section-dance">
+      <div class="section-header" onclick="toggleSection('dance')">
+        <span class="section-icon">🐝</span>
+        <h3>Dance-Level Results</h3>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="section-body" id="body-dance">
+        <div id="dance-content" style="padding:18px;"></div>
+      </div>
+    </div>
+
+    <!-- Dance Coverage Visualization -->
+    <div class="section" id="section-coverage">
+      <div class="section-header" onclick="toggleSection('coverage')">
+        <span class="section-icon">🎯</span>
+        <h3>Dance Detection Coverage</h3>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="section-body" id="body-coverage">
+        <div id="coverage-content" style="display:flex;gap:24px;flex-wrap:wrap;"></div>
+      </div>
+    </div>
+
+    <!-- Per-Video Breakdown -->
+    <div class="section" id="section-per-video">
+      <div class="section-header" onclick="toggleSection('per-video')">
+        <span class="section-icon">🎬</span>
+        <h3>Per-Video Breakdown</h3>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="section-body" id="body-per-video">
+        <table class="video-table" id="table-per-video"></table>
+      </div>
+    </div>
+
+    <!-- Window-Level Diagnostics (collapsed by default) -->
+    <div class="section" id="section-window-diag">
+      <div class="section-header collapsed" onclick="toggleSection('window-diag')">
+        <span class="section-icon">🔬</span>
+        <h3>Window-Level Model Diagnostics</h3>
+        <span class="toggle" style="transform:rotate(-90deg)">▼</span>
+      </div>
+      <div class="section-body collapsed" id="body-window-diag" style="padding:0;">
+        <!-- STD -->
+        <div style="padding:6px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Spatio-Temporal-Directional</div>
+        <table class="metrics-table" id="table-std"></table>
+        <!-- Spatial -->
+        <div style="padding:14px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Spatial</div>
+        <table class="metrics-table" id="table-spatial"></table>
+        <!-- Temporal -->
+        <div style="padding:14px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Temporal</div>
+        <table class="metrics-table" id="table-temporal"></table>
+        <!-- Directional -->
+        <div style="padding:14px 18px 2px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Directional</div>
+        <table class="metrics-table" id="table-directional"></table>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="section" id="section-config">
+      <div class="section-header" onclick="toggleSection('config')">
+        <span class="section-icon">⚙️</span>
+        <h3>Evaluation Configuration</h3>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="section-body" id="body-config">
+        <div class="config-grid" id="config-grid"></div>
+      </div>
+    </div>
+
+    <div class="timestamp" id="eval-timestamp"></div>
+  </div>
+</div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────────
+let pollTimer = null;
+let currentResults = null;
+let sortColumn = 'f1_post';
+let sortAsc = false;
+
+// ─── DOM refs ───────────────────────────────────────────────────────────────
+const btnRun = document.getElementById('btn-run');
+const btnRunText = document.getElementById('btn-run-text');
+const btnRunIcon = document.getElementById('btn-run-icon');
+const ckptInfo = document.getElementById('ckpt-info');
+const progressArea = document.getElementById('progress-area');
+const progressFill = document.getElementById('progress-fill');
+const progressText = document.getElementById('progress-text');
+const stateEmpty = document.getElementById('state-empty');
+const resultsContainer = document.getElementById('results-container');
+const statusHint = document.getElementById('status-hint');
+
+// ─── Formatting helpers ─────────────────────────────────────────────────────
+function fmt(v, decimals = 3) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number' && !isFinite(v)) return '∞';
+  return v.toFixed(decimals);
+}
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  return (v * 100).toFixed(1) + '%';
+}
+function fmtInt(v) {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toLocaleString();
+}
+
+function deltaSpan(pre, post, higherIsBetter = true) {
+  if (pre === null || post === null || pre === undefined || post === undefined) return '';
+  const diff = post - pre;
+  if (Math.abs(diff) < 0.0005) return '<span class="delta-zero">—</span>';
+  const sign = diff > 0 ? '+' : '';
+  const cls = (higherIsBetter ? diff > 0 : diff < 0) ? 'delta-positive' : 'delta-negative';
+  return `<span class="metric-delta ${cls}">${sign}${diff.toFixed(3)}</span>`;
+}
+
+function deltaSpanForError(pre, post) {
+  // For error metrics, lower is better
+  return deltaSpan(pre, post, false);
+}
+
+// ─── Section toggle ─────────────────────────────────────────────────────────
+function toggleSection(id) {
+  const header = document.querySelector(`#section-${id} .section-header`);
+  const body = document.getElementById(`body-${id}`);
+  header.classList.toggle('collapsed');
+  body.classList.toggle('collapsed');
+}
+
+// ─── Metric tooltips ────────────────────────────────────────────────────────
+const METRIC_TIPS = {
+  // STD
+  'STD-mAP': 'Spatio-Temporal-Directional mean Average Precision. The primary composite metric — measures joint detection quality across position, timing, and direction.',
+  'Mean Precision (F1-opt)': 'Fraction of predictions that are correct, at the confidence threshold that maximizes F1. Higher = fewer false positives.',
+  'Mean Recall (F1-opt)': 'Fraction of ground-truth events detected, at the F1-optimal threshold. Higher = fewer missed detections.',
+  'Mean F1 (F1-opt)': 'Harmonic mean of precision and recall at the optimal confidence threshold. Best single summary of detection quality.',
+  'Mean Best Confidence': 'Average confidence threshold that maximizes F1 across all threshold combinations. Values near 1.0 mean the model is well-calibrated.',
+  'Matching Method': 'Algorithm to match predictions to ground truths. "greedy" assigns closest pairs first; "hungarian" finds globally optimal assignment.',
+  // Spatial
+  'Mean Position Error (px)': 'Average Euclidean distance (in crop pixels) between matched prediction centers and ground-truth centers. Lower is better.',
+  'Spatial Precision': 'Fraction of predictions within the position threshold of a ground truth. Higher = more spatially accurate predictions.',
+  'Spatial Recall': 'Fraction of ground truths that have a matching prediction within the position threshold.',
+  'Spatial F1': 'Harmonic mean of spatial precision and recall. Summarizes spatial detection quality.',
+  // Temporal
+  'Mean IoU': 'Intersection over Union of predicted and ground-truth temporal windows. 1.0 = perfect overlap, 0.0 = no overlap.',
+  'Duration Accuracy': 'How well the predicted duration matches the ground truth. Ratio of min/max durations, averaged across matches.',
+  'ME Start (frames)': 'Mean Error in start frame prediction. Negative = predicting too early, positive = too late.',
+  'ME End (frames)': 'Mean Error in end frame prediction. Negative = predicting too early, positive = too late.',
+  'MSE Start (frames²)': 'Mean Squared Error of start frame predictions. Penalizes large timing errors more heavily.',
+  'MSE End (frames²)': 'Mean Squared Error of end frame predictions. Penalizes large timing errors more heavily.',
+  // Directional
+  'Accuracy': 'Fraction of matched predictions whose predicted waggle direction is within the angular threshold of the ground truth.',
+  'Mean Angular Error (°)': 'Average angular difference (in degrees) between predicted and ground-truth waggle directions. Lower is better.',
+  'Mean Cosine Similarity': 'Average cosine similarity between predicted and ground-truth direction vectors. 1.0 = perfect alignment.',
+};
+
+// ─── Build metrics row ──────────────────────────────────────────────────────
+function metricsRow(name, preVal, postVal, format = 'f3', higherIsBetter = true) {
+  let fmtFn = v => fmt(v, 3);
+  if (format === 'f1') fmtFn = v => fmt(v, 1);
+  if (format === 'f2') fmtFn = v => fmt(v, 2);
+  if (format === 'f4') fmtFn = v => fmt(v, 4);
+  if (format === 'pct') fmtFn = fmtPct;
+  if (format === 'int') fmtFn = fmtInt;
+
+  const d = higherIsBetter ? deltaSpan(preVal, postVal, true) : deltaSpanForError(preVal, postVal);
+  const tip = METRIC_TIPS[name];
+  const tipHtml = tip
+    ? `<span class="has-tip">${name}<span class="tip-icon">?</span><span class="tip-text">${tip}</span></span>`
+    : name;
+
+  return `<tr>
+    <td class="metric-name">${tipHtml}</td>
+    <td class="metric-value">${fmtFn(preVal)}</td>
+    <td class="metric-value">${fmtFn(postVal)}</td>
+    <td>${d}</td>
+  </tr>`;
+}
+
+function tableHeader() {
+  return `<thead><tr>
+    <th>Metric</th><th>Pre Post-Proc</th><th>Post Post-Proc</th><th>Delta</th>
+  </tr></thead>`;
+}
+
+// ─── Build KPI cards ────────────────────────────────────────────────────────
+function buildKPIs(data) {
+  const dance = data.dance;
+  const post = data.post;
+
+  let cards;
+  if (dance && dance.level === 'waggle_run') {
+    const cov = dance.coverage;
+    cards = [
+      { label: 'Dance Recall', value: fmtPct(cov.recall), accent: 'green',
+        sub: `${cov.detected_dances} / ${cov.total_gt_dances} dances detected`,
+        tip: 'Fraction of physical waggle dances that the model successfully detected (at least one matched prediction per dance).' },
+      { label: 'Dance Precision', value: fmtPct(cov.precision), accent: 'blue',
+        sub: `${cov.detected_dances} / ${cov.total_predicted_runs} predictions correct`,
+        tip: 'Fraction of predicted waggle runs that match a real dance. Higher = fewer false positives.' },
+      { label: 'Dance mAP', value: fmt(dance.comprehensive.map), accent: 'purple',
+        sub: `F1: ${fmt(dance.comprehensive.mean_f1)}`,
+        tip: 'Mean Average Precision computed at the dance level — joint spatial, temporal, and directional quality after cross-window deduplication.' },
+      { label: 'GT Dances', value: fmtInt(cov.total_gt_dances), accent: 'amber',
+        sub: `${fmtInt(cov.missed_dances)} missed`,
+        tip: 'Total unique physical waggle dances in the validation set (deduplicated by video + waggle_run_id).' },
+      { label: 'Predicted Runs', value: fmtInt(cov.total_predicted_runs), accent: 'blue',
+        sub: `from ${fmtInt(data.n_val_windows)} windows`,
+        tip: 'Number of predicted waggle runs after cross-window DBSCAN clustering consolidates overlapping detections.' },
+      { label: 'Temporal IoU', value: fmt(dance.temporal.mean_iou), accent: 'green',
+        sub: `median: ${fmt(dance.temporal.median_iou)}`,
+        tip: 'Intersection over Union of predicted vs. ground-truth temporal boundaries at the dance level.' },
+      { label: 'Angular Error', value: fmt(dance.directional.mean_error, 1) + '°', accent: 'amber',
+        sub: `median: ${fmt(dance.directional.median_error, 1)}°`,
+        tip: 'Mean angular error between predicted and true waggle direction at the dance level.' },
+      { label: 'Val Videos', value: fmtInt(data.n_val_videos), accent: 'purple',
+        sub: `${fmtInt(data.n_val_windows)} windows`,
+        tip: 'Number of unique videos evaluated.' },
+    ];
+  } else {
+    // Fallback: window-level KPIs (if no dance metrics available)
+    cards = [
+      { label: 'STD-mAP', value: fmt(post.comprehensive.map), accent: 'green',
+        sub: `Window-level`, tip: 'Window-level mAP (no dance-level data available).' },
+      { label: 'Mean F1', value: fmt(post.comprehensive.mean_f1), accent: 'blue',
+        sub: `Window-level`, tip: 'Window-level F1.' },
+      { label: 'Predictions', value: fmtInt(post.counts.predictions), accent: 'purple',
+        sub: `GTs: ${fmtInt(post.counts.ground_truths)}`, tip: 'Window-level counts.' },
+      { label: 'Val Windows', value: fmtInt(data.n_val_windows), accent: 'amber',
+        sub: `${fmtInt(data.n_val_videos)} videos`, tip: 'Window count.' },
+    ];
+  }
+
+  document.getElementById('kpi-grid').innerHTML = cards.map(c => `
+    <div class="kpi-card accent-${c.accent}">
+      <div class="kpi-label"><span class="has-tip">${c.label}<span class="tip-icon">?</span><span class="tip-text">${c.tip}</span></span></div>
+      <div class="kpi-value">${c.value}</div>
+      <div class="kpi-sub">${c.sub}</div>
+    </div>
+  `).join('');
+}
+
+// ─── Build metric tables ────────────────────────────────────────────────────
+function buildMetricTables(data) {
+  const pre = data.pre;
+  const post = data.post;
+
+  // STD table
+  document.getElementById('table-std').innerHTML = tableHeader() + '<tbody>' +
+    metricsRow('STD-mAP', pre.comprehensive.map, post.comprehensive.map) +
+    metricsRow('Mean Precision (F1-opt)', pre.comprehensive.mean_precision, post.comprehensive.mean_precision) +
+    metricsRow('Mean Recall (F1-opt)', pre.comprehensive.mean_recall, post.comprehensive.mean_recall) +
+    metricsRow('Mean F1 (F1-opt)', pre.comprehensive.mean_f1, post.comprehensive.mean_f1) +
+    metricsRow('Mean Best Confidence', pre.comprehensive.mean_best_conf, post.comprehensive.mean_best_conf) +
+    metricsRow('Matching Method', null, null) +
+    '</tbody>';
+  // Replace matching method row
+  const rows = document.getElementById('table-std').querySelectorAll('tr');
+  const lastRow = rows[rows.length - 1];
+  lastRow.innerHTML = `<td class="metric-name">Matching Method</td>
+    <td class="metric-value" colspan="3">${pre.comprehensive.matching || 'greedy'}</td>`;
+
+  // Spatial table
+  document.getElementById('table-spatial').innerHTML = tableHeader() + '<tbody>' +
+    metricsRow('Mean Position Error (px)', pre.spatial.mean_error, post.spatial.mean_error, 'f1', false) +
+    metricsRow('Spatial Precision', pre.spatial.precision, post.spatial.precision) +
+    metricsRow('Spatial Recall', pre.spatial.recall, post.spatial.recall) +
+    metricsRow('Spatial F1', pre.spatial.f1, post.spatial.f1) +
+    '</tbody>';
+
+  // Temporal table
+  document.getElementById('table-temporal').innerHTML = tableHeader() + '<tbody>' +
+    metricsRow('Mean IoU', pre.temporal.mean_iou, post.temporal.mean_iou) +
+    metricsRow('Duration Accuracy', pre.temporal.duration_accuracy, post.temporal.duration_accuracy) +
+    metricsRow('ME Start (frames)', pre.temporal.me_start, post.temporal.me_start, 'f2', false) +
+    metricsRow('ME End (frames)', pre.temporal.me_end, post.temporal.me_end, 'f2', false) +
+    metricsRow('MSE Start (frames²)', pre.temporal.mse_start, post.temporal.mse_start, 'f2', false) +
+    metricsRow('MSE End (frames²)', pre.temporal.mse_end, post.temporal.mse_end, 'f2', false) +
+    '</tbody>';
+
+  // Directional table
+  document.getElementById('table-directional').innerHTML = tableHeader() + '<tbody>' +
+    metricsRow('Accuracy', pre.directional.accuracy, post.directional.accuracy) +
+    metricsRow('Mean Angular Error (°)', pre.directional.mean_error, post.directional.mean_error, 'f1', false) +
+    metricsRow('Mean Cosine Similarity', pre.directional.mean_cosine_similarity, post.directional.mean_cosine_similarity) +
+    '</tbody>';
+
+  // Detection Coverage
+  function coverageBlock(label, cov, counts) {
+    if (!cov) return `<div style="color:var(--text-muted)">No coverage data</div>`;
+    const detected = cov.detected_dances || 0;
+    const missed = cov.missed_dances || 0;
+    const totalGT = cov.total_gt_dances || cov.unique_gt_dances || 0;
+    const totalPreds = cov.total_predicted_runs || cov.total_predictions || 0;
+    const recPct = ((cov.recall || cov.gt_recall || 0) * 100).toFixed(1);
+    const precPct = ((cov.precision || cov.pred_precision || 0) * 100).toFixed(1);
+    const levelLabel = (cov.level || data.dance?.level) === 'waggle_run' ? 'Waggle Runs' : 'Windows';
+    return `
+      <div style="flex:1;min-width:280px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;">
+        <h4 style="margin:0 0 4px;color:var(--text-primary);font-size:14px;">${label}</h4>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;">${levelLabel}</div>
+        <div style="display:flex;gap:16px;margin-bottom:12px;">
+          <div style="text-align:center;flex:1;">
+            <div style="font-size:28px;font-weight:700;color:#4ade80;">${detected}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Detected</div>
+          </div>
+          <div style="text-align:center;flex:1;">
+            <div style="font-size:28px;font-weight:700;color:#fbbf24;">${missed}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Missed</div>
+          </div>
+          <div style="text-align:center;flex:1;">
+            <div style="font-size:28px;font-weight:700;color:#60a5fa;">${totalPreds}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Predictions</div>
+          </div>
+        </div>
+        <div style="margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+            <span>Dance Recall (${detected}/${totalGT})</span><span style="color:#4ade80;font-weight:600;">${recPct}%</span>
+          </div>
+          <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden;">
+            <div style="width:${recPct}%;height:100%;background:#4ade80;border-radius:4px;"></div>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+            <span>Pred Precision (${detected}/${totalPreds})</span><span style="color:#60a5fa;font-weight:600;">${precPct}%</span>
+          </div>
+          <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden;">
+            <div style="width:${precPct}%;height:100%;background:#60a5fa;border-radius:4px;"></div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  const cc = document.getElementById('coverage-content');
+  const dance = data.dance;
+
+  if (dance && dance.coverage) {
+    // Dance-level coverage (primary)
+    cc.innerHTML = coverageBlock('Dance-Level Detection', dance.coverage, dance.counts);
+  } else {
+    // Fallback to window-level
+    cc.innerHTML = coverageBlock('Pre Post-Processing', pre.detection_coverage, pre.counts) +
+                   coverageBlock('Post Post-Processing', post.detection_coverage, post.counts);
+  }
+}
+
+// ─── Build dance-level results section ──────────────────────────────────────
+function buildDanceSection(data) {
+  const el = document.getElementById('dance-content');
+  const dance = data.dance;
+
+  if (!dance || dance.level !== 'waggle_run') {
+    el.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:24px;">
+      No dance-level data — run evaluation to compute cross-window metrics.
+    </div>`;
+    return;
+  }
+
+  const c = dance.comprehensive;
+  const s = dance.spatial;
+  const t = dance.temporal;
+  const d = dance.directional;
+  const cov = dance.coverage;
+
+  el.innerHTML = `
+    <div style="margin-bottom:16px;font-size:12px;color:var(--text-muted);">
+      Predictions are mapped from crop-space to frame-space, pooled across overlapping temporal windows,
+      and clustered per-video using DBSCAN. GT dances are deduplicated by (video, waggle_run_id).
+      All position comparisons use normalized [0,1] coordinates for resolution-invariance.
+    </div>
+
+    <table class="metrics-table">
+      <thead><tr>
+        <th>Metric</th><th>Value</th><th>Details</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td class="metric-name">Dance mAP</td>
+          <td class="metric-value" style="color:var(--green);font-weight:700;">${fmt(c.map)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Swept over position, temporal IoU, and angular thresholds</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Precision (F1-opt)</td>
+          <td class="metric-value">${fmt(c.mean_precision)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">At optimal confidence threshold</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Recall (F1-opt)</td>
+          <td class="metric-value">${fmt(c.mean_recall)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">At optimal confidence threshold</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean F1 (F1-opt)</td>
+          <td class="metric-value">${fmt(c.mean_f1)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Harmonic mean of precision and recall</td>
+        </tr>
+        <tr style="border-top:1px solid var(--border);">
+          <td class="metric-name">Mean Position Error (norm)</td>
+          <td class="metric-value">${fmt(s.mean_error, 4)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(s.median_error, 4)} · in [0,1] normalized coords</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Temporal IoU</td>
+          <td class="metric-value">${fmt(t.mean_iou)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(t.median_iou)}</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Mean Angular Error</td>
+          <td class="metric-value">${fmt(d.mean_error, 1)}°</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(d.median_error, 1)}°</td>
+        </tr>
+        <tr style="border-top:1px solid var(--border);">
+          <td class="metric-name">GT Dances</td>
+          <td class="metric-value">${fmtInt(cov.total_gt_dances)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Unique (video, waggle_run_id) pairs</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Predicted Runs</td>
+          <td class="metric-value">${fmtInt(cov.total_predicted_runs)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">After cross-window DBSCAN clustering</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Matched</td>
+          <td class="metric-value" style="color:var(--green);">${fmtInt(cov.detected_dances)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Missed: ${fmtInt(cov.missed_dances)}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+// ─── Build per-video table ──────────────────────────────────────────────────
+function buildPerVideoTable(data) {
+  const perVideo = data.per_video;
+  if (!perVideo || Object.keys(perVideo).length === 0) {
+    document.getElementById('table-per-video').innerHTML =
+      '<tr><td style="padding:20px;text-align:center;color:var(--text-muted)">No per-video data</td></tr>';
+    return;
+  }
+
+  // Build sortable array — supports both new lightweight and legacy full metrics
+  const rows = Object.entries(perVideo).map(([vname, vdata]) => ({
+    name: vname,
+    n_windows: vdata.n_windows ?? 0,
+    n_preds: vdata.n_preds ?? vdata.pre?.counts?.predictions ?? 0,
+    n_post_preds: vdata.n_post_preds ?? vdata.post?.counts?.predictions ?? 0,
+    n_gts: vdata.n_gts ?? vdata.post?.counts?.ground_truths ?? 0,
+  }));
+
+  // Sort
+  rows.sort((a, b) => {
+    const va = a[sortColumn] ?? 0;
+    const vb = b[sortColumn] ?? 0;
+    if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return sortAsc ? va - vb : vb - va;
+  });
+
+  const cols = [
+    { key: 'name', label: 'Video', fmt: v => `<a href="/eval/video/${encodeURIComponent(v)}" class="video-name" title="${v}" style="color:var(--accent);text-decoration:none;">${v}</a>` },
+    { key: 'n_windows', label: 'Windows', fmt: fmtInt },
+    { key: 'n_preds', label: 'Raw Preds', fmt: fmtInt },
+    { key: 'n_post_preds', label: 'Post Preds', fmt: fmtInt },
+    { key: 'n_gts', label: 'GTs', fmt: fmtInt },
+  ];
+
+  const headerHtml = '<thead><tr>' + cols.map(c => {
+    const arrow = sortColumn === c.key ? (sortAsc ? '▲' : '▼') : '';
+    return `<th onclick="sortVideo('${c.key}')">${c.label}<span class="sort-arrow">${arrow}</span></th>`;
+  }).join('') + '</tr></thead>';
+
+  const bodyHtml = '<tbody>' + rows.map(r => {
+    return '<tr>' + cols.map(c => `<td>${c.fmt(r[c.key])}</td>`).join('') + '</tr>';
+  }).join('') + '</tbody>';
+
+  document.getElementById('table-per-video').innerHTML = headerHtml + bodyHtml;
+}
+
+function sortVideo(col) {
+  if (sortColumn === col) {
+    sortAsc = !sortAsc;
+  } else {
+    sortColumn = col;
+    sortAsc = col === 'name';  // name ascending by default, numbers descending
+  }
+  if (currentResults) buildPerVideoTable(currentResults);
+}
+
+// ─── Build config panel ─────────────────────────────────────────────────────
+function buildConfigPanel(data) {
+  const ec = data.config.eval || {};
+  const pc = data.config.post_process || {};
+
+  document.getElementById('config-grid').innerHTML = `
+    <div class="config-group">
+      <h4>Evaluation Thresholds</h4>
+      <div class="config-item"><span class="config-key">Position Thresholds</span><span class="config-val">${JSON.stringify(ec.pos_thresholds)}</span></div>
+      <div class="config-item"><span class="config-key">IoU Thresholds</span><span class="config-val">${JSON.stringify(ec.iou_thresholds)}</span></div>
+      <div class="config-item"><span class="config-key">Angular Thresholds</span><span class="config-val">${JSON.stringify(ec.angular_thresholds)}</span></div>
+      <div class="config-item"><span class="config-key">Match Pairs</span><span class="config-val">${ec.match_pairs}</span></div>
+      <div class="config-item"><span class="config-key">Confidence Threshold</span><span class="config-val">${ec.confidence_threshold}</span></div>
+      <div class="config-item"><span class="config-key">Max Detections</span><span class="config-val">${ec.max_dets}</span></div>
+    </div>
+    <div class="config-group">
+      <h4>Post-Processing</h4>
+      <div class="config-item"><span class="config-key">Spatial Threshold</span><span class="config-val">${pc.spatial_threshold}</span></div>
+      <div class="config-item"><span class="config-key">Temporal Threshold</span><span class="config-val">${pc.temporal_threshold}</span></div>
+      <div class="config-item"><span class="config-key">Confidence Threshold</span><span class="config-val">${pc.confidence_threshold}</span></div>
+      <div class="config-item"><span class="config-key">Strategy</span><span class="config-val">${pc.strategy}</span></div>
+      <div class="config-item"><span class="config-key">Mode</span><span class="config-val">${pc.mode}</span></div>
+    </div>
+  `;
+}
+
+// ─── Display results ────────────────────────────────────────────────────────
+function showResults(data) {
+  currentResults = data;
+  stateEmpty.style.display = 'none';
+  resultsContainer.style.display = 'block';
+
+  buildKPIs(data);
+  buildDanceSection(data);
+  buildMetricTables(data);
+  buildPerVideoTable(data);
+  buildConfigPanel(data);
+
+  // Show recluster panel and sync sliders with current config
+  const rcPanel = document.getElementById('section-recluster');
+  rcPanel.style.display = '';
+  const pc = data.config?.post_process || {};
+  if (pc.spatial_threshold != null) {
+    document.getElementById('rc-spatial').value = pc.spatial_threshold;
+    document.getElementById('rc-spatial-val').textContent = pc.spatial_threshold;
+  }
+  if (pc.temporal_threshold_ms != null) {
+    document.getElementById('rc-temporal').value = pc.temporal_threshold_ms;
+    document.getElementById('rc-temporal-val').textContent = pc.temporal_threshold_ms;
+  } else if (pc.temporal_threshold != null) {
+    // Legacy: convert frames (at ~30fps) to ms
+    const ms = Math.round(pc.temporal_threshold / 30.0 * 1000);
+    document.getElementById('rc-temporal').value = ms;
+    document.getElementById('rc-temporal-val').textContent = ms;
+  }
+  if (pc.confidence_threshold != null) {
+    document.getElementById('rc-conf').value = pc.confidence_threshold;
+    document.getElementById('rc-conf-val').textContent = parseFloat(pc.confidence_threshold).toFixed(2);
+  }
+  if (pc.min_samples != null) {
+    document.getElementById('rc-minsamp').value = pc.min_samples;
+    document.getElementById('rc-minsamp-val').textContent = pc.min_samples;
+  }
+  if (pc.direction_threshold_deg != null) {
+    document.getElementById('rc-dirthresh').value = pc.direction_threshold_deg;
+    document.getElementById('rc-dirthresh-val').textContent = pc.direction_threshold_deg;
+  }
+  if (pc.clustering_method) document.getElementById('rc-method').value = pc.clustering_method;
+  if (pc.mode) document.getElementById('rc-mode').value = pc.mode;
+
+  let tsText = `Evaluated at ${data.timestamp || '?'} • Checkpoint: ${data.checkpoint?.filename || '?'} (epoch ${data.checkpoint?.epoch ?? '?'})`;
+  if (data.recluster_time != null) tsText += ` • Re-clustered in ${data.recluster_time}s`;
+  document.getElementById('eval-timestamp').textContent = tsText;
+}
+
+// ─── Checkpoint info ────────────────────────────────────────────────────────
+function updateCkptInfo(ckpt) {
+  if (!ckpt) {
+    ckptInfo.innerHTML = '<span style="color:var(--text-muted)">No checkpoint loaded</span>';
+    btnRun.disabled = true;
+    statusHint.textContent = 'No model checkpoint loaded. Start the viewer with --checkpoint.';
+    return;
+  }
+  ckptInfo.innerHTML = `
+    <span class="ckpt-badge"><span class="dot"></span> ${ckpt.filename || 'model'}</span>
+    <span style="color:var(--text-muted)">Epoch ${ckpt.epoch ?? '?'}</span>
+    <span style="color:var(--text-muted)">Score: ${ckpt.best_score != null ? ckpt.best_score.toFixed(4) : '?'}</span>
+  `;
+  btnRun.disabled = false;
+  statusHint.textContent = 'Click "Run Evaluation" to compute metrics on the validation split.';
+}
+
+// ─── Progress updates ───────────────────────────────────────────────────────
+function updateProgress(status) {
+  if (status.stage === 'idle' || status.stage === 'done' || status.stage === 'error') {
+    progressArea.style.display = 'none';
+    btnRun.classList.remove('running');
+    btnRunIcon.textContent = '▶';
+    btnRunText.textContent = status.stage === 'error' ? 'Retry Evaluation' : 'Run Evaluation';
+    btnRun.disabled = !status.model_loaded;
+
+    if (status.stage === 'error') {
+      statusHint.textContent = `Error: ${status.message}`;
+      statusHint.style.color = 'var(--red)';
+    }
+    return;
+  }
+
+  // Running
+  progressArea.style.display = 'flex';
+  btnRun.classList.add('running');
+  btnRunIcon.textContent = '⏳';
+  btnRunText.textContent = status.message || 'Running…';
+  btnRun.disabled = true;
+
+  const pct = status.batch_total > 0
+    ? Math.round(status.batch_current / status.batch_total * 100)
+    : 0;
+  progressFill.style.width = pct + '%';
+  progressText.textContent = status.stage === 'inference'
+    ? `${status.batch_current}/${status.batch_total} batches`
+    : status.stage;
+}
+
+// ─── Polling ────────────────────────────────────────────────────────────────
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(pollStatus, 10000);  // 10s — lower frequency avoids GIL starvation
+}
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+async function pollStatus() {
+  try {
+    const resp = await fetch('/api/eval/status');
+    const status = await resp.json();
+
+    updateCkptInfo(status.checkpoint);
+    updateProgress(status);
+
+    if (status.has_results && !currentResults) {
+      // Results became available — fetch them
+      const res = await fetch('/api/eval/results');
+      const data = await res.json();
+      if (!data.error) showResults(data);
+    } else if (status.has_cached_preds && !status.has_results && !status.running && !currentResults) {
+      // Cached predictions exist but no results yet — auto-trigger recluster
+      console.log('Auto-triggering recluster from cached predictions…');
+      statusHint.textContent = 'Computing metrics from cached predictions…';
+      await doRecluster();
+    }
+
+    if (status.stage === 'done' || status.stage === 'error' || status.stage === 'idle') {
+      if (!status.running) stopPolling();
+    }
+  } catch (e) {
+    console.error('Poll error:', e);
+  }
+}
+
+// ─── Run evaluation ─────────────────────────────────────────────────────────
+async function runEvaluation() {
+  btnRun.disabled = true;
+  try {
+    const resp = await fetch('/api/eval/run', { method: 'POST' });
+    const data = await resp.json();
+
+    if (data.status === 'cached') {
+      // Results already available
+      const res = await fetch('/api/eval/results');
+      const results = await res.json();
+      if (!results.error) showResults(results);
+      return;
+    }
+
+    startPolling();
+  } catch (e) {
+    console.error('Run error:', e);
+    btnRun.disabled = false;
+  }
+}
+
+btnRun.addEventListener('click', runEvaluation);
+
+// ─── Re-cluster slider listeners ────────────────────────────────────────────
+document.getElementById('rc-spatial').addEventListener('input', e => {
+  document.getElementById('rc-spatial-val').textContent = e.target.value;
+});
+document.getElementById('rc-temporal').addEventListener('input', e => {
+  document.getElementById('rc-temporal-val').textContent = e.target.value;
+});
+document.getElementById('rc-conf').addEventListener('input', e => {
+  document.getElementById('rc-conf-val').textContent = parseFloat(e.target.value).toFixed(2);
+});
+document.getElementById('rc-minsamp').addEventListener('input', e => {
+  document.getElementById('rc-minsamp-val').textContent = e.target.value;
+});
+document.getElementById('rc-dirthresh').addEventListener('input', e => {
+  document.getElementById('rc-dirthresh-val').textContent = e.target.value;
+});
+
+async function doRecluster() {
+  const btn = document.getElementById('btn-recluster');
+  const statusEl = document.getElementById('rc-status');
+  btn.disabled = true;
+  statusEl.textContent = 'Re-clustering…';
+  statusEl.style.color = 'var(--accent)';
+
+  const params = {
+    spatial_threshold: parseFloat(document.getElementById('rc-spatial').value),
+    temporal_threshold_ms: parseInt(document.getElementById('rc-temporal').value),
+    temporal_threshold: Math.round(parseInt(document.getElementById('rc-temporal').value) / 1000.0 * 30),  // frames at 30fps for window-level
+    confidence_threshold: parseFloat(document.getElementById('rc-conf').value),
+    min_samples: parseInt(document.getElementById('rc-minsamp').value),
+    direction_threshold_deg: parseFloat(document.getElementById('rc-dirthresh').value),
+    clustering_method: document.getElementById('rc-method').value,
+    mode: document.getElementById('rc-mode').value,
+    strategy: 'cluster_consolidate',
+  };
+
+  try {
+    const t0 = performance.now();
+    const resp = await fetch('/api/eval/recluster', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await resp.json();
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+
+    if (data.error) {
+      statusEl.textContent = `Error: ${data.error}`;
+      statusEl.style.color = 'var(--red)';
+    } else {
+      currentResults = data;
+      showResults(data);
+      statusEl.textContent = `✅ Done in ${elapsed}s (server: ${data.recluster_time || '?'}s)`;
+      statusEl.style.color = 'var(--green)';
+    }
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doOptimize() {
+  const btn = document.getElementById('btn-optimize');
+  const statusEl = document.getElementById('optim-status');
+  const progressBar = document.getElementById('optim-progress');
+  const progressFillEl = document.getElementById('optim-progress-fill');
+  const resultEl = document.getElementById('optim-result');
+  const metric = document.getElementById('optim-metric').value;
+  const nTrials = parseInt(document.getElementById('optim-trials').value) || 60;
+
+  btn.disabled = true;
+  btn.classList.add('running');
+  btn.textContent = '⏳ Optimizing…';
+  statusEl.textContent = `0 / ${nTrials}`;
+  statusEl.style.color = 'var(--accent)';
+  progressBar.style.display = 'block';
+  progressFillEl.style.width = '0%';
+  resultEl.style.display = 'none';
+
+  // Fire-and-forget POST to start optimization
+  try {
+    const resp = await fetch('/api/eval/optimize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ n_trials: nTrials, metric }),
+    });
+    const startData = await resp.json();
+    if (startData.error) {
+      statusEl.textContent = `Error: ${startData.error}`;
+      statusEl.style.color = 'var(--red)';
+      btn.disabled = false;
+      btn.classList.remove('running');
+      btn.textContent = '🔍 Auto-Optimize';
+      progressBar.style.display = 'none';
+      return;
+    }
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = 'var(--red)';
+    btn.disabled = false;
+    btn.classList.remove('running');
+    btn.textContent = '🔍 Auto-Optimize';
+    progressBar.style.display = 'none';
+    return;
+  }
+
+  // Poll status until done
+  const t0 = performance.now();
+  const pollId = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/eval/optimize/status');
+      const st = await resp.json();
+
+      const pct = st.trial_total > 0 ? ((st.trial_current / st.trial_total) * 100).toFixed(0) : 0;
+      progressFillEl.style.width = pct + '%';
+      const bestStr = st.best_value != null ? ` · best=${st.best_value.toFixed(4)}` : '';
+      statusEl.textContent = `${st.trial_current} / ${st.trial_total}${bestStr}`;
+
+      if (!st.running && (st.done || st.error)) {
+        clearInterval(pollId);
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+
+        if (st.error) {
+          statusEl.textContent = `Error: ${st.error}`;
+          statusEl.style.color = 'var(--red)';
+        } else if (st.final_results) {
+          const data = st.final_results;
+          const bp = data.best_params;
+
+          // Apply best params to sliders
+          document.getElementById('rc-spatial').value = bp.spatial_threshold;
+          document.getElementById('rc-spatial-val').textContent = Math.round(bp.spatial_threshold);
+          document.getElementById('rc-temporal').value = Math.round(bp.temporal_threshold_ms);
+          document.getElementById('rc-temporal-val').textContent = Math.round(bp.temporal_threshold_ms);
+          document.getElementById('rc-conf').value = bp.confidence_threshold;
+          document.getElementById('rc-conf-val').textContent = bp.confidence_threshold.toFixed(2);
+          document.getElementById('rc-minsamp').value = bp.min_samples;
+          document.getElementById('rc-minsamp-val').textContent = bp.min_samples;
+          if (bp.direction_threshold_deg != null) {
+            document.getElementById('rc-dirthresh').value = bp.direction_threshold_deg;
+            document.getElementById('rc-dirthresh-val').textContent = Math.round(bp.direction_threshold_deg);
+          }
+
+          // Update dashboard with results
+          if (data.results) {
+            currentResults = data.results;
+            showResults(data.results);
+          }
+
+          progressFillEl.style.width = '100%';
+          statusEl.textContent = `✅ Done in ${elapsed}s (${data.n_trials} trials)`;
+          statusEl.style.color = 'var(--green)';
+
+          // Show result summary
+          resultEl.style.display = 'block';
+          resultEl.innerHTML = `
+            <div>Best <b>${data.metric.toUpperCase()}</b>: <span class="best-val">${data.best_value.toFixed(4)}</span></div>
+            <div>Spatial: <b>${bp.spatial_threshold.toFixed(1)}px</b> · 
+                 Temporal: <b>${bp.temporal_threshold_ms.toFixed(0)}ms</b> · 
+                 Conf: <b>${bp.confidence_threshold.toFixed(3)}</b> · 
+                 Min samples: <b>${bp.min_samples}</b> · 
+                 Direction: <b>${(bp.direction_threshold_deg || 30).toFixed(0)}°</b></div>
+            <div style="color:var(--text-muted)">${data.n_trials} trials in ${data.elapsed}s (Optuna TPE)</div>
+          `;
+
+          // Show "Apply to Config" button
+          const applyBtn = document.getElementById('btn-apply-config');
+          applyBtn.style.display = 'inline-flex';
+          applyBtn.classList.remove('applied');
+          applyBtn.disabled = false;
+          applyBtn.textContent = '💾 Apply to Config';
+          applyBtn._bestParams = bp;
+        }
+
+        btn.disabled = false;
+        btn.classList.remove('running');
+        btn.textContent = '🔍 Auto-Optimize';
+        progressBar.style.display = 'none';
+      }
+    } catch(e) { /* network error during poll — retry */ }
+  }, 1000);
+}
+
+async function applyToConfig() {
+  const btn = document.getElementById('btn-apply-config');
+  const params = btn._bestParams;
+  if (!params) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Saving…';
+
+  try {
+    const resp = await fetch('/api/config/update_post_process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        spatial_threshold: params.spatial_threshold,
+        temporal_threshold_ms: params.temporal_threshold_ms,
+        confidence_threshold: params.confidence_threshold,
+        min_samples: params.min_samples,
+        direction_threshold_deg: params.direction_threshold_deg,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      btn.textContent = `❌ ${data.error}`;
+      btn.disabled = false;
+    } else {
+      btn.textContent = `✅ Saved (backup: ${data.backup})`;
+      btn.classList.add('applied');
+    }
+  } catch (e) {
+    btn.textContent = `❌ ${e.message}`;
+    btn.disabled = false;
+  }
+}
+
+// ─── Init ───────────────────────────────────────────────────────────────────
+(async function init() {
+  // Check initial status
+  try {
+    const resp = await fetch('/api/eval/status');
+    const status = await resp.json();
+
+    updateCkptInfo(status.checkpoint);
+    updateProgress(status);
+
+    if (status.running) {
+      startPolling();
+    } else if (status.has_results) {
+      const res = await fetch('/api/eval/results');
+      const data = await res.json();
+      if (!data.error) {
+        showResults(data);
+        if (status.cache_stale) {
+          const banner = document.createElement('div');
+          banner.id = 'stale-banner';
+          banner.style.cssText = 'background:#78350f;color:#fbbf24;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:8px;';
+          const cacheEp = status.cache_epoch || '?';
+          const curEp = status.checkpoint?.epoch || '?';
+          banner.innerHTML = `⚠️ <b>Stale cache</b> — showing results from epoch ${cacheEp}, but the current model is epoch ${curEp}. Click <b>Run Evaluation</b> to re-evaluate.`;
+          resultsContainer.insertBefore(banner, resultsContainer.firstChild);
+        }
+      }
+    } else if (status.has_cached_preds) {
+      // Cached predictions available but no results — auto-compute metrics
+      statusHint.textContent = 'Computing metrics from cached predictions…';
+      try {
+        const resp = await fetch('/api/eval/recluster', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy: 'cluster_consolidate' }),
+        });
+        const data = await resp.json();
+        if (!data.error) {
+          showResults(data);
+          statusHint.textContent = 'Metrics computed from cached predictions.';
+        } else {
+          statusHint.textContent = 'Error computing metrics: ' + data.error;
+          statusHint.style.color = 'var(--red)';
+        }
+      } catch (e) {
+        statusHint.textContent = 'Error: ' + e.message;
+        statusHint.style.color = 'var(--red)';
+      }
+    }
+  } catch (e) {
+    statusHint.textContent = 'Cannot connect to viewer server.';
+    statusHint.style.color = 'var(--red)';
+  }
+})();
+</script>
+</body>
+</html>

@@ -288,3 +288,62 @@ def get_video_category(base_video_name: str) -> str:
         return "C"
     else:
         return "other"
+
+
+def get_base_video_stem(video_name: str) -> str:
+    """Strip resolution and fps suffixes to get the conceptual source video identity.
+    
+    Examples:
+        'T1-D1-B8-V4-C_960_540_ds30fps.mp4' → 'T1-D1-B8-V4-C'
+        'C1_..._1224_1024.mp4'               → 'C1_...'
+        '087_1152_880_ds15fps.mp4'            → '087'
+    
+    Used to group all augmented variants (different resolutions and frame rates)
+    of the same source recording for leak-free train/val splitting.
+    """
+    import re
+    name = video_name.replace('.mp4', '')
+    # Remove _dsXXfps suffix
+    name = re.sub(r'_ds\d+fps$', '', name)
+    # Remove resolution suffix (_WxH at the end)
+    name = re.sub(r'_\d+_\d+$', '', name)
+    return name
+
+
+def train_val_split_videos(video_names, train_ratio=0.9, seed=42):
+    """Split video names into train/val sets, ensuring all variants of a
+    source video go to the same split.
+    
+    The split is stratified by video category (0/T/C/other) and operates
+    on base video stems so that e.g. T1-D1-B8-V4-C_960_540.mp4 and
+    T1-D1-B8-V4-C_480_270_ds15fps.mp4 always land in the same set.
+    
+    Args:
+        video_names: Iterable of video_name strings (including resolution/fps suffixes)
+        train_ratio: Fraction of base stems to assign to training
+        seed: Random seed for reproducibility
+        
+    Returns:
+        (train_set, val_set): Two sets of video_name strings
+    """
+    import pandas as pd
+    
+    # Sort to ensure deterministic ordering regardless of Python hash randomization
+    video_df = pd.DataFrame({'video_name': sorted(set(video_names))})
+    video_df['stem'] = video_df['video_name'].apply(get_base_video_stem)
+    video_df['category'] = video_df['stem'].apply(get_video_category)
+    
+    # Deduplicate to stem level for splitting — sorted input ensures stable order
+    stem_df = video_df[['stem', 'category']].drop_duplicates().sort_values('stem')
+    
+    train_stems = set()
+    for _cat, group in stem_df.groupby('category'):
+        stems = np.random.RandomState(seed).permutation(sorted(group['stem'].values))
+        n_train = int(train_ratio * len(stems))
+        train_stems.update(stems[:n_train])
+    
+    # Map back to full video names
+    train_set = set(video_df[video_df['stem'].isin(train_stems)]['video_name'])
+    val_set = set(video_df[~video_df['stem'].isin(train_stems)]['video_name'])
+    
+    return train_set, val_set

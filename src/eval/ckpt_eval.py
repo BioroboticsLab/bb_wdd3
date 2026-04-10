@@ -59,18 +59,13 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    # Stratified video-level split:
-    # all windows from a given video go entirely to train or test never both
-    # split is done per category so each group contributes proportionally to both splits 
-    # regardless of how many videos it has
-    video_df = pd.DataFrame({'video_name': data['video_name'].unique()})
-    video_df['category'] = video_df['video_name'].apply(get_video_category)
-
-    train_videos = set()
-    for category, group in video_df.groupby('category'):
-        vids = np.random.RandomState(SEED).permutation(group['video_name'].values)
-        n_train = int(config['data']['train_ratio'] * len(vids))
-        train_videos.update(vids[:n_train])
+    # Stratified video-level split (stem-based to prevent info-leak between variants)
+    from src.utils.video_utils import train_val_split_videos
+    train_videos, _ = train_val_split_videos(
+        data['video_name'].unique(),
+        train_ratio=config['data']['train_ratio'],
+        seed=SEED
+    )
     
     test_df  = data[~data['video_name'].isin(train_videos)].reset_index(drop=True)
 
@@ -219,8 +214,8 @@ def main(args):
                                                         confidence_threshold=config['post_process']['confidence_threshold'], 
                                                         strategy=config['post_process']['strategy'], 
                                                         mode=config['post_process']['mode'],
-                                                        remove_outliers=config['post_process']['outlier_detection'],
-                                                        outlier_method='isolation_forest')
+                                                        remove_outliers=False,
+                                                        min_samples=config['post_process'].get('min_samples', 1))
 
         # Can postprocess entire predictions no need for limit to 16 sequences, its only needed when we visualise
         #save_preds_to_csv(test_preds, f'raw_predictions_epoch_{epoch}.csv', 'raw', './outputs/preds_csv')

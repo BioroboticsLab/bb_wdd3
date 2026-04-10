@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🐝 Video Eval Inspector — Waggle Viewer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔬</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0c0c18;
+  --bg-secondary: #12122a;
+  --bg-tertiary: #1a1a3e;
+  --bg-card: #1e1e42;
+  --border: #2a2a5a;
+  --text-primary: #e8e8f0;
+  --text-secondary: #9898b8;
+  --text-muted: #6868a0;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --green: #22c55e;
+  --green-dim: rgba(34, 197, 94, 0.15);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245, 158, 11, 0.15);
+  --red: #ef4444;
+  --red-dim: rgba(239, 68, 68, 0.15);
+  --blue: #3b82f6;
+  --blue-dim: rgba(59, 130, 246, 0.15);
+  --purple: #8b5cf6;
+  --tp: #22c55e;
+  --fp: #ef4444;
+  --fn: #f59e0b;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  line-height: 1.5;
+  display: flex; flex-direction: column;
+}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: #3a3a6a; border-radius: 3px; }
+
+/* Header */
+header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.back-link {
+  color: var(--text-muted); text-decoration: none;
+  font-size: 13px; font-weight: 500;
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 6px;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+.back-link:hover { color: var(--accent); border-color: var(--border); background: var(--bg-tertiary); }
+header h1 { font-size: 15px; font-weight: 600; white-space: nowrap; }
+header h1 .video-name-header { color: var(--accent); font-weight: 700; }
+.header-right {
+  display: flex; align-items: center; gap: 10px;
+  margin-left: auto; font-size: 11px; color: var(--text-muted);
+}
+.ckpt-pill {
+  padding: 3px 10px; border-radius: 6px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-size: 11px; font-weight: 500;
+}
+
+/* Main layout */
+.main-layout {
+  flex: 1; display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Video + Timeline column */
+.video-col {
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden; min-width: 0; min-height: 0;
+}
+
+/* Canvas */
+#canvas-container {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; position: relative;
+  background: #000; min-height: 200px;
+}
+#frame-canvas { max-width: 100%; max-height: 100%; display: block; }
+
+/* Controls */
+#controls {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ctrl-btn {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-tertiary); color: var(--text-primary);
+  font-size: 14px; cursor: pointer; transition: all 0.1s;
+}
+.ctrl-btn:hover { background: var(--bg-card); border-color: var(--accent); }
+.ctrl-btn.play-btn { width: 36px; height: 36px; font-size: 16px; }
+#frame-info {
+  font-size: 12px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+#frame-info strong { color: var(--text-primary); }
+kbd {
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-family: inherit; font-size: 10px;
+}
+.kbd-hint { font-size: 10px; color: var(--text-muted); margin-left: auto; }
+
+/* Overlay toggle */
+.overlay-toggles {
+  display: flex; gap: 4px;
+  margin-left: 16px; padding-left: 16px;
+  border-left: 1px solid var(--border);
+}
+.ovl-btn {
+  padding: 4px 10px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary); color: var(--text-secondary);
+  font-size: 11px; cursor: pointer; transition: all 0.15s;
+}
+.ovl-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.ovl-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Timeline */
+#timeline-container {
+  padding: 6px 16px 4px;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+#timeline-canvas {
+  width: 100%; height: 48px;
+  cursor: pointer; border-radius: 4px;
+  display: block;
+}
+
+/* Match list (below timeline) */
+#match-list {
+  display: flex; gap: 5px; padding: 6px 16px 10px;
+  overflow-x: auto;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.match-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  font-size: 11px; cursor: pointer;
+  transition: all 0.15s; white-space: nowrap;
+  flex-shrink: 0;
+}
+.match-chip:hover { border-color: var(--accent); background: var(--bg-card); }
+.match-chip.active { border-color: var(--accent); background: rgba(99, 102, 241, 0.15); }
+.match-chip.tp { border-left: 3px solid var(--tp); }
+.match-chip.fp { border-left: 3px solid var(--fp); }
+.match-chip.fn { border-left: 3px solid var(--fn); }
+.match-chip .badge {
+  font-size: 9px; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px;
+}
+.match-chip.tp .badge { background: var(--green-dim); color: var(--tp); }
+.match-chip.fp .badge { background: var(--red-dim); color: var(--fp); }
+.match-chip.fn .badge { background: var(--amber-dim); color: var(--fn); }
+.match-metric { color: var(--text-muted); font-size: 10px; }
+
+/* Sidebar */
+.sidebar {
+  width: 320px; min-width: 320px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 16px;
+  flex-shrink: 0;
+  min-height: 0;
+}
+.sidebar-section {
+  margin-bottom: 16px;
+}
+.sidebar-title {
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--text-muted); margin-bottom: 8px;
+}
+
+/* KPI row */
+.kpi-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.kpi-mini {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px;
+  transition: border-color 0.15s;
+}
+.kpi-mini:hover { border-color: var(--accent); }
+.kpi-mini .label {
+  font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-muted); margin-bottom: 3px;
+}
+.kpi-mini .value {
+  font-size: 22px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-mini .sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.kpi-mini.green .value { color: var(--green); }
+.kpi-mini.blue .value { color: var(--blue); }
+.kpi-mini.amber .value { color: var(--amber); }
+.kpi-mini.red .value { color: var(--red); }
+.kpi-mini.purple .value { color: var(--purple); }
+
+/* Match detail card */
+.match-detail {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.match-detail-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s;
+}
+.match-detail-header:hover { background: var(--bg-tertiary); }
+.match-detail-header .type-badge {
+  font-size: 10px; font-weight: 700;
+  padding: 2px 6px; border-radius: 4px;
+}
+.match-detail-header .type-badge.tp { background: var(--green-dim); color: var(--tp); }
+.match-detail-header .type-badge.fp { background: var(--red-dim); color: var(--fp); }
+.match-detail-header .type-badge.fn { background: var(--amber-dim); color: var(--fn); }
+.match-detail-body {
+  padding: 8px 12px;
+  font-size: 11px;
+}
+.match-detail-body .metric-row {
+  display: flex; justify-content: space-between;
+  padding: 2px 0;
+}
+.match-detail-body .metric-label { color: var(--text-muted); }
+.match-detail-body .metric-val {
+  font-weight: 600; font-variant-numeric: tabular-nums;
+}
+
+/* Video info */
+.video-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px; font-size: 11px;
+}
+.video-info-grid .key { color: var(--text-muted); }
+.video-info-grid .val { color: var(--text-primary); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Loading state */
+.loading-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px;
+  padding: 80px 24px; text-align: center;
+  flex: 1;
+}
+.loading-state .icon { font-size: 48px; }
+.loading-state p { font-size: 13px; color: var(--text-secondary); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse { animation: pulse 1.5s ease-in-out infinite; }
+
+/* Re-cluster controls */
+.rc-group { margin-bottom: 8px; }
+.rc-group label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--text-muted); margin-bottom: 2px;
+}
+.rc-group .rc-val { color: var(--accent); font-weight: 700; }
+.rc-group input[type=range] {
+  width: 100%; accent-color: var(--accent);
+  height: 4px; cursor: pointer;
+}
+.rc-group select {
+  width: 100%; padding: 4px 8px; border-radius: 6px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text-primary); font-size: 11px;
+}
+.rc-actions {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.rc-btn {
+  flex: 1; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--accent); font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s;
+}
+.rc-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.rc-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.rc-status { font-size: 10px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back-link" href="/eval">← Eval Dashboard</a>
+  <h1>🔬 <span class="video-name-header" id="video-name-header">Loading…</span></h1>
+  <div class="header-right">
+    <span id="ckpt-info"></span>
+  </div>
+</header>
+
+<div class="main-layout" id="main-layout" style="display:none;">
+  <!-- Video + Timeline column -->
+  <div class="video-col">
+    <div id="canvas-container">
+      <canvas id="frame-canvas"></canvas>
+    </div>
+
+    <div id="controls">
+      <button class="ctrl-btn" id="btn-prev" title="Previous frame (←)">◀</button>
+      <button class="ctrl-btn play-btn" id="btn-play" title="Play/Pause (Space)">▶</button>
+      <button class="ctrl-btn" id="btn-next" title="Next frame (→)">▶</button>
+      <span id="frame-info">Frame <strong>0</strong> / 0</span>
+
+      <div class="overlay-toggles">
+        <button class="ovl-btn active" id="ovl-gt" title="Toggle GT annotations">🐝 GT</button>
+        <button class="ovl-btn active" id="ovl-pred" title="Toggle predictions">🔮 Pred</button>
+      </div>
+
+      <span class="kbd-hint">
+        <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>G</kbd> GT &nbsp;<kbd>P</kbd> pred
+      </span>
+    </div>
+
+    <div id="timeline-container">
+      <canvas id="timeline-canvas"></canvas>
+    </div>
+
+    <div id="match-list"></div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">Detection Summary</div>
+      <div class="kpi-row" id="kpi-row"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-title">🔧 Re-cluster</div>
+      <div class="rc-group">
+        <label>Spatial threshold (px) <span class="rc-val" id="rc-spatial-val">30</span></label>
+        <input type="range" id="rc-spatial" min="5" max="200" step="1" value="30">
+      </div>
+      <div class="rc-group">
+        <label>Temporal threshold (ms) <span class="rc-val" id="rc-temporal-val">300</span></label>
+        <input type="range" id="rc-temporal" min="50" max="5000" step="50" value="300">
+      </div>
+      <div class="rc-group">
+        <label>Confidence threshold <span class="rc-val" id="rc-conf-val">0.00</span></label>
+        <input type="range" id="rc-conf" min="0" max="1" step="0.01" value="0">
+      </div>
+      <div class="rc-group">
+        <label>Min Samples (DBSCAN) <span class="rc-val" id="rc-minsamp-val">1</span></label>
+        <input type="range" id="rc-minsamp" min="1" max="10" step="1" value="1">
+      </div>
+      <div class="rc-group">
+        <label>Direction threshold (°) <span class="rc-val" id="rc-dirthresh-val">30</span></label>
+        <input type="range" id="rc-dirthresh" min="0" max="90" step="5" value="30">
+      </div>
+      <div class="rc-actions">
+        <button class="rc-btn" id="btn-recluster" onclick="doRecluster()">🔄 Re-cluster</button>
+        <span class="rc-status" id="rc-status"></span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-title">Match Detail</div>
+      <div id="match-details"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-title">Video Info</div>
+      <div class="video-info-grid" id="video-info-grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Loading state -->
+<div class="loading-state" id="loading-state">
+  <div class="icon pulse">🔬</div>
+  <p id="loading-text">Loading video eval data…</p>
+</div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────────
+const videoName = decodeURIComponent(window.location.pathname.replace('/eval/video/', ''));
+let state = {
+  currentFrame: 0,
+  totalFrames: 0,
+  videoWidth: 0,
+  videoHeight: 0,
+  videoFps: 15,
+  playing: false,
+  showGT: true,
+  showPred: true,
+  activeMatchIdx: -1,  // highlighted match pair
+  // Data from API
+  gtDances: [],
+  predictedRuns: [],
+  matchData: null,
+  rawPreds: [],
+};
+
+// Frame cache
+const frameCache = new Map();
+const CACHE_MAX = 120;
+let playTimer = null;
+
+// Colors
+const GT_COLORS = ['#4ade80', '#22d3ee', '#a78bfa', '#fb923c', '#f472b6', '#facc15', '#34d399', '#60a5fa'];
+const PRED_COLORS = ['#6366f1', '#818cf8', '#a5b4fc', '#c084fc', '#e879f9'];
+
+// ─── DOM refs ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const canvas = $('frame-canvas');
+const ctx = canvas.getContext('2d');
+const tlCanvas = $('timeline-canvas');
+const tlCtx = tlCanvas.getContext('2d');
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+function fmt(v, d = 3) {
+  if (v == null) return '—';
+  return typeof v === 'number' ? v.toFixed(d) : v;
+}
+function fmtPct(v) {
+  if (v == null) return '—';
+  return (v * 100).toFixed(0) + '%';
+}
+
+// ─── Data Loading ───────────────────────────────────────────────────────────
+async function loadData() {
+  try {
+    // Parallel: video info + eval data
+    const [infoResp, evalResp] = await Promise.all([
+      fetch(`/api/video/${encodeURIComponent(videoName)}/info`),
+      fetch(`/api/eval/video/${encodeURIComponent(videoName)}`),
+    ]);
+
+    if (!evalResp.ok) {
+      const err = await evalResp.json();
+      throw new Error(err.error || 'Failed to load eval data');
+    }
+
+    const info = await infoResp.json();
+    const data = await evalResp.json();
+
+    state.totalFrames = info.total_frames;
+    state.videoWidth = info.width;
+    state.videoHeight = info.height;
+    state.videoFps = info.fps || data.fps || 15;
+
+    state.gtDances = data.gt_dances || [];
+    state.predictedRuns = data.predicted_runs || [];
+    state.matchData = data.matches || { pairs: [], tp: 0, fp: 0, fn: 0 };
+    state.rawPreds = data.raw_preds || [];
+
+    // Update header
+    $('video-name-header').textContent = videoName;
+    document.title = `🔬 ${videoName} — Eval Inspector`;
+
+    if (data.checkpoint) {
+      $('ckpt-info').innerHTML = `
+        <span class="ckpt-pill">${data.checkpoint.filename || 'model'} · Epoch ${data.checkpoint.epoch ?? '?'}</span>
+      `;
+    }
+
+    // Set canvas size
+    canvas.width = state.videoWidth;
+    canvas.height = state.videoHeight;
+
+    // Build UI
+    buildKPIs(data);
+    buildMatchList();
+    buildMatchDetails();
+    buildVideoInfo(info, data);
+
+    // Show layout, hide loading
+    $('loading-state').style.display = 'none';
+    $('main-layout').style.display = 'flex';
+
+    // Load first frame - try to jump to first dance
+    let startFrame = 0;
+    if (state.gtDances.length > 0) {
+      startFrame = Math.max(0, Math.floor(state.gtDances[0].temporal_offsets[0]) - 10);
+    }
+    loadAndRenderFrame(startFrame);
+    renderTimeline();
+
+  } catch (e) {
+    $('loading-text').textContent = `Error: ${e.message}`;
+    $('loading-text').style.color = 'var(--red)';
+    console.error(e);
+  }
+}
+
+// ─── KPI Cards ──────────────────────────────────────────────────────────────
+function buildKPIs(data) {
+  const m = data.matches;
+  const nGT = data.gt_dances.length;
+  const nPred = data.predicted_runs.length;
+  const recall = nGT > 0 ? m.tp / nGT : 0;
+  const precision = nPred > 0 ? m.tp / nPred : 0;
+
+  // Compute avg temporal IoU and angular error from TP pairs
+  const tpPairs = m.pairs.filter(p => p.type === 'TP');
+  const avgIoU = tpPairs.length > 0
+    ? tpPairs.reduce((s, p) => s + p.metrics.temporal_iou, 0) / tpPairs.length : 0;
+  const avgAngErr = tpPairs.length > 0
+    ? tpPairs.reduce((s, p) => s + p.metrics.angular_error, 0) / tpPairs.length : 0;
+
+  const cards = [
+    { label: 'TP', value: m.tp, cls: 'green', sub: `${fmtPct(recall)} recall` },
+    { label: 'FP', value: m.fp, cls: 'red', sub: `${fmtPct(precision)} precision` },
+    { label: 'FN', value: m.fn, cls: 'amber', sub: `${nGT} GT dances` },
+    { label: 'Pred Runs', value: nPred, cls: 'purple', sub: `${data.n_windows} windows` },
+    { label: 'Temporal IoU', value: fmt(avgIoU, 2), cls: 'blue', sub: 'avg over TPs' },
+    { label: 'Ang. Error', value: fmt(avgAngErr, 1) + '°', cls: 'amber', sub: 'avg over TPs' },
+  ];
+
+  $('kpi-row').innerHTML = cards.map(c => `
+    <div class="kpi-mini ${c.cls}">
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}</div>
+      <div class="sub">${c.sub}</div>
+    </div>
+  `).join('');
+}
+
+// ─── Match Chip List ────────────────────────────────────────────────────────
+function buildMatchList() {
+  const pairs = state.matchData.pairs;
+  $('match-list').innerHTML = pairs.map((p, i) => {
+    const t = p.type.toLowerCase();
+    const tStart = p.gt?.temporal_offsets?.[0] ?? p.pred?.temporal_offsets?.[0] ?? 0;
+    const tEnd = p.gt?.temporal_offsets?.[1] ?? p.pred?.temporal_offsets?.[1] ?? 0;
+    const label = p.type === 'TP'
+      ? `R${p.gt.waggle_run_id}`
+      : p.type === 'FP' ? `FP` : `R${p.gt.waggle_run_id}`;
+    const metricStr = p.metrics
+      ? `IoU ${fmt(p.metrics.temporal_iou, 2)} · ${fmt(p.metrics.angular_error, 0)}°`
+      : p.type === 'FN' ? 'missed' : 'spurious';
+
+    return `<div class="match-chip ${t}" data-idx="${i}" onclick="selectMatch(${i})">
+      <span class="badge">${p.type}</span>
+      <span>${label}</span>
+      <span style="color:var(--text-muted)">${Math.round(tStart)}–${Math.round(tEnd)}</span>
+      <span class="match-metric">${metricStr}</span>
+    </div>`;
+  }).join('');
+}
+
+// ─── Match Detail Cards ─────────────────────────────────────────────────────
+function buildMatchDetails() {
+  const pairs = state.matchData.pairs;
+  if (pairs.length === 0) {
+    $('match-details').innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px;">No matches to display.</div>';
+    return;
+  }
+
+  $('match-details').innerHTML = pairs.map((p, i) => {
+    const t = p.type.toLowerCase();
+    let body = '';
+
+    if (p.type === 'TP') {
+      const m = p.metrics;
+      body = `
+        <div class="metric-row"><span class="metric-label">Position Error</span><span class="metric-val">${fmt(m.position_error_px, 1)}px</span></div>
+        <div class="metric-row"><span class="metric-label">Temporal IoU</span><span class="metric-val">${fmt(m.temporal_iou, 3)}</span></div>
+        <div class="metric-row"><span class="metric-label">Angular Error</span><span class="metric-val">${fmt(m.angular_error, 1)}°</span></div>
+        <div class="metric-row"><span class="metric-label">Confidence</span><span class="metric-val">${fmt(p.pred.confidence, 3)}</span></div>
+        <div class="metric-row"><span class="metric-label">GT Frames</span><span class="metric-val">${Math.round(p.gt.temporal_offsets[0])}–${Math.round(p.gt.temporal_offsets[1])}</span></div>
+        <div class="metric-row"><span class="metric-label">Pred Frames</span><span class="metric-val">${Math.round(p.pred.temporal_offsets[0])}–${Math.round(p.pred.temporal_offsets[1])}</span></div>
+        <div class="metric-row"><span class="metric-label">Detections</span><span class="metric-val">${p.pred.n_detections}</span></div>
+      `;
+    } else if (p.type === 'FP') {
+      body = `
+        <div class="metric-row"><span class="metric-label">Confidence</span><span class="metric-val">${fmt(p.pred.confidence, 3)}</span></div>
+        <div class="metric-row"><span class="metric-label">Frames</span><span class="metric-val">${Math.round(p.pred.temporal_offsets[0])}–${Math.round(p.pred.temporal_offsets[1])}</span></div>
+        <div class="metric-row"><span class="metric-label">Detections</span><span class="metric-val">${p.pred.n_detections}</span></div>
+        <div style="margin-top:4px;font-size:10px;color:var(--red);">No matching GT dance</div>
+      `;
+    } else {
+      body = `
+        <div class="metric-row"><span class="metric-label">GT Run</span><span class="metric-val">R${p.gt.waggle_run_id}</span></div>
+        <div class="metric-row"><span class="metric-label">Frames</span><span class="metric-val">${Math.round(p.gt.temporal_offsets[0])}–${Math.round(p.gt.temporal_offsets[1])}</span></div>
+        <div style="margin-top:4px;font-size:10px;color:var(--fn);">Not detected by model</div>
+      `;
+    }
+
+    const label = p.type === 'TP' ? `R${p.gt.waggle_run_id} ↔ Pred`
+      : p.type === 'FP' ? `False Positive` : `R${p.gt.waggle_run_id} — Missed`;
+
+    return `<div class="match-detail" data-idx="${i}" id="match-detail-${i}">
+      <div class="match-detail-header" onclick="selectMatch(${i})">
+        <span class="type-badge ${t}">${p.type}</span>
+        <span>${label}</span>
+      </div>
+      <div class="match-detail-body">${body}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Video Info ─────────────────────────────────────────────────────────────
+function buildVideoInfo(info, data) {
+  $('video-info-grid').innerHTML = `
+    <span class="key">Resolution</span><span class="val">${info.width}×${info.height}</span>
+    <span class="key">Frames</span><span class="val">${info.total_frames.toLocaleString()}</span>
+    <span class="key">FPS</span><span class="val">${(info.fps || data.fps || 15).toFixed(1)}</span>
+    <span class="key">Duration</span><span class="val">${(info.total_frames / (info.fps || 15)).toFixed(1)}s</span>
+    <span class="key">Eval Windows</span><span class="val">${data.n_windows}</span>
+    <span class="key">Raw Preds</span><span class="val">${data.raw_preds.length.toLocaleString()}</span>
+  `;
+}
+
+// ─── Match Selection ────────────────────────────────────────────────────────
+function selectMatch(idx) {
+  state.activeMatchIdx = idx;
+
+  // Update chip highlights
+  document.querySelectorAll('.match-chip').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+  document.querySelectorAll('.match-detail').forEach((el, i) => {
+    el.style.borderColor = i === idx ? 'var(--accent)' : '';
+  });
+
+  // Scroll detail into view
+  const detail = $(`match-detail-${idx}`);
+  if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Jump playhead to the dance region
+  const pair = state.matchData.pairs[idx];
+  const tStart = pair.gt?.temporal_offsets?.[0] ?? pair.pred?.temporal_offsets?.[0] ?? 0;
+  const jumpFrame = Math.max(0, Math.floor(tStart) - 5);
+  stopPlayback();
+  loadAndRenderFrame(jumpFrame);
+  renderTimeline();
+}
+
+// ─── Frame Loading & Rendering ──────────────────────────────────────────────
+function loadFrame(idx) {
+  return new Promise((resolve, reject) => {
+    if (frameCache.has(idx)) {
+      resolve(frameCache.get(idx));
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      if (frameCache.size >= CACHE_MAX) {
+        const oldest = frameCache.keys().next().value;
+        frameCache.delete(oldest);
+      }
+      frameCache.set(idx, img);
+      resolve(img);
+    };
+    img.onerror = reject;
+    img.src = `/api/frame/${encodeURIComponent(videoName)}/${idx}`;
+  });
+}
+
+async function loadAndRenderFrame(idx) {
+  idx = Math.max(0, Math.min(idx, state.totalFrames - 1));
+  state.currentFrame = idx;
+
+  try {
+    const img = await loadFrame(idx);
+    renderFrameOnCanvas(img, idx);
+  } catch {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#555';
+    ctx.font = '14px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Frame ${idx} unavailable`, canvas.width / 2, canvas.height / 2);
+  }
+
+  $('frame-info').innerHTML = `Frame <strong>${idx}</strong> / ${state.totalFrames - 1}`;
+  renderTimeline();
+  prefetchAround(idx);
+}
+
+function prefetchAround(idx) {
+  for (let d = 1; d <= 8; d++) {
+    if (idx + d < state.totalFrames) loadFrame(idx + d).catch(() => {});
+    if (idx - d >= 0) loadFrame(idx - d).catch(() => {});
+  }
+}
+
+function renderFrameOnCanvas(img, frameIdx) {
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // Draw GT annotations
+  if (state.showGT) {
+    drawGTOverlay(ctx, frameIdx);
+  }
+
+  // Draw prediction overlays
+  if (state.showPred) {
+    drawPredOverlay(ctx, frameIdx);
+  }
+
+  ctx.restore();
+}
+
+// ─── GT Overlay Drawing ─────────────────────────────────────────────────────
+function drawGTOverlay(ctx, frameIdx) {
+  for (let i = 0; i < state.gtDances.length; i++) {
+    const dance = state.gtDances[i];
+    const [tStart, tEnd] = dance.temporal_offsets;
+    const pad = Math.round(state.videoFps * 0.5);
+
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+    if (!isActive && !isGhost) continue;
+
+    // Determine match type for this GT dance
+    let matchType = null;
+    const matchIdx = state.matchData.pairs.findIndex(p =>
+      p.gt && p.gt.waggle_run_id === dance.waggle_run_id
+    );
+    if (matchIdx >= 0) matchType = state.matchData.pairs[matchIdx].type;
+
+    const color = matchType === 'FN' ? '#f59e0b' : GT_COLORS[i % GT_COLORS.length];
+    const alpha = isActive ? (state.showPred ? 0.5 : 1.0) : 0.2;
+    const x = dance.position[0];
+    const y = dance.position[1];
+    const dotR = isActive ? 8 : 5;
+
+    ctx.globalAlpha = alpha;
+
+    // Position dot
+    ctx.beginPath();
+    ctx.arc(x, y, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (isActive) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Direction arrow
+    if (isActive) {
+      const [dx, dy] = dance.direction;
+      const arrowLen = 40;
+      const endX = x + dx * arrowLen;
+      const endY = y + dy * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Arrowhead
+      const angle = Math.atan2(dy, dx);
+      const headLen = 8;
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Label
+      const fontSize = 12;
+      const label = `GT R${dance.waggle_run_id}`;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#000';
+      ctx.fillText(label, x + dotR + 4 + 1, y - dotR + 1);
+      ctx.fillStyle = color;
+      ctx.fillText(label, x + dotR + 4, y - dotR);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ─── Prediction Overlay Drawing ─────────────────────────────────────────────
+function drawPredOverlay(ctx, frameIdx) {
+  // Draw predicted runs (dance-level)
+  for (let i = 0; i < state.predictedRuns.length; i++) {
+    const run = state.predictedRuns[i];
+    const [tStart, tEnd] = run.temporal_offsets;
+    const pad = Math.round(state.videoFps * 0.3);
+
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+    if (!isActive && !isGhost) continue;
+
+    // Determine match type
+    let matchType = 'FP';
+    const pairIdx = state.matchData.pairs.findIndex(p =>
+      p.pred && Math.abs(p.pred.temporal_offsets[0] - tStart) < 1 &&
+      Math.abs(p.pred.temporal_offsets[1] - tEnd) < 1
+    );
+    if (pairIdx >= 0) matchType = state.matchData.pairs[pairIdx].type;
+
+    const color = matchType === 'TP' ? '#22c55e' : '#ef4444';
+    const alpha = isActive ? 0.9 : 0.3;
+
+    // Positions are normalized [0,1] → pixel space
+    const x = run.position[0] * state.videoWidth;
+    const y = run.position[1] * state.videoHeight;
+    const dotR = isActive ? 7 : 4;
+
+    ctx.globalAlpha = alpha;
+
+    // Diamond shape for predictions (to distinguish from GT circles)
+    ctx.beginPath();
+    ctx.moveTo(x, y - dotR);
+    ctx.lineTo(x + dotR, y);
+    ctx.lineTo(x, y + dotR);
+    ctx.lineTo(x - dotR, y);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (isActive) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Direction arrow
+    if (isActive) {
+      const [dx, dy] = run.direction;
+      const arrowLen = 35;
+      const endX = x + dx * arrowLen;
+      const endY = y + dy * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Label
+      const label = matchType === 'TP' ? `✓ Pred` : `✗ FP`;
+      const fontSize = 11;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#000';
+      ctx.fillText(label, x - dotR - 3 + 1, y - dotR + 1);
+      ctx.fillStyle = color;
+      ctx.fillText(label, x - dotR - 3, y - dotR);
+    }
+
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ─── Timeline ───────────────────────────────────────────────────────────────
+function renderTimeline() {
+  const c = tlCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = c.getBoundingClientRect();
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  tlCtx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+
+  // Background
+  tlCtx.fillStyle = '#0a0a1a';
+  tlCtx.fillRect(0, 0, W, H);
+
+  if (state.totalFrames === 0) return;
+
+  const gtH = H / 2 - 2;
+  const predTop = H / 2 + 2;
+  const predH = H / 2 - 2;
+
+  // Draw GT dance regions
+  for (let i = 0; i < state.gtDances.length; i++) {
+    const dance = state.gtDances[i];
+    const [tStart, tEnd] = dance.temporal_offsets;
+    const color = GT_COLORS[i % GT_COLORS.length];
+
+    // Determine match type
+    let matchType = null;
+    const matchIdx = state.matchData.pairs.findIndex(p =>
+      p.gt && p.gt.waggle_run_id === dance.waggle_run_id
+    );
+    if (matchIdx >= 0) matchType = state.matchData.pairs[matchIdx].type;
+
+    const barColor = matchType === 'FN' ? '#f59e0b' : color;
+
+    const x1 = tStart / state.totalFrames * W;
+    const x2 = tEnd / state.totalFrames * W;
+    tlCtx.fillStyle = barColor + 'cc';
+    tlCtx.fillRect(x1, 1, Math.max(x2 - x1, 2), gtH);
+  }
+
+  // Divider
+  tlCtx.fillStyle = '#333';
+  tlCtx.fillRect(0, H / 2 - 0.5, W, 1);
+
+  // Draw predicted run regions
+  for (let i = 0; i < state.predictedRuns.length; i++) {
+    const run = state.predictedRuns[i];
+    const [tStart, tEnd] = run.temporal_offsets;
+
+    // Determine match type
+    let matchType = 'FP';
+    const pairIdx = state.matchData.pairs.findIndex(p =>
+      p.pred && Math.abs(p.pred.temporal_offsets[0] - tStart) < 1 &&
+      Math.abs(p.pred.temporal_offsets[1] - tEnd) < 1
+    );
+    if (pairIdx >= 0) matchType = state.matchData.pairs[pairIdx].type;
+
+    const barColor = matchType === 'TP' ? '#22c55e' : '#ef4444';
+
+    const x1 = tStart / state.totalFrames * W;
+    const x2 = tEnd / state.totalFrames * W;
+    tlCtx.fillStyle = barColor + 'cc';
+    tlCtx.fillRect(x1, predTop, Math.max(x2 - x1, 2), predH);
+  }
+
+  // Labels
+  tlCtx.font = '9px Inter';
+  tlCtx.fillStyle = '#666';
+  tlCtx.textAlign = 'left';
+  tlCtx.fillText('GT', 3, 10);
+  tlCtx.fillText('Pred', 3, H / 2 + 11);
+
+  // Active match highlight
+  if (state.activeMatchIdx >= 0) {
+    const pair = state.matchData.pairs[state.activeMatchIdx];
+    const tStart = pair.gt?.temporal_offsets?.[0] ?? pair.pred?.temporal_offsets?.[0] ?? 0;
+    const tEnd = pair.gt?.temporal_offsets?.[1] ?? pair.pred?.temporal_offsets?.[1] ?? 0;
+    const x1 = tStart / state.totalFrames * W;
+    const x2 = tEnd / state.totalFrames * W;
+    tlCtx.strokeStyle = 'var(--accent)';
+    tlCtx.lineWidth = 2;
+    tlCtx.strokeRect(x1 - 2, 0, Math.max(x2 - x1 + 4, 6), H);
+  }
+
+  // Playhead
+  const cx = state.currentFrame / state.totalFrames * W;
+  tlCtx.fillStyle = '#fff';
+  tlCtx.fillRect(cx - 1, 0, 2, H);
+}
+
+// ─── Timeline click ─────────────────────────────────────────────────────────
+tlCanvas.addEventListener('click', (e) => {
+  if (state.totalFrames === 0) return;
+  const rect = tlCanvas.getBoundingClientRect();
+  const ratio = (e.clientX - rect.left) / rect.width;
+  const frame = Math.round(ratio * (state.totalFrames - 1));
+  stopPlayback();
+  loadAndRenderFrame(frame);
+});
+
+// ─── Playback ───────────────────────────────────────────────────────────────
+function startPlayback() {
+  if (state.playing) return;
+  state.playing = true;
+  $('btn-play').textContent = '⏸';
+  const interval = 1000 / state.videoFps;
+  playTimer = setInterval(() => {
+    if (state.currentFrame >= state.totalFrames - 1) {
+      stopPlayback();
+      return;
+    }
+    loadAndRenderFrame(state.currentFrame + 1);
+  }, interval);
+}
+
+function stopPlayback() {
+  state.playing = false;
+  $('btn-play').textContent = '▶';
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+}
+
+function togglePlayback() {
+  state.playing ? stopPlayback() : startPlayback();
+}
+
+// ─── Controls ───────────────────────────────────────────────────────────────
+$('btn-play').addEventListener('click', togglePlayback);
+$('btn-prev').addEventListener('click', () => {
+  stopPlayback();
+  loadAndRenderFrame(state.currentFrame - 1);
+});
+$('btn-next').addEventListener('click', () => {
+  stopPlayback();
+  loadAndRenderFrame(state.currentFrame + 1);
+});
+
+// Overlay toggles
+$('ovl-gt').addEventListener('click', () => {
+  state.showGT = !state.showGT;
+  $('ovl-gt').classList.toggle('active', state.showGT);
+  loadAndRenderFrame(state.currentFrame);
+});
+$('ovl-pred').addEventListener('click', () => {
+  state.showPred = !state.showPred;
+  $('ovl-pred').classList.toggle('active', state.showPred);
+  loadAndRenderFrame(state.currentFrame);
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  switch (e.key) {
+    case ' ':
+      e.preventDefault();
+      togglePlayback();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      stopPlayback();
+      loadAndRenderFrame(state.currentFrame - (e.shiftKey ? 10 : 1));
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      stopPlayback();
+      loadAndRenderFrame(state.currentFrame + (e.shiftKey ? 10 : 1));
+      break;
+    case 'g': case 'G':
+      state.showGT = !state.showGT;
+      $('ovl-gt').classList.toggle('active', state.showGT);
+      loadAndRenderFrame(state.currentFrame);
+      break;
+    case 'p': case 'P':
+      state.showPred = !state.showPred;
+      $('ovl-pred').classList.toggle('active', state.showPred);
+      loadAndRenderFrame(state.currentFrame);
+      break;
+  }
+});
+
+// ─── Window resize ──────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  renderTimeline();
+});
+
+// ─── Re-cluster controls ────────────────────────────────────────────────────
+['rc-spatial', 'rc-temporal', 'rc-conf', 'rc-minsamp', 'rc-dirthresh'].forEach(id => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    const val = id === 'rc-conf' ? parseFloat(el.value).toFixed(2) : el.value;
+    $(`${id}-val`).textContent = val;
+  });
+});
+
+async function doRecluster() {
+  const btn = $('btn-recluster');
+  const status = $('rc-status');
+  btn.disabled = true;
+  status.textContent = '⏳ Re-clustering…';
+  status.style.color = 'var(--amber)';
+
+  const params = new URLSearchParams({
+    spatial_threshold: $('rc-spatial').value,
+    temporal_threshold_ms: $('rc-temporal').value,
+    confidence_threshold: $('rc-conf').value,
+    min_samples: $('rc-minsamp').value,
+    direction_threshold_deg: $('rc-dirthresh').value,
+  });
+
+  try {
+    const resp = await fetch(`/api/eval/video/${encodeURIComponent(videoName)}?${params}`);
+    if (!resp.ok) throw new Error((await resp.json()).error || 'Failed');
+    const data = await resp.json();
+
+    // Update state
+    state.predictedRuns = data.predicted_runs || [];
+    state.matchData = data.matches || { pairs: [], tp: 0, fp: 0, fn: 0 };
+    state.rawPreds = data.raw_preds || [];
+
+    // Rebuild UI
+    buildKPIs(data);
+    buildMatchList();
+    buildMatchDetails();
+    state.activeMatchIdx = -1;
+
+    // Re-render
+    loadAndRenderFrame(state.currentFrame);
+    renderTimeline();
+
+    status.textContent = `✅ ${state.predictedRuns.length} runs`;
+    status.style.color = 'var(--green)';
+  } catch (e) {
+    status.textContent = `❌ ${e.message}`;
+    status.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ─── Init ───────────────────────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>

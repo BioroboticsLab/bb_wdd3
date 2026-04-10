@@ -1,4 +1,4 @@
-import os 
+import os
 from src.utils.data_utils import create_video_frames_df
 import random
 import numpy as np
@@ -40,7 +40,7 @@ torch.backends.cudnn.benchmark = False
 def main(args):
     config = load_config(args.config_path)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    
+
     # run name either specified or date time so multiple runs dont overwrite checkpoint
     run_name = args.run_name if args.run_name else f"run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     ckpt_dir = f"./ckpt/{run_name}"
@@ -56,19 +56,15 @@ def main(args):
     data = pd.read_csv(config['data']['annotations'])
     full_data_size = len(data)
 
-    # Stratified video-level split:
-    # all windows from a given video go entirely to train or test never both
-    # split is done per category so each group contributes proportionally to both splits 
-    # regardless of how many videos it has
-    video_df = pd.DataFrame({'video_name': data['video_name'].unique()})
-    video_df['category'] = video_df['video_name'].apply(get_video_category)
+    # Stratified video-level split (stem-based to prevent info-leak between variants):
+    # All resolution/fps variants of the same source video go to the same split.
+    from src.utils.video_utils import train_val_split_videos
+    train_videos, _ = train_val_split_videos(
+        data['video_name'].unique(),
+        train_ratio=config['data']['train_ratio'],
+        seed=SEED
+    )
 
-    train_videos = set()
-    for category, group in video_df.groupby('category'):
-        vids = np.random.RandomState(SEED).permutation(group['video_name'].values)
-        n_train = int(config['data']['train_ratio'] * len(vids))
-        train_videos.update(vids[:n_train])
-    
     train_df = data[data['video_name'].isin(train_videos)].reset_index(drop=True)
     test_df  = data[~data['video_name'].isin(train_videos)].reset_index(drop=True)
 
@@ -76,14 +72,14 @@ def main(args):
     if config['data']['data_fraction_divisor'] > 1:
         train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
         #test_df  = balance_sample(test_df,  config['data']['data_fraction_divisor'])
-    
-    total_videos = len(video_df)
+
+    n_unique_videos = data['video_name'].nunique()
     print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")
-    print(f"Train videos: {len(train_videos)} | Test videos: {total_videos - len(train_videos)}")
+    print(f"Train videos: {len(train_videos)} | Test videos: {n_unique_videos - len(train_videos)}")
 
     transforms = T.Compose([
         T.ToPILImage(),
-        T.Resize((config['augmentations']['width'], 
+        T.Resize((config['augmentations']['width'],
                   config['augmentations']['height'])),
         T.Grayscale(num_output_channels=3),
         T.ToTensor(),
@@ -91,13 +87,13 @@ def main(args):
 
     test_transform = T.Compose([
         T.ToPILImage(),
-        T.Resize((config['augmentations']['width'], 
+        T.Resize((config['augmentations']['width'],
                   config['augmentations']['height'])),
-        T.Grayscale(num_output_channels=3),        
+        T.Grayscale(num_output_channels=3),
         T.ToTensor(),
-        T.Normalize(mean=config['augmentations']['mean'], 
+        T.Normalize(mean=config['augmentations']['mean'],
                     std=config['augmentations']['std'])])
-    
+
     # Create augmentation
     train_augmentation = WaggleAugmentations(
         width=config['augmentations']['width'],
@@ -149,7 +145,7 @@ def main(args):
             augment=train_augmentation,
             is_training=True
         )
-    
+
         test_dataset = VideoYoloDatasetTemporalJitter(
             test_df,
             config['data']['data_dir'],
@@ -161,7 +157,7 @@ def main(args):
             max_detections_per_cell=config['model']['max_detections_per_cell'],
             n_classes=config['model']['n_classes'],
             augment=None,
-            is_training=False 
+            is_training=False
             )
 
     else:
@@ -179,7 +175,7 @@ def main(args):
             augment=train_augmentation,
             is_training=True
         )
-        
+
         test_dataset = VideoYoloDataset(
             test_df,
             config['data']['data_dir'],
@@ -191,26 +187,26 @@ def main(args):
             max_detections_per_cell=config['model']['max_detections_per_cell'],
             n_classes=config['model']['n_classes'],
             augment=None,
-            is_training=False 
+            is_training=False
         )
-    
+
     collator = TemporalWaggleCollator()
 
     train_loader = DataLoader(
-        train_dataset, 
+        train_dataset,
         batch_size=config['train']['batch_size'],
-        collate_fn=collator, 
+        collate_fn=collator,
         shuffle=True,
         num_workers=config['train']['num_workers'],
         persistent_workers=(config['train']['num_workers'] > 0),
-        pin_memory=True,  
-        drop_last=True   
+        pin_memory=True,
+        drop_last=True
     )
     test_loader = DataLoader(
         test_dataset,
         batch_size=config['val']['batch_size'],
-        collate_fn=collator, 
-        shuffle=False, 
+        collate_fn=collator,
+        shuffle=False,
         num_workers=config['train']['num_workers'],
         persistent_workers=(config['train']['num_workers'] > 0),
         pin_memory=True
@@ -224,13 +220,13 @@ def main(args):
     print(f'{len(test_loader) * config["val"]["batch_size"]} videos in total.')
 
     model = R2Plus1D_YOLO_MultiHead(n_classes=config['model']['n_classes'],
-                                    max_detections_per_cell=config['model']['max_detections_per_cell'], 
+                                    max_detections_per_cell=config['model']['max_detections_per_cell'],
                                     grid_size=config['model']['grid_size'],
                                     transformer_heads=config['model']['transformer_heads'],
                                     transformer_layers=config['model']['transformer_layers'],
                                     self_attention=config['model']['self_attention'],
                                     cross_attention=config['model']['cross_attention'],
-                                    dropout_rate=config['model']['dropout']   
+                                    dropout_rate=config['model']['dropout']
                                     )
 
     model = model.to(device)
@@ -239,11 +235,11 @@ def main(args):
         model = nn.DataParallel(model)
         print("Using Distributed Data Parallel (DDP).")
 
-    optimizer = optim.AdamW(model.parameters(), 
-                            lr=config['train']['lr'], 
-                            weight_decay=config['train']['weight_decay'], 
+    optimizer = optim.AdamW(model.parameters(),
+                            lr=config['train']['lr'],
+                            weight_decay=config['train']['weight_decay'],
                             betas=config['train']['betas'])
-    
+
     ema = EMA(model, decay=config['train']['ema_decay'], device=device)
 
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -254,17 +250,17 @@ def main(args):
         anneal_strategy='cos',
         pct_start=config['train']['warmup_ratio']
     )
-    yolocriteria = WaggleDetectionLoss(lambda_obj=config["loss"]["lambda_obj"], 
-                                       lambda_coord=config["loss"]["lambda_coord"], 
-                                       lambda_noobj=config["loss"]["lambda_noobj"], 
-                                       lambda_direction=config["loss"]["lambda_direction"], 
+    yolocriteria = WaggleDetectionLoss(lambda_obj=config["loss"]["lambda_obj"],
+                                       lambda_coord=config["loss"]["lambda_coord"],
+                                       lambda_noobj=config["loss"]["lambda_noobj"],
+                                       lambda_direction=config["loss"]["lambda_direction"],
                                        lambda_temporal=config["loss"]["lambda_temporal"],
                                        use_varifocal=config['loss'].get('use_varifocal', False),
                                        gamma=config["loss"]["varifocal_gamma"],
                                        quality_decay=config["loss"]["quality_decay"],
                                        grid_size=config["loss"]["grid_size"],
                                        input_size=config["loss"]["input_size"])
-    
+
     scaler = torch.amp.GradScaler()
 
     # Resume from checkpoint if provided
@@ -280,10 +276,23 @@ def main(args):
         else:
             model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_score = checkpoint['best_score']
+
+        if args.reset_scheduler:
+            remaining_epochs = config['train']['epochs'] - start_epoch
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=config['train']['lr'],
+                steps_per_epoch=len(train_loader),
+                epochs=remaining_epochs,
+                anneal_strategy='cos',
+                pct_start=config['train']['warmup_ratio']
+            )
+            print(f"Scheduler RESET for {remaining_epochs} remaining epochs (new steps_per_epoch={len(train_loader)})")
+        else:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
         if 'ema_state_dict' in checkpoint:
             ema.load_state_dict(checkpoint['ema_state_dict'])
@@ -308,60 +317,62 @@ def main(args):
         # Train one epoch
         train_loss, train_log = train(
             model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler, ema)
-        
+
         # Validate
         ema.apply_shadow()
         val_loss, val_log = eval(model, device, yolocriteria, test_loader, epoch)
-        
-        # compute map freq
-        compute_map = (epoch % config['eval'].get('map_freq', 1) == 0) or (epoch == config['train']['epochs'] - 1)
+
+        # Decide whether to compute expensive STD-mAP this epoch
+        map_freq = config['eval'].get('map_freq', 1)
+        compute_map = (epoch % map_freq == 0) or (epoch == config['train']['epochs'] - 1)
+
+        test_metrics = None
+        post_test_metrics = None
 
         if compute_map:
             # fetch gt and preds
             test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader, device)
-        
+
             # Transform yolo coordinates onto image domain for both gt and predicted values
-            test_gts = yolo_to_img_space_gt(test_gt_raw, 
-                                            all_starts=test_all_starts, 
+            test_gts = yolo_to_img_space_gt(test_gt_raw,
+                                            all_starts=test_all_starts,
                                             all_ends=test_all_ends,
                                             window_size = config['data']['window_size'],
                                             original_size=(config['data']['width'],
-                                                        config['data']['height']))
-            
-            test_preds  = yolo_to_img_space(test_preds_raw, 
-                                            all_starts=test_all_starts, 
-                                            all_ends=test_all_ends, 
-                                            confidence_threshold=config['eval']['confidence_threshold'], 
+                                                           config['data']['height']))
+
+            test_preds  = yolo_to_img_space(test_preds_raw,
+                                            all_starts=test_all_starts,
+                                            all_ends=test_all_ends,
+                                            confidence_threshold=config['eval']['confidence_threshold'],
                                             window_size = config['data']['window_size'],
                                             original_size=(config['data']['width'],
-                                                        config['data']['height']),
-                                                        max_dets=config['eval']['max_dets'])
-            
+                                                           config['data']['height']),
+                                                           max_dets=config['eval']['max_dets'])
+
             # Post Process all predictions
-            post_test_preds = batch_postprocess_predictions(test_preds, 
-                                                            spatial_threshold=config['post_process']['spatial_threshold'], 
-                                                            temporal_threshold=config['post_process']['temporal_threshold'], 
-                                                            confidence_threshold=config['post_process']['confidence_threshold'], 
-                                                            strategy=config['post_process']['strategy'], 
+            post_test_preds = batch_postprocess_predictions(test_preds,
+                                                            spatial_threshold=config['post_process']['spatial_threshold'],
+                                                            temporal_threshold=config['post_process']['temporal_threshold'],
+                                                            confidence_threshold=config['post_process']['confidence_threshold'],
+                                                            strategy=config['post_process']['strategy'],
                                                             mode=config['post_process']['mode'],
-                                                            remove_outliers=config['post_process']['outlier_detection'],
-                                                            outlier_method='isolation_forest')
-            
-            test_metrics = get_eval_metrics(test_preds, test_gts, 
+                                                            remove_outliers=False,
+                                                            min_samples=config['post_process'].get('min_samples', 1))
+
+            test_metrics = get_eval_metrics(test_preds, test_gts,
                                             pos_thresholds=config['eval']['pos_thresholds'],
                                             iou_threshold_range=config['eval']['iou_thresholds'],
                                             angular_thresholds=config['eval']['angular_thresholds'],
                                             match_pairs=config['eval']['match_pairs'])
-            
-            post_test_metrics = get_eval_metrics(post_test_preds, test_gts, 
+
+            post_test_metrics = get_eval_metrics(post_test_preds, test_gts,
                                             pos_thresholds=config['eval']['pos_thresholds'],
                                             iou_threshold_range=config['eval']['iou_thresholds'],
                                             angular_thresholds=config['eval']['angular_thresholds'],
-                                        match_pairs=config['eval']['match_pairs'])
-        
-            #print_evaluation_results(test_metrics, post_test_metrics)
+                                            match_pairs=config['eval']['match_pairs'])
 
-            print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-mAP pre: {test_metrics['comprehensive']['map']:.4f} | post: {post_test_metrics['comprehensive']['map']:.4f}")        
+            print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-mAP pre: {test_metrics['comprehensive']['map']:.4f} | post: {post_test_metrics['comprehensive']['map']:.4f}")
 
             wandb.log({
                 **train_log,
@@ -369,7 +380,11 @@ def main(args):
                 **get_wandb_log_dict(epoch, test_metrics, post_test_metrics)
                 })
         else:
-            wandb.log({**train_log, **val_log, 'epoch': epoch})
+            print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (mAP skipped, next at epoch {((epoch // map_freq) + 1) * map_freq + 1})")
+            wandb.log({
+                **train_log,
+                **val_log,
+                })
         # Restore original parameters after metrics
         ema.restore()
 
@@ -377,15 +392,20 @@ def main(args):
             current_score = val_loss
             is_best = current_score < best_score
             score_str = f"val_loss: {current_score:.4f}"
-        # else is std map    
+        # else is std map
+        elif compute_map:
+            # use post-processed comprehensive mAP as the primary score. The higher is better
+            current_score = post_test_metrics['comprehensive']['map']
+            is_best = current_score > best_score
+            score_str = f"STD-mAP (post-proc): {current_score:.4f}"
         else:
-            if compute_map:  
-                # use post-processed comprehensive mAP as the primary score. Thehigher is better
-                current_score = post_test_metrics['comprehensive']['map']
-                is_best = current_score > best_score
-                score_str = f"STD-mAP (post-proc): {current_score:.4f}"
-            else:
-                is_best = False
+            # mAP not computed this epoch, can't determine best
+            current_score = None
+            is_best = False
+            score_str = "(mAP not computed)"
+
+        std_map_val = post_test_metrics['comprehensive']['map'] if post_test_metrics else 0.0
+
         if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
             if is_best:
                 best_score = current_score
@@ -399,8 +419,7 @@ def main(args):
                         'ema_state_dict': ema.state_dict(),
                         'best_score': best_score,
                         'val_loss': val_loss,
-                        #'std_map': post_test_metrics['comprehensive']['map'],
-                        'std_map': post_test_metrics['comprehensive']['map'] if compute_map else None,
+                        'std_map': std_map_val,
                     }, os.path.join(ckpt_dir, 'best.pth'))
                     print(f"New best model saved -> {score_str}")
                 else:
@@ -416,13 +435,12 @@ def main(args):
                     'ema_state_dict': ema.state_dict(),
                     'best_score': best_score,
                     'val_loss': val_loss,
-                    #'std_map': post_test_metrics['comprehensive']['map'],
-                    'std_map': post_test_metrics['comprehensive']['map'] if compute_map else None,
+                    'std_map': std_map_val,
                 }, os.path.join(ckpt_dir, 'latest.pth'))
                 print(f"Saved latest checkpoint at epoch {epoch}/{config['train']['epochs']}")
             else:
                 print(f"Evaluated model at epoch {epoch}/{config['train']['epochs']} (model saving disabled)")
-            
+
     print('Training complete.')
     wandb.finish()
 
@@ -432,6 +450,7 @@ def get_args():
     parser.add_argument("--config_path", type=str, default='./configs/config.yaml', help="Path to the config file.")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from (e.g. ./ckpt/latest.pth).")
     parser.add_argument("--run_name", type=str, default=None, help="Name for this run. Defaults to datetime if not specified.")
+    parser.add_argument("--reset_scheduler", action='store_true', help="Reset LR scheduler instead of loading from checkpoint (use when data size or epochs changed).")
     return parser.parse_args()
 
 if __name__ == '__main__':

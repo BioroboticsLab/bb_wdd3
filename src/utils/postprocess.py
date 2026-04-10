@@ -178,28 +178,41 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
                                    min_confidence=0.8, mode='median',
                                    remove_outliers=True, outlier_method='density',
                                    outlier_min_neighbors=2, hdbscan_min_cluster_size=2,
-                                   clustering_method='dbscan'):
+                                   clustering_method='dbscan', return_mapping=False,
+                                   min_samples=1):
     """
     Cluster waggle detections and consolidate into single detections with:
     - mean/median position, mean/median direction, merged temporal range
     
     Args:
         predictions: List of waggle detection dictionaries
-        spatial_threshold: DBSCAN spatial clustering threshold (pixels)
-        temporal_threshold: DBSCAN temporal clustering threshold (frames)  
+        spatial_threshold: DBSCAN eps — neighborhood radius (pixels, after scaling)
+        temporal_threshold: Temporal scaling factor (frames mapped to spatial units)  
         min_confidence: Minimum confidence threshold
         mode: 'mean' or 'median' for aggregation method
         remove_outliers: Whether to remove outliers before clustering
         outlier_method: 'density' or 'isolation_forest'
         outlier_min_neighbors: Minimum neighbors for density-based outlier removal
+        min_samples: DBSCAN min_samples — minimum neighbors for a core point.
+                     With min_samples=1, every point is a core point (no noise).
+                     Higher values classify isolated detections as noise (label -1).
+        return_mapping: If True, return a dict with consolidated predictions,
+                       cluster labels, and mapping from original indices to
+                       filtered (post-outlier-removal) indices.
     """
-    # Filter by confidence first
-    preds = [p for p in predictions if p['confidence'] >= min_confidence]
+    # Filter by confidence first — track original indices for mapping
+    conf_indices = [i for i, p in enumerate(predictions) if p['confidence'] >= min_confidence]
+    preds = [predictions[i] for i in conf_indices]
     if not preds:
+        if return_mapping:
+            return {'consolidated': [], 'labels': [], 'filtered_indices': [],
+                    'outlier_indices': [], 'n_clusters': 0, 'n_noise': 0}
         return []
     
-    # Remove outliers before clustering
+    # Remove outliers before clustering — track which survived
+    outlier_removed_indices = []
     if remove_outliers and len(preds) >= 5:
+        pre_outlier_preds = preds
         if outlier_method == 'density':
             preds = remove_outliers_density(
                 preds, 
@@ -212,7 +225,18 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         else:
             raise ValueError(f"Unknown outlier_method: {outlier_method}. Use 'density' or 'isolation_forest'")
         
+        # Identify which indices were removed as outliers
+        survived_set = set(id(p) for p in preds)
+        for idx, p in enumerate(pre_outlier_preds):
+            if id(p) not in survived_set:
+                outlier_removed_indices.append(conf_indices[idx])
+        # Update conf_indices to only include survivors
+        conf_indices = [conf_indices[idx] for idx, p in enumerate(pre_outlier_preds) if id(p) in survived_set]
+        
         if not preds:
+            if return_mapping:
+                return {'consolidated': [], 'labels': [], 'filtered_indices': conf_indices,
+                        'outlier_indices': outlier_removed_indices, 'n_clusters': 0, 'n_noise': 0}
             return []
 
     # Check direction vector norms before clustering
@@ -251,10 +275,10 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
     # print('Scalef featues shape:', scaled_features.shape)
     # Use spatial_threshold for the scaled features in dbscan, hdbscan does this byitself
     if clustering_method == 'dbscan':
-        clustering = DBSCAN(eps=spatial_threshold, min_samples=1).fit(scaled_features)
+        clustering = DBSCAN(eps=spatial_threshold, min_samples=min_samples).fit(scaled_features)
     elif clustering_method == 'hdbscan':
         if len(scaled_features) < 2:
-            clustering = DBSCAN(eps=spatial_threshold, min_samples=1).fit(scaled_features)
+            clustering = DBSCAN(eps=spatial_threshold, min_samples=min_samples).fit(scaled_features)
         else:
             clustering = HDBSCAN(min_cluster_size=hdbscan_min_cluster_size).fit(scaled_features)
 
@@ -306,6 +330,10 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         # mean_confidence = np.mean([p['confidence'] for p in cluster_points])
         mean_confidence = np.max([p['confidence'] for p in cluster_points])
         
+        # Collect member indices (into the original predictions array)
+        if return_mapping:
+            member_indices = [conf_indices[j] for j, lbl in enumerate(labels) if lbl == cluster_id]
+        
         # Create consolidated detection
         consolidated_detection = {
             'position': aggregated_position,
@@ -316,6 +344,8 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
             'cluster_id': cluster_id,
             'aggregation_mode': mode
         }
+        if return_mapping:
+            consolidated_detection['member_indices'] = member_indices
         consolidated.append(consolidated_detection)
     
     # Check direction vector norms after clustering
@@ -326,15 +356,21 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         norm = np.sqrt(dx**2 + dy**2)
         direction_norms_after.append(norm)
     
-    direction_norms_after = np.array(direction_norms_after)
-    not_normed_after = np.abs(direction_norms_after - 1.0) > 0.1
+    if direction_norms_after:
+        direction_norms_after = np.array(direction_norms_after)
+        not_normed_after = np.abs(direction_norms_after - 1.0) > 0.1
+        if not_normed_after.any():
+            print(f"WARNING: {not_normed_after.sum()} direction vectors deviate > 0.1 from norm=1.0")
     
-    #print(f"Total consolidated predictions: {len(consolidated)}")
-    if not_normed_after.any():
-        print(f"WARNING: {not_normed_after.sum()} direction vectors deviate > 0.1 from norm=1.0")
-    #else:
-    #    print("✓ All direction vectors are properly normalized")
-    #print("=" * 70 + "\n")
+    if return_mapping:
+        return {
+            'consolidated': consolidated,
+            'labels': labels.tolist(),
+            'filtered_indices': conf_indices,
+            'outlier_indices': outlier_removed_indices,
+            'n_clusters': len(set(labels.tolist()) - {-1}),
+            'n_noise': int(noise_count),
+        }
     
     return consolidated
 
@@ -343,7 +379,8 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
                           confidence_threshold=0.8, mode='mean',
                           remove_outliers=True, outlier_method='density',
                           outlier_min_neighbors=2,
-                          clustering_method='dbscan', hdbscan_min_cluster_size=2):
+                          clustering_method='dbscan', hdbscan_min_cluster_size=2,
+                          min_samples=1):
     """
     Run post-processing using the specified strategy:
     'nms' | 'max' | 'weighted' | 'cluster' | 'cluster_consolidate' | 'line_nms'
@@ -370,7 +407,8 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
             outlier_method=outlier_method,
             outlier_min_neighbors=outlier_min_neighbors,
             clustering_method=clustering_method,
-            hdbscan_min_cluster_size=hdbscan_min_cluster_size
+            hdbscan_min_cluster_size=hdbscan_min_cluster_size,
+            min_samples=min_samples,
         )
     elif strategy == 'nms':
         preds = point_nms(predictions, confidence_threshold, spatial_threshold)
@@ -391,7 +429,8 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
             outlier_method=outlier_method,
             outlier_min_neighbors=outlier_min_neighbors,
             clustering_method=clustering_method,
-            hdbscan_min_cluster_size=hdbscan_min_cluster_size
+            hdbscan_min_cluster_size=hdbscan_min_cluster_size,
+            min_samples=min_samples,
         )
         groups = line_nms_group(predictions, temporal_gap_thresh=temporal_threshold)
         preds = line_nms_collapse(predictions, groups)
@@ -410,7 +449,8 @@ def batch_postprocess_predictions(batch_predictions,
                                   outlier_method='density',
                                   outlier_min_neighbors=2,
                                   clustering_method='dbscan',
-                                  hdbscan_min_cluster_size=2):
+                                  hdbscan_min_cluster_size=2,
+                                  min_samples=1):
     """Apply post-processing to a batch of prediction lists"""
     processed_batch = []
     for sample_predictions in batch_predictions:
@@ -428,7 +468,8 @@ def batch_postprocess_predictions(batch_predictions,
             outlier_method=outlier_method,
             outlier_min_neighbors=outlier_min_neighbors,
             clustering_method=clustering_method, 
-            hdbscan_min_cluster_size=hdbscan_min_cluster_size 
+            hdbscan_min_cluster_size=hdbscan_min_cluster_size,
+            min_samples=min_samples,
         )
         processed_batch.append(processed['filtered_predictions'])
     return processed_batch

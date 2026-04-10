@@ -1,0 +1,2879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waggle Dance Annotation Viewer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/viewer.css">
+
+</head>
+<body>
+<div id="app">
+
+<header>
+  <h1><span>🐝</span> Waggle Viewer</h1>
+  <input type="text" id="search-box" placeholder="Search recordings…">
+  <div class="header-actions">
+    <button class="btn" id="btn-random" title="Load random recording (R)">🎲 Random</button>
+    <button class="btn" id="btn-annotations" title="Toggle annotations (A)">👁 Annotations</button>
+    <button class="btn" id="btn-predictions" title="Toggle predictions (P)">🔮 Predictions</button>
+    <div class="pred-controls" id="pred-controls" style="display:none;">
+      <select class="pred-mode-select" id="pred-mode-select" title="Prediction view mode">
+        <option value="raw">Raw (decoded)</option>
+        <option value="averaged" selected>Averaged</option>
+        <option value="clustered">🔗 Clustered</option>
+      </select>
+      <div class="pred-conf-group">
+        <input type="range" class="pred-conf-slider" id="pred-conf-slider"
+               min="0" max="1" step="0.05" value="0.5" title="Confidence threshold">
+        <span class="pred-conf-label" id="pred-conf-label">≥ 50%</span>
+      </div>
+      <span class="ckpt-badge" id="ckpt-badge"></span>
+      <button class="btn device-toggle" id="btn-device" title="Toggle inference device (GPU ↔ CPU)" style="display:none;">⚡ GPU</button>
+      <span class="pred-loading" id="pred-loading" style="display:none;">⏳ Computing...</span>
+    </div>
+    <button class="btn" id="btn-zoom" title="Cycle zoom: 1× → 2× → 4× → 8× (Z)">🔍 1×</button>
+    <button class="btn" id="btn-eval" title="Open evaluation dashboard" onclick="window.open('/eval', '_blank')" style="background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.3);color:#22c55e;">📊 Evaluate</button>
+  </div>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <div id="sidebar-header">Recordings</div>
+    <div id="rec-list"></div>
+    <div id="ext-section" style="display:none;">
+      <div id="ext-header">
+        <span>📁 External Videos</span>
+        <span class="ext-count" id="ext-count">0</span>
+      </div>
+      <div id="ext-list"></div>
+    </div>
+  </aside>
+
+  <section id="viewer">
+    <div id="variant-tabs"></div>
+
+    <div id="canvas-container">
+      <canvas id="frame-canvas"></canvas>
+      <div id="loading-overlay">Loading…</div>
+      <div id="empty-state">
+        <div class="icon">🐝</div>
+        <div>Select a recording or press <kbd>R</kbd> for random</div>
+      </div>
+    </div>
+
+    <div id="controls">
+      <div class="ctrl-group">
+        <button class="ctrl-btn" id="btn-skip-back" title="Back 10 frames (Shift+←)">⏪</button>
+        <button class="ctrl-btn" id="btn-prev" title="Previous frame (←)">◀</button>
+        <button class="ctrl-btn play-btn" id="btn-play" title="Play/Pause (Space)">▶</button>
+        <button class="ctrl-btn" id="btn-next" title="Next frame (→)">▶</button>
+        <button class="ctrl-btn" id="btn-skip-fwd" title="Forward 10 frames (Shift+→)">⏩</button>
+      </div>
+      <div class="ctrl-divider"></div>
+      <div id="frame-info">No video loaded</div>
+      <div class="ctrl-divider"></div>
+      <label id="speed-label">1×</label>
+      <input type="range" id="speed-slider" min="0.25" max="4" step="0.25" value="1">
+      <div id="kbd-hint">
+      <kbd>Space</kbd> play &nbsp;<kbd>←→</kbd> step &nbsp;<kbd>A</kbd> annotations &nbsp;<kbd>P</kbd> predictions &nbsp;<kbd>Z</kbd> zoom &nbsp;<kbd>N</kbd> new GT &nbsp;<kbd>Del</kbd> delete &nbsp;<kbd>R</kbd> random
+      </div>
+      <div id="infer-controls">
+        <button id="btn-infer" title="Run full-frame inference on this video">🔬 Run Inference</button>
+        <div id="infer-progress">
+          <div id="infer-progress-bar">
+            <div id="infer-progress-fill"></div>
+          </div>
+          <span id="infer-progress-text">0%</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="timeline-container">
+      <canvas id="timeline-canvas"></canvas>
+    </div>
+
+  </section>
+
+  <!-- Unified Right Panel (tabbed: Annotations / Inspector / Model View) -->
+  <aside id="right-panel">
+    <div class="rp-tabs">
+      <button class="rp-tab active" data-pane="annotations">📋 Annotations</button>
+      <button class="rp-tab" data-pane="inspector">🔬 Inspector</button>
+      <button class="rp-tab" data-pane="modelview">🤖 Model</button>
+    </div>
+    <div class="rp-body">
+
+      <!-- ─── Annotations Pane ─── -->
+      <div class="rp-pane active" id="pane-annotations">
+        <div class="ann-header">
+          <span class="ann-count" id="ann-count">0 runs</span>
+          <button class="btn-ann-add" id="btn-ann-add">+ Add Run</button>
+        </div>
+        <div class="ann-list" id="ann-list"></div>
+        <div id="ann-editor-container"></div>
+        <div class="ann-tip" id="ann-tip">
+          Click a run to jump to it. Use <kbd>N</kbd> to add new, <kbd>Delete</kbd> to remove selected.
+        </div>
+      </div>
+
+      <!-- ─── Inspector Pane (moved from pipeline-panel) ─── -->
+      <div class="rp-pane" id="pane-inspector">
+        <div class="pi-header" style="display:flex;">
+          <span class="pi-title">🔬 Pipeline Inspector</span>
+          <div class="pi-row-selector">
+            <label>Row:</label>
+            <select id="pi-row-select"></select>
+            <span id="pi-row-info" class="pi-row-info"></span>
+          </div>
+        </div>
+        <div class="pi-tabs" id="pi-tabs" style="display:flex;">
+          <button class="pi-tab active" data-stage="raw">1. Raw</button>
+          <button class="pi-tab" data-stage="crop">2. Crop</button>
+          <button class="pi-tab" data-stage="transform">3. Transform</button>
+          <button class="pi-tab" data-stage="augment">4. Augment</button>
+          <button class="pi-tab" data-stage="sample">5. Sample</button>
+          <button class="pi-tab" data-stage="target">6. Target</button>
+          <button class="pi-tab" data-stage="output">7. Output</button>
+          <button class="pi-tab" data-stage="cluster" style="border-color:rgba(139,92,246,0.4);color:#c4b5fd;">🔗 Cluster</button>
+        </div>
+        <div class="pi-options" style="display:block;">
+          <label class="pi-toggle" title="Training mode uses random crop offset (position varies). Inference mode centers crop on bee (always grid 14,14).">
+            <input type="checkbox" id="pi-crop-mode">
+            <span>Training crop (random offset)</span>
+          </label>
+        </div>
+        <div class="pi-content" id="pi-content" style="display:flex;flex-direction:column;">
+          <div class="pi-loading" id="pi-loading" style="display:none;">⏳ Loading stage...</div>
+          <div class="pi-empty" id="pi-empty">Select a video and click a tab to inspect the pipeline.</div>
+          <!-- Video player for frames -->
+          <div class="pi-player-wrap" id="pi-player-wrap" style="display:none;">
+            <div class="pi-player-label" id="pi-player-label">Frames</div>
+            <div style="position:relative; width:100%;">
+              <canvas id="pi-player-canvas" width="480" height="480" style="width:100%; display:block;"></canvas>
+              <button class="pi-redraw-overlay" id="pi-aug-redraw" title="Re-roll augmentations with a new random seed" style="display:none;">🎲 Re-draw</button>
+            </div>
+            <div class="pi-player-controls">
+              <button class="pi-play-btn" id="pi-play-btn" title="Play/Pause">▶</button>
+              <input type="range" class="pi-scrubber" id="pi-scrubber" min="0" max="15" value="0">
+              <span class="pi-frame-info" id="pi-frame-info">0/0</span>
+            </div>
+          </div>
+          <div class="pi-metadata" id="pi-metadata"></div>
+          <!-- Cluster Inspector Panel -->
+          <div id="pi-cluster-panel" style="display:none;">
+            <div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.6;">
+              Visualise how raw per-window detections are merged into consolidated waggle events via DBSCAN clustering.
+              Adjust parameters below and press <b>Apply</b> to re-cluster.
+            </div>
+            <div class="cluster-params">
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Spatial ε <span class="cluster-slider-val" id="cl-spatial-val">30</span> ref-px
+                </label>
+                <input type="range" class="cluster-slider" id="cl-spatial"
+                       min="5" max="200" step="1" value="30">
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">at 1000px ref width</span>
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Temporal ε <span class="cluster-slider-val" id="cl-temporal-val">300</span> ms
+                </label>
+                <input type="range" class="cluster-slider" id="cl-temporal"
+                       min="50" max="5000" step="50" value="300">
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Min confidence <span class="cluster-slider-val" id="cl-conf-val">0.00</span>
+                </label>
+                <input type="range" class="cluster-slider" id="cl-conf"
+                       min="0" max="1" step="0.01" value="0">
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Min samples <span class="cluster-slider-val" id="cl-minsamp-val">1</span>
+                </label>
+                <input type="range" class="cluster-slider" id="cl-minsamp"
+                       min="1" max="10" step="1" value="1">
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">1 = all core · higher = noise filter</span>
+              </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label">
+                  Direction ε <span class="cluster-slider-val" id="cl-dirthresh-val">30</span>°
+                </label>
+                <input type="range" class="cluster-slider" id="cl-dirthresh"
+                       min="0" max="90" step="5" value="30">
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">0 = disabled · angular separation for clustering</span>
+              </div>
+              <div class="cluster-action-row">
+                <button class="cluster-apply-btn" id="cl-apply" title="Re-run clustering with current parameters">🔄 Apply</button>
+                <button class="cluster-reset-btn" id="cl-reset" title="Reset to config defaults">↩ Reset</button>
+              </div>
+            </div>
+            <div class="cluster-stats" id="cl-stats" style="display:none;"></div>
+            <div class="cluster-legend" id="cl-legend"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Model View Pane (moved from model-view-panel) ─── -->
+      <div class="rp-pane" id="pane-modelview">
+        <div class="mv-title" style="display:block;">🤖 Model View</div>
+        <div class="mv-section" style="display:block;">
+          <div class="mv-label">Crop (224×224) — what the model sees</div>
+          <div class="mv-canvas-wrap">
+            <canvas id="mv-crop-canvas" width="224" height="224"></canvas>
+          </div>
+          <div class="mv-meta" id="mv-crop-meta"></div>
+        </div>
+        <div class="mv-section" style="display:block;">
+          <div class="mv-label">Augmented view</div>
+          <div class="mv-btn-row">
+            <button class="mv-btn" id="mv-btn-augment">Show Augmented</button>
+            <button class="mv-btn" id="mv-btn-reroll">🎲 Re-roll</button>
+          </div>
+          <div class="mv-canvas-wrap" id="mv-aug-wrap" style="display:none; margin-top:8px;">
+            <canvas id="mv-aug-canvas" width="224" height="224"></canvas>
+          </div>
+          <div class="mv-aug-list" id="mv-aug-info"></div>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+</main>
+
+</div>
+
+<script>
+// ==========================================================================
+//  State
+// ==========================================================================
+const RUN_COLORS = [
+  '#22c55e', '#3b82f6', '#f59e0b', '#ef4444',
+  '#8b5cf6', '#ec4899', '#14b8a6', '#f97316',
+  '#a3e635', '#38bdf8', '#fb923c', '#f472b6',
+];
+
+const ZOOM_LEVELS = [1, 2, 4, 8];
+
+const state = {
+  recordings: [],
+  currentBaseId: null,
+  currentVideo: null,     // video_name string
+  currentFrame: 0,
+  totalFrames: 0,
+  videoWidth: 0,
+  videoHeight: 0,
+  videoFps: 15,
+  annotations: [],        // waggle runs for current video
+  showAnnotations: true,
+  showPredictions: false,
+  predictionMode: 'averaged', // 'raw', 'averaged', or 'clustered'
+  predConfThreshold: 0.5, // confidence threshold for display
+  predictions: null,      // { raw: [...], averaged: [...] }
+  predictionsLoading: false,
+  clusterData: null,      // { raw, consolidated, n_clusters, n_noise, params }
+  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median' },
+  checkpointInfo: null,
+  showModelView: false,
+  showPipeline: false,
+  pipelineStage: 'raw',
+  pipelineRowIdx: 0,
+  pipelineRows: [],
+  pipelineCache: {},
+  isPlaying: false,
+  playbackSpeed: 1.0,
+  zoomLevel: 1,           // 1, 2, 4, or 8
+  focusedRunIdx: -1,      // which waggle run to center on (-1 = auto)
+  frameCache: new Map(),  // frame_idx → Image (loaded)
+  pendingLoads: new Set(), // frame indices currently loading
+  playTimerId: null,
+  modelViewSeed: 42,
+  showAugmented: false,
+  lastModelView: null,    // cached model view response
+  // External video inference
+  isExternalVideo: false,  // true when viewing an external (unannotated) video
+  externalVideos: [],      // [{video_name, width, height, ...}]
+  inferenceRunning: false, // true while inference is in progress
+};
+
+const PREFETCH_AHEAD = 24;
+const PREFETCH_BEHIND = 4;
+
+// ==========================================================================
+//  DOM refs
+// ==========================================================================
+const $ = (sel) => document.querySelector(sel);
+const canvas = $('#frame-canvas');
+const ctx = canvas.getContext('2d');
+const tlCanvas = $('#timeline-canvas');
+const tlCtx = tlCanvas.getContext('2d');
+
+// ==========================================================================
+//  Canvas sizing — fills container while preserving video aspect ratio
+// ==========================================================================
+function resizeCanvas() {
+  if (!state.videoWidth || !state.videoHeight) return;
+
+  const container = document.getElementById('canvas-container');
+  const cw = container.clientWidth;
+  const ch = container.clientHeight;
+  if (!cw || !ch) return;
+
+  const videoAR = state.videoWidth / state.videoHeight;
+  const containerAR = cw / ch;
+
+  let displayW, displayH;
+  if (videoAR > containerAR) {
+    // Video is wider than container → fit to width
+    displayW = cw;
+    displayH = cw / videoAR;
+  } else {
+    // Video is taller than container → fit to height
+    displayH = ch;
+    displayW = ch * videoAR;
+  }
+
+  // CSS display size (fills container, preserving aspect ratio)
+  canvas.style.width = Math.round(displayW) + 'px';
+  canvas.style.height = Math.round(displayH) + 'px';
+
+  // Canvas backing resolution: use at least the video resolution
+  // so we keep full detail when the video is larger than the display.
+  // For low-res videos, the display size is larger, so we match that.
+  const backingW = Math.max(state.videoWidth, Math.round(displayW));
+  const backingH = Math.max(state.videoHeight, Math.round(displayH));
+  canvas.width = backingW;
+  canvas.height = backingH;
+}
+
+// ==========================================================================
+//  API helpers
+// ==========================================================================
+async function api(path) {
+  const resp = await fetch(path);
+  if (!resp.ok) throw new Error(`API ${path}: ${resp.status}`);
+  return resp.json();
+}
+
+// ==========================================================================
+//  Right panel tabs
+// ==========================================================================
+function openRightPanel(paneName) {
+  const panel = $('#right-panel');
+  panel.classList.add('open');
+  panel.classList.toggle('wide', paneName === 'inspector');
+  // Switch active tab
+  document.querySelectorAll('.rp-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.pane === paneName);
+  });
+  document.querySelectorAll('.rp-pane').forEach(p => {
+    p.classList.toggle('active', p.id === `pane-${paneName}`);
+  });
+  // Update state flags
+  state.showModelView = (paneName === 'modelview');
+  state.showPipeline = (paneName === 'inspector');
+}
+
+function closeRightPanel() {
+  $('#right-panel').classList.remove('open');
+  state.showModelView = false;
+  state.showPipeline = false;
+}
+
+// Tab click handler
+document.querySelectorAll('.rp-tab').forEach(tab => {
+  tab.addEventListener('click', () => openRightPanel(tab.dataset.pane));
+});
+
+// ==========================================================================
+//  Recording list
+// ==========================================================================
+async function loadRecordingList() {
+  state.recordings = await api('/api/recordings');
+  renderRecordingList();
+}
+
+function getRecSplit(rec) {
+  // Determine split from first variant that has split info
+  const v = rec.variants.find(v => v.split);
+  return v ? v.split : 'unknown';
+}
+
+function renderRecordingList(filter = '') {
+  const list = $('#rec-list');
+  const lowerFilter = filter.toLowerCase();
+  // Support special filters: :train, :val
+  const splitFilter = lowerFilter === ':train' ? 'train' : lowerFilter === ':val' ? 'val' : null;
+  list.innerHTML = state.recordings
+    .filter(r => {
+      if (splitFilter) return getRecSplit(r) === splitFilter;
+      return !filter || r.base_id.toLowerCase().includes(lowerFilter);
+    })
+    .map(r => {
+      const split = getRecSplit(r);
+      const badge = split === 'train'
+        ? '<span class="split-badge split-train" title="Training set">T</span>'
+        : '<span class="split-badge split-val" title="Validation set">V</span>';
+      return `
+      <div class="rec-item ${r.base_id === state.currentBaseId ? 'selected' : ''}"
+           data-base="${r.base_id}">
+        ${badge}
+        <span class="name">${r.base_id}</span>
+        <span class="count">${r.waggle_count}</span>
+      </div>
+    `;
+    }).join('');
+
+  list.querySelectorAll('.rec-item').forEach(el => {
+    el.addEventListener('click', () => selectRecording(el.dataset.base));
+  });
+}
+
+$('#search-box').addEventListener('input', (e) => {
+  renderRecordingList(e.target.value);
+});
+
+// ==========================================================================
+//  Select recording → show variant tabs
+// ==========================================================================
+async function selectRecording(baseId) {
+  state.currentBaseId = baseId;
+  renderRecordingList($('#search-box').value);
+
+  const rec = state.recordings.find(r => r.base_id === baseId);
+  if (!rec) return;
+
+  const tabs = $('#variant-tabs');
+  tabs.innerHTML = rec.variants.map(v => {
+    const label = v.width && v.height
+      ? `${v.width}×${v.height}${v.fps_tag !== '15fps' ? ' ' + v.fps_tag : ''}`
+      : v.video_name;
+    const cls = v.exists ? 'variant-tab' : 'variant-tab unavailable';
+    const splitCls = v.split === 'train' ? 'split-train-border' : 'split-val-border';
+    return `<div class="${cls} ${splitCls}" data-video="${v.video_name}" title="${v.video_name} (${v.split})">${label}</div>`;
+  }).join('');
+
+  tabs.querySelectorAll('.variant-tab:not(.unavailable)').forEach(el => {
+    el.addEventListener('click', () => selectVideo(el.dataset.video));
+  });
+
+  // Auto-select first available variant
+  const first = rec.variants.find(v => v.exists);
+  if (first) selectVideo(first.video_name);
+}
+
+// ==========================================================================
+//  Select video → load info + annotations + frame
+// ==========================================================================
+async function selectVideo(videoName, isExternal = false) {
+  stopPlayback();
+  state.currentVideo = videoName;
+  state.isExternalVideo = isExternal;
+  state.frameCache.clear();
+  state.pendingLoads.clear();
+  state.focusedRunIdx = -1; // reset zoom focus
+
+  // Highlight active tab
+  document.querySelectorAll('.variant-tab').forEach(el => {
+    el.classList.toggle('selected', el.dataset.video === videoName);
+  });
+
+  showLoading(true);
+  $('#empty-state').style.display = 'none';
+
+  // Reset predictions for new video
+  state.predictions = null;
+  state.clusterData = null;
+
+  try {
+    const [info, annotations] = await Promise.all([
+      api(`/api/video/${videoName}/info`),
+      api(`/api/video/${videoName}/annotations`),
+    ]);
+
+    state.totalFrames = info.total_frames;
+    state.videoWidth = info.width;
+    state.videoHeight = info.height;
+    state.videoFps = info.fps || 15;
+    state.annotations = annotations;
+
+    // Size canvas to fill container at correct aspect ratio
+    resizeCanvas();
+
+    renderRunList();
+
+    // Jump to first waggle run (with padding)
+    if (annotations.length > 0) {
+      const firstRun = annotations[0];
+      const pad = Math.round(state.videoFps); // 1 second
+      state.currentFrame = Math.max(0, firstRun.waggle_start - pad);
+    } else {
+      state.currentFrame = 0;
+    }
+
+    await loadAndRenderFrame(state.currentFrame);
+    prefetchAround(state.currentFrame);
+
+    // Auto-fetch predictions if toggle is on (only for annotated videos)
+    if (state.showPredictions && !state.isExternalVideo) {
+      fetchPredictions().then(() => {
+        if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+        renderTimeline();
+      });
+    }
+
+    // Show/hide inference controls for external videos  
+    updateInferControls();
+
+    // If external video has cached results, load them automatically
+    if (state.isExternalVideo) {
+      try {
+        const cached = await fetch(`/api/infer/${videoName}/results`);
+        if (cached.ok) {
+          const data = await cached.json();
+          state.predictions = { raw: data.raw, averaged: data.averaged };
+          state.showPredictions = true;
+          state.checkpointInfo = data.checkpoint;
+          $('#btn-predictions').classList.add('active');
+          $('#pred-controls').style.display = 'flex';
+          updateCheckpointBadge();
+          loadAndRenderFrame(state.currentFrame);
+          renderTimeline();
+          console.log(`Loaded cached inference: ${data.raw.length} raw, ${data.averaged.length} averaged`);
+        }
+      } catch (e) { /* no cached results yet */ }
+    }
+
+    // Auto-refresh pipeline inspector if open
+    if (state.showPipeline) {
+      piLoadRows();
+    }
+  } catch (err) {
+    console.error('Failed to load video:', err);
+  } finally {
+    showLoading(false);
+  }
+}
+
+// ==========================================================================
+//  Frame loading & rendering
+// ==========================================================================
+function loadFrameImage(frameIdx) {
+  return new Promise((resolve, reject) => {
+    if (state.frameCache.has(frameIdx)) {
+      resolve(state.frameCache.get(frameIdx));
+      return;
+    }
+    if (state.pendingLoads.has(frameIdx)) {
+      // Wait for existing load
+      const check = () => {
+        if (state.frameCache.has(frameIdx)) resolve(state.frameCache.get(frameIdx));
+        else setTimeout(check, 20);
+      };
+      check();
+      return;
+    }
+
+    state.pendingLoads.add(frameIdx);
+    const img = new Image();
+    img.onload = () => {
+      state.frameCache.set(frameIdx, img);
+      state.pendingLoads.delete(frameIdx);
+      // Evict old cache entries
+      if (state.frameCache.size > 200) {
+        const first = state.frameCache.keys().next().value;
+        state.frameCache.delete(first);
+      }
+      resolve(img);
+    };
+    img.onerror = () => {
+      state.pendingLoads.delete(frameIdx);
+      reject(new Error(`Failed to load frame ${frameIdx}`));
+    };
+    img.src = `/api/frame/${state.currentVideo}/${frameIdx}`;
+  });
+}
+
+async function loadAndRenderFrame(frameIdx) {
+  if (!state.currentVideo) return;
+  const idx = Math.max(0, Math.min(frameIdx, state.totalFrames - 1));
+  state.currentFrame = idx;
+
+  try {
+    const img = await loadFrameImage(idx);
+    renderFrameOnCanvas(img, idx);
+  } catch (err) {
+    // Draw error state
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#666';
+    ctx.font = '14px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Frame ${idx} unavailable`, canvas.width / 2, canvas.height / 2);
+  }
+
+  updateFrameInfo();
+  renderTimeline();
+  updateRunListHighlight();
+}
+
+function getZoomCenter(frameIdx) {
+  // Find the best bee position to center on:
+  // Priority: active waggle > focused run > nearest ghost > first run > frame center
+  const pad = Math.round(state.videoFps);
+
+  // If user has focused a specific run, use it
+  if (state.focusedRunIdx >= 0 && state.focusedRunIdx < state.annotations.length) {
+    const run = state.annotations[state.focusedRunIdx];
+    return { x: run.x, y: run.y };
+  }
+
+  // Find active runs
+  let bestActive = null, bestGhost = null, bestDist = Infinity;
+  for (const run of state.annotations) {
+    const isActive = frameIdx >= run.waggle_start && frameIdx <= run.waggle_end;
+    const isGhost = !isActive &&
+      frameIdx >= (run.waggle_start - pad) && frameIdx <= (run.waggle_end + pad);
+
+    if (isActive) {
+      // Prefer the run whose temporal midpoint is closest to current frame
+      const mid = (run.waggle_start + run.waggle_end) / 2;
+      const d = Math.abs(frameIdx - mid);
+      if (!bestActive || d < bestDist) {
+        bestActive = run;
+        bestDist = d;
+      }
+    } else if (isGhost && !bestActive) {
+      bestGhost = bestGhost || run;
+    }
+  }
+
+  const target = bestActive || bestGhost || state.annotations[0];
+  if (target) return { x: target.x, y: target.y };
+  return { x: state.videoWidth / 2, y: state.videoHeight / 2 };
+}
+
+function renderFrameOnCanvas(img, frameIdx) {
+  const Z = state.zoomLevel;
+  const vw = state.videoWidth;
+  const vh = state.videoHeight;
+  const cw = canvas.width;
+  const ch = canvas.height;
+
+  // Scale factor: maps video coordinates → canvas pixels
+  const scaleX = cw / vw;
+  const scaleY = ch / vh;
+
+  ctx.save();
+  ctx.clearRect(0, 0, cw, ch);
+
+  // Transform: video coords → canvas coords, then apply zoom
+  if (Z > 1) {
+    const center = getZoomCenter(frameIdx);
+    // Viewport size in video coords
+    const viewW = vw / Z;
+    const viewH = vh / Z;
+
+    // Clamp so we don't go outside the video
+    let ox = center.x - viewW / 2;
+    let oy = center.y - viewH / 2;
+    ox = Math.max(0, Math.min(ox, vw - viewW));
+    oy = Math.max(0, Math.min(oy, vh - viewH));
+
+    // Scale video→canvas, then zoom and translate in video space
+    ctx.scale(scaleX * Z, scaleY * Z);
+    ctx.translate(-ox, -oy);
+  } else {
+    // 1× zoom: just scale video to fill canvas
+    ctx.scale(scaleX, scaleY);
+  }
+
+  // Draw image in video coordinates (0,0 to vw,vh)
+  ctx.drawImage(img, 0, 0, vw, vh);
+
+  if (state.showAnnotations) {
+    const gtStyle = state.showPredictions ? 'background' : 'normal';
+    drawAnnotations(ctx, frameIdx, Z, gtStyle);
+  }
+
+  // Draw predictions overlay
+  if (state.showPredictions && state.predictions) {
+    drawPredictions(ctx, frameIdx, Z);
+  }
+
+  // Draw crop box if model view is open
+  if (state.showModelView && state.lastModelView) {
+    drawCropBox(ctx, state.lastModelView.crop, Z);
+  }
+
+  ctx.restore();
+
+  // Zoom indicator overlay (drawn outside the transform, in canvas coords)
+  if (Z > 1) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.roundRect(cw - 70, 10, 60, 28, 6);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${Z}×`, cw - 40, 30);
+    ctx.restore();
+  }
+}
+
+function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
+  const pad = Math.round(state.videoFps);
+  const s = 1 / zoomLevel;
+  const isBg = style === 'background';
+
+  for (let i = 0; i < state.annotations.length; i++) {
+    const run = state.annotations[i];
+    const color = RUN_COLORS[i % RUN_COLORS.length];
+    const { waggle_start, waggle_end, x, y, dir_x, dir_y, run_id } = run;
+
+    const isActive = frameIdx >= waggle_start && frameIdx <= waggle_end;
+    const isGhostBefore = !isActive && frameIdx >= (waggle_start - pad) && frameIdx < waggle_start;
+    const isGhostAfter = !isActive && frameIdx > waggle_end && frameIdx <= (waggle_end + pad);
+    const isGhost = isGhostBefore || isGhostAfter;
+
+    if (!isActive && !isGhost) continue;
+
+    // When predictions are active, GT becomes semi-transparent background
+    const baseAlpha = isBg ? 0.4 : 1.0;
+    const alpha = isActive ? baseAlpha : (isBg ? 0.15 : 0.25);
+
+    // Thicker dots/lines in background mode to visually distinguish
+    const dotScale = isBg ? 1.4 : 1.0;
+    const lineScale = isBg ? 1.6 : 1.0;
+    const dotR = isActive
+      ? Math.max(8 * s * dotScale, 3)
+      : Math.max(6 * s * dotScale, 2);
+
+    // Position dot
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(x, y, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (isActive) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.5);
+      ctx.stroke();
+    }
+
+    // Direction arrow
+    if (isActive) {
+      const arrowLen = Math.max(45 * s, 12);
+      const endX = x + dir_x * arrowLen;
+      const endY = y + dir_y * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(3.5 * s * lineScale, 1);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = Math.max(10 * s, 4);
+      const angle = Math.atan2(dir_y, dir_x);
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.8);
+      ctx.stroke();
+    }
+
+    // Label — only in normal mode or when predictions off
+    if (isActive && !isBg) {
+      const fontSize = Math.max(13 * s, 5);
+      const label = `R${run_id}`;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = x + 14 * s;
+      const ly = y - 14 * s;
+
+      const metrics = ctx.measureText(label);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(lx - 3 * s, ly - 12 * s, metrics.width + 6 * s, 16 * s);
+
+      ctx.fillStyle = color;
+      ctx.fillText(label, lx, ly);
+    }
+
+    // Label "GT" marker in background mode
+    if (isActive && isBg) {
+      const fontSize = Math.max(10 * s, 4);
+      ctx.font = `${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = x + 14 * s;
+      const ly = y + 4 * s;
+      ctx.fillStyle = color;
+      ctx.fillText('GT', lx, ly);
+    }
+
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+function drawPredictions(ctx, frameIdx, zoomLevel) {
+  if (state.predictionMode === 'clustered') {
+    return drawClusteredPredictions(ctx, frameIdx, zoomLevel);
+  }
+  if (!state.predictions) return;
+  const s = 1 / zoomLevel;
+
+  const preds = state.predictionMode === 'raw'
+    ? state.predictions.raw
+    : state.predictions.averaged;
+
+  if (!preds || preds.length === 0) return;
+
+  for (const pred of preds) {
+    const [px, py] = pred.position;
+    const [dx, dy] = pred.direction;
+    const conf = pred.confidence;
+    const [tStart, tEnd] = pred.temporal_offsets;
+
+    // Skip predictions below confidence threshold
+    if (conf < state.predConfThreshold) continue;
+
+    // Is this prediction active at the current frame?
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    // Ghost: within 1 second of temporal range
+    const pad = Math.round(state.videoFps);
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+
+    if (!isActive && !isGhost) continue;
+
+    const alpha = isActive ? 1.0 : 0.3;
+
+    // Find closest matching GT run to pick same color
+    const runId = pred.waggle_run_id;
+    let colorIdx = 0;
+    if (runId !== undefined && runId >= 0) {
+      // Match by run_id
+      const matchIdx = state.annotations.findIndex(a => a.run_id === runId);
+      if (matchIdx >= 0) colorIdx = matchIdx;
+    }
+    const color = RUN_COLORS[colorIdx % RUN_COLORS.length];
+
+    const dotR = isActive ? Math.max(6 * s, 2) : Math.max(4 * s, 1.5);
+
+    // Position dot — thin, solid
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(px, py, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = Math.max(1.5 * s, 0.5);
+    ctx.stroke();
+
+    // Direction arrow — thin
+    if (isActive) {
+      const arrowLen = Math.max(35 * s, 10);
+      const endX = px + dx * arrowLen;
+      const endY = py + dy * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2 * s, 0.8);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = Math.max(8 * s, 3);
+      const angle = Math.atan2(dy, dx);
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1.5 * s, 0.5);
+      ctx.stroke();
+
+      // Confidence label
+      const fontSize = Math.max(11 * s, 4);
+      const confLabel = `${(conf * 100).toFixed(0)}%`;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = px + 12 * s;
+      const ly = py - 10 * s;
+
+      const metrics = ctx.measureText(confLabel);
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillRect(lx - 2 * s, ly - 10 * s, metrics.width + 4 * s, 14 * s);
+
+      ctx.fillStyle = color;
+      ctx.fillText(confLabel, lx, ly);
+    }
+
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+function prefetchAround(center) {
+  if (!state.currentVideo) return;
+  for (let i = -PREFETCH_BEHIND; i <= PREFETCH_AHEAD; i++) {
+    const idx = center + i;
+    if (idx >= 0 && idx < state.totalFrames && !state.frameCache.has(idx)) {
+      loadFrameImage(idx).catch(() => {}); // fire and forget
+    }
+  }
+}
+
+// ==========================================================================
+//  Playback
+// ==========================================================================
+function startPlayback() {
+  if (state.isPlaying || !state.currentVideo) return;
+  state.isPlaying = true;
+  $('#btn-play').textContent = '⏸';
+
+  let lastTime = performance.now();
+  const interval = 1000 / (state.videoFps * state.playbackSpeed);
+
+  function tick() {
+    if (!state.isPlaying) return;
+    const now = performance.now();
+    const elapsed = now - lastTime;
+    const adjustedInterval = 1000 / (state.videoFps * state.playbackSpeed);
+
+    if (elapsed >= adjustedInterval) {
+      lastTime = now - (elapsed % adjustedInterval);
+      const next = state.currentFrame + 1;
+      if (next >= state.totalFrames) {
+        stopPlayback();
+        return;
+      }
+      loadAndRenderFrame(next);
+      prefetchAround(next);
+    }
+    state.playTimerId = requestAnimationFrame(tick);
+  }
+  state.playTimerId = requestAnimationFrame(tick);
+}
+
+function stopPlayback() {
+  state.isPlaying = false;
+  $('#btn-play').textContent = '▶';
+  if (state.playTimerId) {
+    cancelAnimationFrame(state.playTimerId);
+    state.playTimerId = null;
+  }
+}
+
+function togglePlayback() {
+  if (state.isPlaying) stopPlayback();
+  else startPlayback();
+}
+
+function stepFrame(delta) {
+  stopPlayback();
+  const next = state.currentFrame + delta;
+  if (next >= 0 && next < state.totalFrames) {
+    loadAndRenderFrame(next);
+    prefetchAround(next);
+  }
+}
+
+// ==========================================================================
+//  UI updates
+// ==========================================================================
+function updateFrameInfo() {
+  const info = $('#frame-info');
+  if (!state.currentVideo) {
+    info.innerHTML = 'No video loaded';
+    return;
+  }
+  info.innerHTML = `
+    Frame <strong>${state.currentFrame}</strong> / ${state.totalFrames - 1}
+    &nbsp;|&nbsp; ${state.videoWidth}×${state.videoHeight}
+    &nbsp;|&nbsp; ${state.videoFps}fps
+  `;
+}
+
+function showLoading(show) {
+  $('#loading-overlay').classList.toggle('visible', show);
+}
+
+// ==========================================================================
+//  Timeline
+// ==========================================================================
+function renderTimeline() {
+  const c = tlCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = c.getBoundingClientRect();
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  tlCtx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+
+  // Background
+  tlCtx.fillStyle = '#0a0a1a';
+  tlCtx.fillRect(0, 0, W, H);
+
+  if (state.totalFrames === 0) return;
+
+  const fps = state.videoFps;
+  const pad = Math.round(fps);
+
+  // Split timeline: top half for GT, bottom half for predictions (if active)
+  const hasPreds = state.showPredictions && (state.predictions || (state.predictionMode === 'clustered' && state.clusterData));
+  const gtTop = hasPreds ? 0 : 2;
+  const gtH = hasPreds ? H / 2 - 1 : H - 4;
+  const predTop = H / 2 + 1;
+  const predH = H / 2 - 2;
+
+  // Draw GT waggle run segments
+  for (let i = 0; i < state.annotations.length; i++) {
+    const run = state.annotations[i];
+    const color = RUN_COLORS[i % RUN_COLORS.length];
+
+    // Ghost (padding) region
+    const ghostStart = Math.max(0, run.waggle_start - pad) / state.totalFrames * W;
+    const ghostEnd = Math.min(state.totalFrames, run.waggle_end + pad) / state.totalFrames * W;
+    tlCtx.fillStyle = color + '20';
+    tlCtx.fillRect(ghostStart, gtTop + 2, ghostEnd - ghostStart, gtH - 2);
+
+    // Active region
+    const x1 = run.waggle_start / state.totalFrames * W;
+    const x2 = run.waggle_end / state.totalFrames * W;
+    tlCtx.fillStyle = color + '80';
+    tlCtx.fillRect(x1, gtTop, Math.max(x2 - x1, 2), gtH);
+  }
+
+  // Draw prediction temporal spans
+  if (hasPreds) {
+    // Clustered mode uses cluster data with cluster-specific colors
+    if (state.predictionMode === 'clustered' && state.clusterData && state.clusterData.consolidated) {
+      // Divider line
+      tlCtx.fillStyle = '#333';
+      tlCtx.fillRect(0, H / 2 - 0.5, W, 1);
+
+      for (let ci = 0; ci < state.clusterData.consolidated.length; ci++) {
+        const c = state.clusterData.consolidated[ci];
+        const [tStart, tEnd] = c.temporal_offsets;
+        const color = CLUSTER_COLORS[ci % CLUSTER_COLORS.length];
+        const x1 = tStart / state.totalFrames * W;
+        const x2 = tEnd / state.totalFrames * W;
+        tlCtx.fillStyle = color + 'aa';
+        tlCtx.fillRect(x1, predTop, Math.max(x2 - x1, 2), predH);
+      }
+    } else {
+      const preds = state.predictionMode === 'raw'
+        ? state.predictions.raw
+        : state.predictions.averaged;
+
+      if (preds) {
+        // Divider line
+        tlCtx.fillStyle = '#333';
+        tlCtx.fillRect(0, H / 2 - 0.5, W, 1);
+
+        for (const pred of preds) {
+          const [tStart, tEnd] = pred.temporal_offsets;
+          const conf = pred.confidence;
+
+          // Skip below threshold
+          if (conf < state.predConfThreshold) continue;
+
+          // Color by run ID match
+          const runId = pred.waggle_run_id;
+          let colorIdx = 0;
+          if (runId !== undefined && runId >= 0) {
+            const matchIdx = state.annotations.findIndex(a => a.run_id === runId);
+            if (matchIdx >= 0) colorIdx = matchIdx;
+          }
+          const color = RUN_COLORS[colorIdx % RUN_COLORS.length];
+
+          const x1 = tStart / state.totalFrames * W;
+          const x2 = tEnd / state.totalFrames * W;
+          const alpha = Math.round(Math.min(conf, 1.0) * 200).toString(16).padStart(2, '0');
+          tlCtx.fillStyle = color + alpha;
+          tlCtx.fillRect(x1, predTop, Math.max(x2 - x1, 2), predH);
+        }
+      }
+    }
+  }
+
+  // Separator labels
+  if (hasPreds) {
+    tlCtx.font = '8px Inter';
+    tlCtx.fillStyle = '#666';
+    tlCtx.textAlign = 'left';
+    tlCtx.fillText('GT', 2, 8);
+    tlCtx.fillText('Pred', 2, H / 2 + 9);
+  }
+
+  // Current frame indicator
+  const cx = state.currentFrame / state.totalFrames * W;
+  tlCtx.fillStyle = '#fff';
+  tlCtx.fillRect(cx - 1, 0, 2, H);
+}
+
+// Click on timeline to seek
+tlCanvas.addEventListener('click', (e) => {
+  if (state.totalFrames === 0) return;
+  const rect = tlCanvas.getBoundingClientRect();
+  const ratio = (e.clientX - rect.left) / rect.width;
+  const frame = Math.round(ratio * (state.totalFrames - 1));
+  stopPlayback();
+  loadAndRenderFrame(frame);
+  prefetchAround(frame);
+});
+
+// ==========================================================================
+//  Annotation list (in right panel) + GT editing
+// ==========================================================================
+let annEditMode = null; // null | 'add' | 'edit'
+let annEditRunId = null;
+let annSelectedIdx = -1;
+
+function renderRunList() {
+  const list = $('#ann-list');
+  const count = state.annotations.length;
+  $('#ann-count').textContent = `${count} run${count !== 1 ? 's' : ''}`;
+
+  list.innerHTML = state.annotations.map((run, i) => {
+    const color = RUN_COLORS[i % RUN_COLORS.length];
+    return `
+      <div class="ann-item" data-idx="${i}" data-run-id="${run.run_id}">
+        <span class="ann-dot" style="background: ${color}"></span>
+        <span class="ann-id">R${run.run_id}</span>
+        <span class="ann-frames">${run.waggle_start}–${run.waggle_end}</span>
+        <span class="ann-actions">
+          <button class="ann-action-btn edit" title="Edit" data-idx="${i}">✏️</button>
+          <button class="ann-action-btn delete" title="Delete" data-idx="${i}">🗑</button>
+        </span>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.ann-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.ann-action-btn')) return;
+      jumpToRun(parseInt(el.dataset.idx));
+    });
+  });
+  list.querySelectorAll('.ann-action-btn.edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startEditAnnotation(parseInt(btn.dataset.idx));
+    });
+  });
+  list.querySelectorAll('.ann-action-btn.delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteAnnotation(parseInt(btn.dataset.idx));
+    });
+  });
+
+  // Auto-open right panel to annotations tab if not open
+  if (count > 0 && !$('#right-panel').classList.contains('open')) {
+    openRightPanel('annotations');
+  }
+}
+
+function jumpToRun(idx) {
+  const run = state.annotations[idx];
+  if (!run) return;
+  stopPlayback();
+  state.focusedRunIdx = idx;
+  annSelectedIdx = idx;
+  const pad = Math.round(state.videoFps);
+  const frame = Math.max(0, run.waggle_start - pad);
+  loadAndRenderFrame(frame);
+  prefetchAround(frame);
+  updateRunListHighlight();
+}
+
+function updateRunListHighlight() {
+  document.querySelectorAll('.ann-item').forEach((el, i) => {
+    const run = state.annotations[i];
+    if (!run) return;
+    const active = state.currentFrame >= run.waggle_start && state.currentFrame <= run.waggle_end;
+    el.classList.toggle('active-frame', active);
+    el.classList.toggle('selected', i === annSelectedIdx);
+  });
+}
+
+// --- Annotation editing ---
+function startAddAnnotation() {
+  annEditMode = 'add';
+  annEditRunId = null;
+  const container = $('#ann-editor-container');
+  container.innerHTML = `
+    <div class="ann-editor">
+      <div class="ann-editor-title">
+        <span class="ann-mode-badge add">NEW</span> Add Waggle Run
+      </div>
+      <div class="ann-field-row">
+        <label>Position</label>
+        <input type="number" id="ann-x" placeholder="x" step="0.1">
+        <input type="number" id="ann-y" placeholder="y" step="0.1">
+      </div>
+      <div class="ann-field-row">
+        <label>Direction</label>
+        <input type="number" id="ann-dx" placeholder="dx" step="0.01">
+        <input type="number" id="ann-dy" placeholder="dy" step="0.01">
+      </div>
+      <div class="ann-field-row">
+        <label>Frames</label>
+        <input type="number" id="ann-start" placeholder="start">
+        <button class="btn-capture" onclick="$('#ann-start').value=state.currentFrame">◀ Current</button>
+        <input type="number" id="ann-end" placeholder="end">
+        <button class="btn-capture" onclick="$('#ann-end').value=state.currentFrame">Current ▶</button>
+      </div>
+      <div class="ann-editor-actions">
+        <button class="btn ann-save-btn" onclick="saveAnnotation()">Save</button>
+        <button class="btn ann-cancel-btn" onclick="cancelAnnotation()">Cancel</button>
+      </div>
+      <div id="ann-status"></div>
+    </div>
+  `;
+  $('#ann-tip').innerHTML = 'Click canvas to set position. <kbd>Shift</kbd>+click for direction endpoint.';
+  document.getElementById('frame-canvas').classList.add('edit-mode');
+}
+
+function startEditAnnotation(idx) {
+  const run = state.annotations[idx];
+  if (!run) return;
+  annEditMode = 'edit';
+  annEditRunId = run.run_id;
+  annSelectedIdx = idx;
+  const container = $('#ann-editor-container');
+  container.innerHTML = `
+    <div class="ann-editor">
+      <div class="ann-editor-title">
+        <span class="ann-mode-badge edit">EDIT</span> Run R${run.run_id}
+      </div>
+      <div class="ann-field-row">
+        <label>Position</label>
+        <input type="number" id="ann-x" value="${run.x.toFixed(1)}" step="0.1">
+        <input type="number" id="ann-y" value="${run.y.toFixed(1)}" step="0.1">
+      </div>
+      <div class="ann-field-row">
+        <label>Direction</label>
+        <input type="number" id="ann-dx" value="${run.dir_x.toFixed(3)}" step="0.01">
+        <input type="number" id="ann-dy" value="${run.dir_y.toFixed(3)}" step="0.01">
+      </div>
+      <div class="ann-field-row">
+        <label>Frames</label>
+        <input type="number" id="ann-start" value="${run.waggle_start}">
+        <button class="btn-capture" onclick="$('#ann-start').value=state.currentFrame">◀ Current</button>
+        <input type="number" id="ann-end" value="${run.waggle_end}">
+        <button class="btn-capture" onclick="$('#ann-end').value=state.currentFrame">Current ▶</button>
+      </div>
+      <div class="ann-editor-actions">
+        <button class="btn ann-save-btn" onclick="saveAnnotation()">Save</button>
+        <button class="btn ann-cancel-btn" onclick="cancelAnnotation()">Cancel</button>
+      </div>
+      <div id="ann-status"></div>
+    </div>
+  `;
+  $('#ann-tip').innerHTML = 'Click canvas to update position. <kbd>Shift</kbd>+click for direction.';
+  document.getElementById('frame-canvas').classList.add('edit-mode');
+  updateRunListHighlight();
+}
+
+function cancelAnnotation() {
+  annEditMode = null;
+  annEditRunId = null;
+  $('#ann-editor-container').innerHTML = '';
+  $('#ann-tip').innerHTML = 'Click a run to jump to it. Use <kbd>N</kbd> to add new, <kbd>Delete</kbd> to remove selected.';
+  document.getElementById('frame-canvas').classList.remove('edit-mode');
+}
+
+async function saveAnnotation() {
+  const x = parseFloat($('#ann-x').value);
+  const y = parseFloat($('#ann-y').value);
+  const dx = parseFloat($('#ann-dx').value);
+  const dy = parseFloat($('#ann-dy').value);
+  const start = parseInt($('#ann-start').value);
+  const end = parseInt($('#ann-end').value);
+
+  if ([x, y, dx, dy, start, end].some(v => isNaN(v))) {
+    showAnnStatus('All fields are required.', 'error');
+    return;
+  }
+  if (end < start) {
+    showAnnStatus('End frame must be ≥ start frame.', 'error');
+    return;
+  }
+
+  const body = { x, y, dir_x: dx, dir_y: dy, waggle_start: start, waggle_end: end };
+  try {
+    let resp;
+    if (annEditMode === 'add') {
+      resp = await fetch(`/api/video/${state.currentVideo}/annotations`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+      });
+    } else {
+      resp = await fetch(`/api/video/${state.currentVideo}/annotations/${annEditRunId}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+      });
+    }
+    const data = await resp.json();
+    if (data.error) { showAnnStatus(data.error, 'error'); return; }
+    showAnnStatus(annEditMode === 'add' ? `Added R${data.run_id}` : `Updated R${annEditRunId}`, 'success');
+    cancelAnnotation();
+    await reloadAnnotations();
+  } catch (e) {
+    showAnnStatus(e.message, 'error');
+  }
+}
+
+async function deleteAnnotation(idx) {
+  const run = state.annotations[idx];
+  if (!run || !confirm(`Delete annotation R${run.run_id}?`)) return;
+  try {
+    await fetch(`/api/video/${state.currentVideo}/annotations/${run.run_id}`, { method: 'DELETE' });
+    await reloadAnnotations();
+  } catch (e) {
+    console.error('Delete failed:', e);
+  }
+}
+
+async function reloadAnnotations() {
+  if (!state.currentVideo) return;
+  const runs = await api(`/api/video/${state.currentVideo}/annotations`);
+  state.annotations = runs;
+  renderRunList();
+  if (state.frameCache.has(state.currentFrame)) {
+    renderFrameOnCanvas(state.frameCache.get(state.currentFrame), state.currentFrame);
+  }
+}
+
+function showAnnStatus(msg, type) {
+  const el = document.getElementById('ann-status');
+  if (!el) return;
+  el.className = `ann-status ${type}`;
+  el.textContent = msg;
+  setTimeout(() => { if (el) el.textContent = ''; }, 3000);
+}
+
+// Canvas click handlers for annotation placement
+canvas.addEventListener('click', (e) => {
+  if (!annEditMode) return;
+  const rect = canvas.getBoundingClientRect();
+  // Convert screen coords → video coords
+  const vx = (e.clientX - rect.left) / rect.width * state.videoWidth;
+  const vy = (e.clientY - rect.top) / rect.height * state.videoHeight;
+
+  if (e.shiftKey) {
+    // Set direction from current position to click point
+    const px = parseFloat($('#ann-x').value) || 0;
+    const py = parseFloat($('#ann-y').value) || 0;
+    const dx = vx - px;
+    const dy = vy - py;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    if ($('#ann-dx')) $('#ann-dx').value = (dx/len).toFixed(3);
+    if ($('#ann-dy')) $('#ann-dy').value = (dy/len).toFixed(3);
+  } else {
+    // Set position
+    if ($('#ann-x')) $('#ann-x').value = vx.toFixed(1);
+    if ($('#ann-y')) $('#ann-y').value = vy.toFixed(1);
+  }
+});
+
+// Add button
+$('#btn-ann-add').addEventListener('click', startAddAnnotation);
+
+// ==========================================================================
+//  Random recording
+// ==========================================================================
+async function loadRandom() {
+  try {
+    const data = await api('/api/random');
+    selectRecording(data.base_id);
+    // Scroll sidebar to selection
+    setTimeout(() => {
+      const sel = document.querySelector('.rec-item.selected');
+      if (sel) sel.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 100);
+  } catch (err) {
+    console.error('Random failed:', err);
+  }
+}
+
+// ==========================================================================
+//  Event handlers
+// ==========================================================================
+
+// Buttons
+$('#btn-play').addEventListener('click', togglePlayback);
+$('#btn-prev').addEventListener('click', () => stepFrame(-1));
+$('#btn-next').addEventListener('click', () => stepFrame(1));
+$('#btn-skip-back').addEventListener('click', () => stepFrame(-10));
+$('#btn-skip-fwd').addEventListener('click', () => stepFrame(10));
+$('#btn-random').addEventListener('click', loadRandom);
+
+$('#btn-annotations').addEventListener('click', () => {
+  state.showAnnotations = !state.showAnnotations;
+  $('#btn-annotations').classList.toggle('active', state.showAnnotations);
+  if (state.showAnnotations) openRightPanel('annotations');
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+});
+$('#btn-annotations').classList.add('active'); // default on
+
+// Predictions toggle
+async function togglePredictions() {
+  state.showPredictions = !state.showPredictions;
+  $('#btn-predictions').classList.toggle('active', state.showPredictions);
+  $('#pred-controls').style.display = state.showPredictions ? 'flex' : 'none';
+
+  if (state.showPredictions && state.currentVideo && !state.predictions) {
+    await fetchPredictions();
+  }
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+}
+
+async function fetchPredictions() {
+  if (!state.currentVideo) return;
+  state.predictionsLoading = true;
+  $('#pred-loading').style.display = 'inline';
+
+  try {
+    const data = await api(`/api/predictions/${state.currentVideo}`);
+    state.predictions = { raw: data.raw, averaged: data.averaged };
+    state.checkpointInfo = data.checkpoint;
+    updateCheckpointBadge();
+    console.log(`Predictions loaded: ${data.raw.length} raw, ${data.averaged.length} averaged (${data.n_windows} windows)`);
+  } catch (err) {
+    console.error('Failed to fetch predictions:', err);
+    state.predictions = null;
+    $('#ckpt-badge').textContent = 'No model';
+  } finally {
+    state.predictionsLoading = false;
+    $('#pred-loading').style.display = 'none';
+  }
+}
+
+function updateCheckpointBadge() {
+  if (state.checkpointInfo) {
+    const info = state.checkpointInfo;
+    $('#ckpt-badge').textContent = `${info.filename} (ep${info.epoch})`;
+    $('#ckpt-badge').title = info.path || '';
+  }
+}
+
+// Device toggle
+let currentDevice = 'unknown';
+let cudaAvailable = false;
+
+async function fetchDeviceInfo() {
+  try {
+    const info = await api('/api/device');
+    currentDevice = info.device;
+    cudaAvailable = info.cuda_available;
+    updateDeviceButton();
+  } catch (e) {
+    console.log('Device API not available');
+  }
+}
+
+function updateDeviceButton() {
+  const btn = $('#btn-device');
+  const isGpu = currentDevice.startsWith('cuda');
+  btn.textContent = isGpu ? '⚡ GPU' : '🖥 CPU';
+  btn.title = `Inference on ${currentDevice}` + (cudaAvailable ? ' — click to toggle' : ' (no GPU available)');
+  btn.classList.toggle('active', isGpu);
+  btn.style.display = '';
+  if (!cudaAvailable) {
+    btn.style.opacity = '0.5';
+    btn.style.cursor = 'default';
+  }
+}
+
+async function toggleDevice() {
+  if (!cudaAvailable) return;
+  const newDevice = currentDevice.startsWith('cuda') ? 'cpu' : 'cuda:0';
+  const btn = $('#btn-device');
+  btn.textContent = '⏳ …';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/device', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({device: newDevice}),
+    });
+    const result = await resp.json();
+    if (result.error) {
+      console.error('Device switch failed:', result.error);
+    } else {
+      currentDevice = result.device || currentDevice;
+      console.log(`Device switched to ${currentDevice}`);
+    }
+  } catch (e) {
+    console.error('Device switch error:', e);
+  } finally {
+    btn.disabled = false;
+    updateDeviceButton();
+  }
+}
+
+$('#btn-device').addEventListener('click', toggleDevice);
+
+$('#btn-predictions').addEventListener('click', togglePredictions);
+
+$('#pred-mode-select').addEventListener('change', (e) => {
+  state.predictionMode = e.target.value;
+  // Auto-fetch cluster data when switching to clustered mode
+  if (state.predictionMode === 'clustered' && !state.clusterData && state.predictions) {
+    fetchClusterData();
+  }
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+  renderTimeline();
+});
+
+$('#pred-conf-slider').addEventListener('input', (e) => {
+  state.predConfThreshold = parseFloat(e.target.value);
+  $('#pred-conf-label').textContent = `≥ ${Math.round(state.predConfThreshold * 100)}%`;
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+  renderTimeline();
+});
+
+function cycleZoom() {
+  const idx = ZOOM_LEVELS.indexOf(state.zoomLevel);
+  state.zoomLevel = ZOOM_LEVELS[(idx + 1) % ZOOM_LEVELS.length];
+  $('#btn-zoom').textContent = `🔍 ${state.zoomLevel}×`;
+  $('#btn-zoom').classList.toggle('active', state.zoomLevel > 1);
+  if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+}
+
+$('#btn-zoom').addEventListener('click', cycleZoom);
+
+$('#speed-slider').addEventListener('input', (e) => {
+  state.playbackSpeed = parseFloat(e.target.value);
+  $('#speed-label').textContent = state.playbackSpeed + '×';
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  // Don't capture when typing in search
+  if (e.target.tagName === 'INPUT') return;
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      togglePlayback();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      stepFrame(e.shiftKey ? -10 : -1);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      stepFrame(e.shiftKey ? 10 : 1);
+      break;
+    case 'KeyA':
+      state.showAnnotations = !state.showAnnotations;
+      $('#btn-annotations').classList.toggle('active', state.showAnnotations);
+      if (state.showAnnotations) openRightPanel('annotations');
+      if (state.currentVideo) loadAndRenderFrame(state.currentFrame);
+      break;
+    case 'KeyP':
+      togglePredictions();
+      break;
+    case 'KeyR':
+      loadRandom();
+      break;
+    case 'KeyZ':
+      cycleZoom();
+      break;
+    case 'KeyM':
+      toggleModelView();
+      break;
+    case 'KeyI':
+      togglePipeline();
+      break;
+    case 'KeyN':
+      if (!annEditMode) startAddAnnotation();
+      break;
+    case 'Delete':
+      if (annSelectedIdx >= 0 && !annEditMode) deleteAnnotation(annSelectedIdx);
+      break;
+    case 'Escape':
+      if (annEditMode) cancelAnnotation();
+      break;
+    default:
+      // Number keys 1-9 → jump to waggle run
+      if (e.code.startsWith('Digit') && !e.shiftKey && !e.ctrlKey) {
+        const n = parseInt(e.code.replace('Digit', '')) - 1;
+        if (n >= 0 && n < state.annotations.length) jumpToRun(n);
+      }
+  }
+});
+
+// Resize handler
+window.addEventListener('resize', () => {
+  resizeCanvas();
+  if (state.currentVideo && state.frameCache.has(state.currentFrame)) {
+    renderFrameOnCanvas(state.frameCache.get(state.currentFrame), state.currentFrame);
+  }
+  renderTimeline();
+});
+
+// ==========================================================================
+//  Model View
+// ==========================================================================
+const mvCropCanvas = $('#mv-crop-canvas');
+const mvCropCtx = mvCropCanvas.getContext('2d');
+const mvAugCanvas = $('#mv-aug-canvas');
+const mvAugCtx = mvAugCanvas.getContext('2d');
+
+function toggleModelView() {
+  openRightPanel('modelview');
+  state.showModelView = true;
+  if (state.currentVideo) fetchModelView();
+}
+
+async function fetchModelView() {
+  if (!state.showModelView || !state.currentVideo) return;
+
+  // Find active waggle run for current frame
+  const run = getActiveRun(state.currentFrame);
+  if (!run) {
+    $('#mv-crop-meta').innerHTML = '<em>No waggle run at current frame</em>';
+    return;
+  }
+
+  const params = new URLSearchParams({
+    frame: state.currentFrame,
+    x: run.x,
+    y: run.y,
+    dir_x: run.dir_x,
+    dir_y: run.dir_y,
+    seed: state.modelViewSeed,
+    augment: state.showAugmented ? 'true' : 'false',
+  });
+
+  try {
+    const data = await api(`/api/model_view/${state.currentVideo}?${params}`);
+    state.lastModelView = data;
+    renderModelViewCrop(data);
+    if (data.augmented_image) {
+      renderModelViewAug(data);
+    }
+    // Re-render main canvas to show crop box
+    if (state.frameCache.has(state.currentFrame)) {
+      renderFrameOnCanvas(state.frameCache.get(state.currentFrame), state.currentFrame);
+    }
+  } catch (err) {
+    console.error('Model view failed:', err);
+  }
+}
+
+function getActiveRun(frameIdx) {
+  const pad = Math.round(state.videoFps);
+  // Prefer focused run
+  if (state.focusedRunIdx >= 0 && state.focusedRunIdx < state.annotations.length) {
+    return state.annotations[state.focusedRunIdx];
+  }
+  // Find active waggle
+  for (const run of state.annotations) {
+    if (frameIdx >= run.waggle_start && frameIdx <= run.waggle_end) return run;
+  }
+  // Find nearest ghost
+  for (const run of state.annotations) {
+    if (frameIdx >= (run.waggle_start - pad) && frameIdx <= (run.waggle_end + pad)) return run;
+  }
+  // Fall back to first run
+  return state.annotations[0] || null;
+}
+
+function renderModelViewCrop(data) {
+  const img = new Image();
+  img.onload = () => {
+    mvCropCtx.clearRect(0, 0, 224, 224);
+    mvCropCtx.drawImage(img, 0, 0, 224, 224);
+
+    // Draw bee position
+    const bx = data.crop.bee_in_crop.x;
+    const by = data.crop.bee_in_crop.y;
+    mvCropCtx.beginPath();
+    mvCropCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    mvCropCtx.fillStyle = '#22c55e';
+    mvCropCtx.fill();
+    mvCropCtx.strokeStyle = '#fff';
+    mvCropCtx.lineWidth = 1.5;
+    mvCropCtx.stroke();
+
+    // Draw direction arrow using run data
+    const run = getActiveRun(state.currentFrame);
+    if (run) {
+      const arrowLen = 35;
+      const endX = bx + run.dir_x * arrowLen;
+      const endY = by + run.dir_y * arrowLen;
+      mvCropCtx.beginPath();
+      mvCropCtx.moveTo(bx, by);
+      mvCropCtx.lineTo(endX, endY);
+      mvCropCtx.strokeStyle = '#22c55e';
+      mvCropCtx.lineWidth = 2;
+      mvCropCtx.stroke();
+
+      // Arrowhead
+      const angle = Math.atan2(run.dir_y, run.dir_x);
+      mvCropCtx.beginPath();
+      mvCropCtx.moveTo(endX, endY);
+      mvCropCtx.lineTo(endX - 8 * Math.cos(angle - 0.4), endY - 8 * Math.sin(angle - 0.4));
+      mvCropCtx.moveTo(endX, endY);
+      mvCropCtx.lineTo(endX - 8 * Math.cos(angle + 0.4), endY - 8 * Math.sin(angle + 0.4));
+      mvCropCtx.strokeStyle = '#22c55e';
+      mvCropCtx.lineWidth = 2;
+      mvCropCtx.stroke();
+    }
+  };
+  img.src = 'data:image/jpeg;base64,' + data.crop_image;
+
+  // Meta info
+  const ratio = data.crop_to_video_ratio;
+  const pct = Math.round(ratio * 100);
+  const barW = Math.round(pct * 1.5); // scale for visual
+  $('#mv-crop-meta').innerHTML = `
+    Video: <strong>${data.video_resolution.w}×${data.video_resolution.h}</strong><br>
+    Crop covers: <strong>${pct}%</strong> of longest dimension
+    <span class="ratio-bar" style="width:${barW}px"></span><br>
+    Offset: (${data.crop.offset_x}, ${data.crop.offset_y}) &nbsp;
+    Bee at: (${data.crop.bee_in_crop.x}, ${data.crop.bee_in_crop.y})
+  `;
+}
+
+function renderModelViewAug(data) {
+  if (!data.augmented_image) return;
+  $('#mv-aug-wrap').style.display = 'block';
+
+  const img = new Image();
+  img.onload = () => {
+    mvAugCtx.clearRect(0, 0, 224, 224);
+    mvAugCtx.drawImage(img, 0, 0, 224, 224);
+
+    // Draw augmented bee position
+    if (data.augmented_target) {
+      const ax = data.augmented_target.x;
+      const ay = data.augmented_target.y;
+      mvAugCtx.beginPath();
+      mvAugCtx.arc(ax, ay, 5, 0, Math.PI * 2);
+      mvAugCtx.fillStyle = '#f59e0b';
+      mvAugCtx.fill();
+      mvAugCtx.strokeStyle = '#fff';
+      mvAugCtx.lineWidth = 1.5;
+      mvAugCtx.stroke();
+
+      // Direction arrow
+      const arrowLen = 35;
+      const endX = ax + data.augmented_target.dir_x * arrowLen;
+      const endY = ay + data.augmented_target.dir_y * arrowLen;
+      mvAugCtx.beginPath();
+      mvAugCtx.moveTo(ax, ay);
+      mvAugCtx.lineTo(endX, endY);
+      mvAugCtx.strokeStyle = '#f59e0b';
+      mvAugCtx.lineWidth = 2;
+      mvAugCtx.stroke();
+
+      const angle = Math.atan2(data.augmented_target.dir_y, data.augmented_target.dir_x);
+      mvAugCtx.beginPath();
+      mvAugCtx.moveTo(endX, endY);
+      mvAugCtx.lineTo(endX - 8 * Math.cos(angle - 0.4), endY - 8 * Math.sin(angle - 0.4));
+      mvAugCtx.moveTo(endX, endY);
+      mvAugCtx.lineTo(endX - 8 * Math.cos(angle + 0.4), endY - 8 * Math.sin(angle + 0.4));
+      mvAugCtx.strokeStyle = '#f59e0b';
+      mvAugCtx.lineWidth = 2;
+      mvAugCtx.stroke();
+    }
+  };
+  img.src = 'data:image/jpeg;base64,' + data.augmented_image;
+
+  // Show augmentation info
+  const infoEl = $('#mv-aug-info');
+  if (data.aug_info && data.aug_info.length > 0) {
+    infoEl.innerHTML = data.aug_info.map(a => `<span>${a}</span>`).join(' ');
+  } else {
+    infoEl.innerHTML = '<span>No augmentations applied</span>';
+  }
+}
+
+function drawCropBox(ctx, crop, zoomLevel) {
+  if (!crop) return;
+  const s = 1 / zoomLevel;
+
+  ctx.save();
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = Math.max(2 * s, 0.5);
+  ctx.setLineDash([Math.max(8 * s, 2), Math.max(4 * s, 1)]);
+  ctx.strokeRect(crop.x_min, crop.y_min, crop.x_max - crop.x_min, crop.y_max - crop.y_min);
+  ctx.setLineDash([]);
+
+  // Label
+  const fontSize = Math.max(11 * s, 4);
+  ctx.font = `bold ${fontSize}px Inter`;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  const labelText = '224×224 crop';
+  const tw = ctx.measureText(labelText).width;
+  ctx.fillRect(crop.x_min, crop.y_min - fontSize - 4 * s, tw + 6 * s, fontSize + 4 * s);
+  ctx.fillStyle = '#f59e0b';
+  ctx.textAlign = 'left';
+  ctx.fillText(labelText, crop.x_min + 3 * s, crop.y_min - 3 * s);
+  ctx.restore();
+}
+
+// Model view events
+
+$('#mv-btn-augment').addEventListener('click', () => {
+  state.showAugmented = !state.showAugmented;
+  $('#mv-btn-augment').classList.toggle('active', state.showAugmented);
+  if (!state.showAugmented) {
+    $('#mv-aug-wrap').style.display = 'none';
+    $('#mv-aug-info').innerHTML = '';
+  }
+  fetchModelView();
+});
+
+$('#mv-btn-reroll').addEventListener('click', () => {
+  state.modelViewSeed = Math.floor(Math.random() * 100000);
+  fetchModelView();
+});
+
+// Hook into frame changes to update model view
+const _origLoadAndRender = loadAndRenderFrame;
+loadAndRenderFrame = async function(frameIdx) {
+  await _origLoadAndRender(frameIdx);
+  if (state.showModelView) {
+    fetchModelView();
+  }
+};
+
+// Keyboard: M = toggle model view
+// (patched into existing keydown handler below)
+
+// ==========================================================================
+//  Pipeline Inspector (with video player)
+// ==========================================================================
+
+const piCanvas = $('#pi-player-canvas');
+const piCtx = piCanvas.getContext('2d');
+let piFrameImages = [];  // preloaded Image objects
+let piCurrentFrame = 0;
+let piPlayInterval = null;
+
+function togglePipeline() {
+  openRightPanel('inspector');
+  state.showPipeline = true;
+  if (state.currentVideo) piLoadRows();
+}
+
+// (Inspector opened via right-panel tab or keyboard 'I')
+
+// Crop mode toggle
+$('#pi-crop-mode').addEventListener('change', () => {
+  state.pipelineCache = {};
+  piLoadStage(state.pipelineStage);
+});
+
+function piGetCropMode() {
+  return $('#pi-crop-mode').checked ? 'training' : 'inference';
+}
+
+async function piLoadRows() {
+  if (!state.currentVideo) return;
+  try {
+    const data = await api(`/api/pipeline/rows/${state.currentVideo}`);
+    state.pipelineRows = data.rows;
+    state.pipelineRowIdx = 0;
+    state.pipelineCache = {};
+    piUpdateRowSelect();
+    piLoadStage(state.pipelineStage);
+  } catch (err) {
+    console.error('Pipeline rows failed:', err);
+  }
+}
+
+function piUpdateRowSelect() {
+  const sel = $('#pi-row-select');
+  sel.innerHTML = '';
+  state.pipelineRows.forEach((r, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    const label = r.waggle ? `\u2705 Run ${r.run_id}` : `\u274c Neg`;
+    opt.textContent = `#${i}: ${label} [${r.start_frame}-${r.end_frame}]`;
+    sel.appendChild(opt);
+  });
+  sel.value = state.pipelineRowIdx;
+  piUpdateRowInfo();
+}
+
+function piUpdateRowInfo() {
+  const row = state.pipelineRows[state.pipelineRowIdx];
+  if (!row) { $('#pi-row-info').textContent = ''; return; }
+  const dur = row.end_frame - row.start_frame;
+  $('#pi-row-info').textContent = `${dur} frames, pos=(${row.x.toFixed(0)}, ${row.y.toFixed(0)})`;
+}
+
+$('#pi-row-select').addEventListener('change', (e) => {
+  state.pipelineRowIdx = parseInt(e.target.value);
+  state.pipelineCache = {};
+  piUpdateRowInfo();
+  piLoadStage(state.pipelineStage);
+});
+
+document.querySelectorAll('.pi-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.pi-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.pipelineStage = tab.dataset.stage;
+    piLoadStage(state.pipelineStage);
+  });
+});
+
+// Play/Pause
+$('#pi-play-btn').addEventListener('click', () => {
+  piPlayInterval ? piStopPlayback() : piStartPlayback();
+});
+
+function piStartPlayback() {
+  if (piFrameImages.length === 0) return;
+  $('#pi-play-btn').textContent = '\u23f8';
+  piPlayInterval = setInterval(() => {
+    piCurrentFrame = (piCurrentFrame + 1) % piFrameImages.length;
+    piDrawCurrentFrame();
+    piUpdateScrubber();
+  }, 100);
+}
+
+function piStopPlayback() {
+  if (piPlayInterval) { clearInterval(piPlayInterval); piPlayInterval = null; }
+  $('#pi-play-btn').textContent = '\u25b6';
+}
+
+$('#pi-scrubber').addEventListener('input', (e) => {
+  piCurrentFrame = parseInt(e.target.value);
+  piDrawCurrentFrame();
+  piUpdateScrubber();
+});
+
+function piUpdateScrubber() {
+  $('#pi-scrubber').value = piCurrentFrame;
+  const total = piFrameImages.length || 1;
+  const cKey = `${state.currentVideo}:${state.pipelineRowIdx}:${state.pipelineStage}:${piGetCropMode()}`;
+  const meta = state.pipelineCache[cKey]?.metadata;
+  let label = `${piCurrentFrame + 1}/${total}`;
+  if (state.pipelineStage === 'raw' && meta) {
+    label = `f${meta.start_frame + piCurrentFrame} (${piCurrentFrame + 1}/${total})`;
+  } else if (state.pipelineStage === 'sample' && meta?.sampled_indices) {
+    label = `src=${meta.sampled_indices[piCurrentFrame]} (${piCurrentFrame + 1}/${total})`;
+  }
+  $('#pi-frame-info').textContent = label;
+}
+
+function piDrawCurrentFrame() {
+  if (piCurrentFrame >= piFrameImages.length) return;
+  const img = piFrameImages[piCurrentFrame];
+  if (!img || !img.complete) return;
+
+  const panelW = piCanvas.parentElement?.offsetWidth || 480;
+  const aspect = img.naturalHeight / img.naturalWidth;
+  const drawW = Math.min(panelW, img.naturalWidth);
+  const drawH = Math.round(drawW * aspect);
+  piCanvas.width = drawW;
+  piCanvas.height = drawH;
+  piCtx.drawImage(img, 0, 0, drawW, drawH);
+
+  const cKey = `${state.currentVideo}:${state.pipelineRowIdx}:${state.pipelineStage}:${piGetCropMode()}`;
+  const data = state.pipelineCache[cKey];
+  if (!data) return;
+  const meta = data.metadata;
+
+  // Overlays
+  if (state.pipelineStage === 'raw' && meta.crop_box) {
+    const cb = meta.crop_box;
+    const sx = drawW / meta.video_resolution[0];
+    const sy = drawH / meta.video_resolution[1];
+    piCtx.strokeStyle = '#22c55e';
+    piCtx.lineWidth = 2;
+    piCtx.strokeRect(cb.x_min * sx, cb.y_min * sy,
+                     (cb.x_max - cb.x_min) * sx, (cb.y_max - cb.y_min) * sy);
+    piCtx.beginPath();
+    piCtx.arc(meta.gt_position[0] * sx, meta.gt_position[1] * sy, 4, 0, Math.PI * 2);
+    piCtx.fillStyle = '#ef4444';
+    piCtx.fill();
+  }
+
+  if (state.pipelineStage === 'crop' && meta.bee_in_crop) {
+    const sx = drawW / meta.crop_size[0];
+    const sy = drawH / meta.crop_size[1];
+    const bx = meta.bee_in_crop[0] * sx;
+    const by = meta.bee_in_crop[1] * sy;
+    piCtx.beginPath();
+    piCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    piCtx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+    piCtx.fill();
+    const arrowLen = 30;
+    piCtx.beginPath();
+    piCtx.moveTo(bx, by);
+    piCtx.lineTo(bx + meta.gt_direction[0] * arrowLen, by + meta.gt_direction[1] * arrowLen);
+    piCtx.strokeStyle = '#ef4444';
+    piCtx.lineWidth = 2;
+    piCtx.stroke();
+  }
+
+  // Draw augmented target position/direction on augment frames
+  if (state.pipelineStage === 'augment' && meta.augmented_target) {
+    const at = meta.augmented_target;
+    // Transform canvas shows 224x224 frames scaled to drawW x drawH
+    const sx = drawW / 224;
+    const sy = drawH / 224;
+    const bx = at.x * sx;
+    const by = at.y * sy;
+    piCtx.beginPath();
+    piCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    piCtx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+    piCtx.fill();
+    piCtx.strokeStyle = '#fff';
+    piCtx.lineWidth = 1.5;
+    piCtx.stroke();
+    const arrowLen = 30;
+    piCtx.beginPath();
+    piCtx.moveTo(bx, by);
+    piCtx.lineTo(bx + at.dir_x * arrowLen * sx, by + at.dir_y * arrowLen * sy);
+    piCtx.strokeStyle = '#f59e0b';
+    piCtx.lineWidth = 2;
+    piCtx.stroke();
+    // Arrowhead
+    const endX = bx + at.dir_x * arrowLen * sx;
+    const endY = by + at.dir_y * arrowLen * sy;
+    const angle = Math.atan2(at.dir_y, at.dir_x);
+    piCtx.beginPath();
+    piCtx.moveTo(endX, endY);
+    piCtx.lineTo(endX - 8 * Math.cos(angle - 0.4), endY - 8 * Math.sin(angle - 0.4));
+    piCtx.moveTo(endX, endY);
+    piCtx.lineTo(endX - 8 * Math.cos(angle + 0.4), endY - 8 * Math.sin(angle + 0.4));
+    piCtx.strokeStyle = '#f59e0b';
+    piCtx.lineWidth = 2;
+    piCtx.stroke();
+  }
+}
+
+async function piLoadStage(stage) {
+  if (!state.currentVideo) return;
+  piStopPlayback();
+
+  // Special handling for cluster tab — uses its own panel
+  if (stage === 'cluster') {
+    $('#pi-cluster-panel').style.display = 'block';
+    piShowCluster();
+    return;
+  }
+  // Hide cluster panel when switching to other tabs
+  $('#pi-cluster-panel').style.display = 'none';
+  $('#pi-metadata').style.display = '';
+
+  const cropMode = piGetCropMode();
+  const cacheKey = `${state.currentVideo}:${state.pipelineRowIdx}:${stage}:${cropMode}`;
+  if (state.pipelineCache[cacheKey]) {
+    piRenderStage(stage, state.pipelineCache[cacheKey]);
+    return;
+  }
+
+  $('#pi-loading').style.display = '';
+  $('#pi-empty').style.display = 'none';
+  $('#pi-player-wrap').style.display = 'none';
+
+  try {
+    let url = `/api/pipeline/${state.currentVideo}?stage=${stage}&row_idx=${state.pipelineRowIdx}&crop_mode=${cropMode}`;
+    // For augment, sample, and target stages, apply augmentation with a shared seed
+    // (in training: augment → sample → target encoding all use the same augmented data)
+    if (stage === 'augment') {
+      state.piAugSeed = Math.floor(Math.random() * 100000);
+      url += `&augment=true&aug_seed=${state.piAugSeed}`;
+    } else if (stage === 'sample' || stage === 'target') {
+      // Reuse the seed from the augment stage (or generate if not yet set)
+      if (!state.piAugSeed) state.piAugSeed = Math.floor(Math.random() * 100000);
+      url += `&augment=true&aug_seed=${state.piAugSeed}`;
+    }
+    // For crop stage, also request variance samples
+    if (stage === 'crop') {
+      url += `&n_variance=${4}`;
+    }
+    const data = await api(url);
+    state.pipelineCache[cacheKey] = data;
+    piRenderStage(stage, data);
+  } catch (err) {
+    console.error('Pipeline stage failed:', err);
+    $('#pi-loading').style.display = 'none';
+    $('#pi-empty').style.display = '';
+    $('#pi-empty').textContent = `Error: ${err.message}`;
+  }
+}
+
+function piRenderStage(stage, data) {
+  $('#pi-loading').style.display = 'none';
+  $('#pi-empty').style.display = 'none';
+  piStopPlayback();
+
+  const meta = data.metadata || {};
+  const frames = data.frames || [];
+  const playerWrap = $('#pi-player-wrap');
+
+  if (frames.length > 0) {
+    playerWrap.style.display = '';
+    piFrameImages = frames.map(b64 => {
+      const img = new Image();
+      img.src = `data:image/jpeg;base64,${b64}`;
+      return img;
+    });
+    piCurrentFrame = 0;
+    $('#pi-scrubber').max = frames.length - 1;
+    $('#pi-scrubber').value = 0;
+
+    piFrameImages[0].onload = () => {
+      piDrawCurrentFrame();
+      piUpdateScrubber();
+    };
+
+    const stageLabels = {
+      raw: `Raw (${frames.length} \u00d7 ${meta.video_resolution?.[0]}\u00d7${meta.video_resolution?.[1]})`,
+      crop: `Cropped (${frames.length} \u00d7 ${meta.crop_size?.[0]}\u00d7${meta.crop_size?.[1]}) \u2014 ${meta.crop_mode || 'inference'}`,
+      transform: `After Transform (${frames.length} frames)`,
+      augment: `After Augment+Normalize (${frames.length} frames)`,
+      sample: `Sampled ${meta.n_frames_sampled} from ${meta.n_frames_loaded} (${meta.sampling_method})`,
+    };
+    $('#pi-player-label').textContent = stageLabels[stage] || `${stage} \u2014 ${frames.length} frames`;
+
+    // Show/hide the re-draw overlay button
+    const redrawBtn = $('#pi-aug-redraw');
+    if (stage === 'augment') {
+      redrawBtn.style.display = '';
+      redrawBtn.onclick = () => {
+        // Clear both augment and sample caches so they re-roll together
+        const base = `${state.currentVideo}:${state.pipelineRowIdx}:`;
+        Object.keys(state.pipelineCache).forEach(k => {
+          if (k.startsWith(base + 'augment:') || k.startsWith(base + 'sample:'))
+            delete state.pipelineCache[k];
+        });
+        state.piAugSeed = null; // force new seed
+        piLoadStage('augment');
+      };
+    } else {
+      redrawBtn.style.display = 'none';
+    }
+  } else {
+    playerWrap.style.display = 'none';
+    piFrameImages = [];
+  }
+
+  // Render metadata
+  const metaDiv = $('#pi-metadata');
+  let html = '';
+
+  if (stage === 'raw') {
+    html += piMeta('Video', meta.video_name);
+    html += piMeta('Resolution', `${meta.video_resolution?.[0]}\u00d7${meta.video_resolution?.[1]}`);
+    html += piMeta('Frames', `${meta.start_frame} \u2192 ${meta.end_frame} (${meta.n_frames_loaded} loaded)`);
+    if (meta.needs_sampling) {
+      html += `<div style="color: var(--amber); margin-top:4px;">\u26a0\ufe0f Only ${meta.n_frames_loaded} frames loaded \u2014 model pads/samples to ${meta.window_size}. See "5. Sample" tab.</div>`;
+    }
+    html += piMeta('GT Position', `(${meta.gt_position?.[0]?.toFixed(1)}, ${meta.gt_position?.[1]?.toFixed(1)})`);
+    html += piMeta('GT Direction', `(${meta.gt_direction?.[0]?.toFixed(3)}, ${meta.gt_direction?.[1]?.toFixed(3)})`);
+    if (meta.crop_box) {
+      const cb = meta.crop_box;
+      html += piMeta('Crop Box', `(${cb.x_min}, ${cb.y_min}) \u2192 (${cb.x_max}, ${cb.y_max})`);
+      html += piMeta('Crop/Video', `${(meta.crop_size?.[0] / Math.max(meta.video_resolution?.[0], 1)).toFixed(3)}`);
+    }
+  }
+
+  else if (stage === 'crop') {
+    const modeColor = meta.crop_mode === 'training' ? 'var(--amber)' : 'var(--accent)';
+    html += `<div><span class="meta-key">Crop Mode: </span><span class="meta-val" style="color:${modeColor};">${meta.crop_mode || 'inference'}</span></div>`;
+    html += piMeta('Crop Origin', `(${meta.crop_origin?.[0]}, ${meta.crop_origin?.[1]})`);
+    if (meta.crop_offset) html += piMeta('Random Offset', `(${meta.crop_offset[0]}, ${meta.crop_offset[1]})`);
+    html += piMeta('Bee in Crop', `(${meta.bee_in_crop?.[0]}, ${meta.bee_in_crop?.[1]})`);
+    html += piMeta('Frames', meta.n_frames);
+
+    // Variance grid: show multiple random crops
+    if (data.variance_crops && data.variance_crops.length > 0) {
+      html += `<div style="margin-top:10px"><span class="meta-key">Crop Variance (${data.variance_crops.length} random samples):</span></div>`;
+      html += '<div class="pi-variance-grid" id="pi-variance-grid">';
+      data.variance_crops.forEach((vc, i) => {
+        html += `<div class="pi-variance-item">`;
+        html += `<canvas id="pi-var-canvas-${i}" width="224" height="224"></canvas>`;
+        html += `<div class="pi-variance-label">offset=(${vc.offset_x}, ${vc.offset_y})</div>`;
+        html += `</div>`;
+      });
+      html += '</div>';
+
+      // Draw variance crops after DOM update
+      setTimeout(() => {
+        data.variance_crops.forEach((vc, i) => {
+          const c = document.getElementById(`pi-var-canvas-${i}`);
+          if (!c) return;
+          const vCtx = c.getContext('2d');
+          const img = new Image();
+          img.onload = () => {
+            vCtx.drawImage(img, 0, 0, 224, 224);
+            // Draw bee position
+            if (vc.bee_in_crop) {
+              vCtx.beginPath();
+              vCtx.arc(vc.bee_in_crop[0], vc.bee_in_crop[1], 4, 0, Math.PI * 2);
+              vCtx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+              vCtx.fill();
+              vCtx.strokeStyle = '#fff';
+              vCtx.lineWidth = 1;
+              vCtx.stroke();
+            }
+          };
+          img.src = `data:image/jpeg;base64,${vc.image}`;
+        });
+      }, 30);
+    }
+  }
+
+  else if (stage === 'transform') {
+    html += piMeta('Pipeline', (meta.transform_pipeline || []).join(' \u2192 '));
+    if (meta.pixel_stats?.length > 0) {
+      html += `<div style="margin-top:6px"><span class="meta-key">Pixel Stats:</span></div>`;
+      html += '<table><tr><th>#</th><th>Min</th><th>Max</th><th>Mean</th></tr>';
+      meta.pixel_stats.forEach((s, i) => {
+        html += `<tr><td>${i}</td><td>${s.min}</td><td>${s.max}</td><td>${s.mean}</td></tr>`;
+      });
+      html += '</table>';
+    }
+  }
+
+  else if (stage === 'augment') {
+    // Show augmentation info
+    if (meta.aug_info && meta.aug_info.length > 0) {
+      html += `<div><span class="meta-key">Augmentations Applied:</span></div>`;
+      html += '<div class="pi-aug-info-list">';
+      meta.aug_info.forEach(a => {
+        html += `<span>${a}</span>`;
+      });
+      html += '</div>';
+    } else {
+      html += `<div style="color: var(--text-muted);"><span class="meta-key">Augmentations: </span>None triggered this roll</div>`;
+    }
+
+    // Normalization info (always applied as last step of augmenter)
+    const n = meta.normalization || {};
+    html += piMeta('Normalize Mean', `[${(n.mean || []).map(v => v.toFixed(3)).join(', ')}]`);
+    html += piMeta('Normalize Std', `[${(n.std || []).map(v => v.toFixed(3)).join(', ')}]`);
+
+    // Augmented target position
+    if (meta.augmented_target) {
+      const at = meta.augmented_target;
+      html += piMeta('Bee Position (aug)', `(${at.x}, ${at.y})`);
+      html += piMeta('Direction (aug)', `(${at.dir_x}, ${at.dir_y})`);
+    }
+
+    // Re-draw button is in the canvas overlay, show/hide handled in piRenderStage player setup
+
+    if (meta.pixel_stats?.length > 0) {
+      html += `<div style="margin-top:6px"><span class="meta-key">Pixel Stats (post augment+norm, de-normed for display):</span></div>`;
+      html += '<table><tr><th>#</th><th>Min</th><th>Max</th><th>Mean</th></tr>';
+      meta.pixel_stats.forEach((s, i) => {
+        html += `<tr><td>${i}</td><td>${s.min}</td><td>${s.max}</td><td>${s.mean}</td></tr>`;
+      });
+      html += '</table>';
+    }
+  }
+
+  else if (stage === 'sample') {
+    html += piMeta('Method', meta.sampling_method);
+    html += piMeta('Loaded', `${meta.n_frames_loaded} frames`);
+    html += piMeta('Sampled', `${meta.n_frames_sampled} frames`);
+    html += piMeta('Indices', `[${(meta.sampled_indices || []).join(', ')}]`);
+  }
+
+  else if (stage === 'target') {
+    const t = meta.target || {};
+    html += piMeta('Objectness', t.objectness);
+    if (t.objectness === 1.0) {
+      html += piMeta('Grid Cell', `[${t.grid_cell?.[0]}, ${t.grid_cell?.[1]}] of ${meta.grid_size}\u00d7${meta.grid_size}`);
+      html += piMeta('Cell Coords', `(${t.cell_coords?.[0]}, ${t.cell_coords?.[1]})`);
+      html += piMeta('Pos Norm', `(${t.position_norm?.[0]}, ${t.position_norm?.[1]})`);
+      html += piMeta('Direction', `(${t.direction?.[0]}, ${t.direction?.[1]})`);
+      html += piMeta('Temporal', `[${t.temporal_norm?.[0]}, ${t.temporal_norm?.[1]}]`);
+      html += piMeta('Waggle in Win', `${t.waggle_start_in_window} \u2192 ${t.waggle_end_in_window}`);
+    } else {
+      html += `<div><span class="meta-val">${t.note || 'Non-waggle'}</span></div>`;
+    }
+    html += piMeta('Bee in Crop', `(${meta.bee_in_crop?.[0]}, ${meta.bee_in_crop?.[1]})`);
+
+    if (t.objectness === 1.0 && meta.grid_size) {
+      const gs = meta.grid_size;
+      const cs = Math.max(4, Math.floor(200 / gs));
+      const sz = gs * cs;
+      html += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;">`;
+      html += `<div><div class="meta-key" style="margin-bottom:4px;">Original Target</div>`;
+      html += `<canvas id="pi-target-grid" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas></div>`;
+
+      // Augmented target grid (if available)
+      const at = meta.augmented_target_info;
+      if (at && at.objectness === 1.0) {
+        html += `<div><div class="meta-key" style="margin-bottom:4px;">Augmented Target</div>`;
+        html += `<canvas id="pi-target-grid-aug" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas></div>`;
+      }
+      html += `</div>`;
+
+      // Show augmentation info if present
+      if (at && at.aug_info && at.aug_info.length > 0) {
+        html += `<div style="margin-top:6px"><span class="meta-key">Augmentations:</span></div>`;
+        html += '<div class="pi-aug-info-list">';
+        at.aug_info.forEach(a => { html += `<span>${a}</span>`; });
+        html += '</div>';
+      }
+
+      setTimeout(() => {
+        // Draw original grid
+        const c = document.getElementById('pi-target-grid');
+        if (c) {
+          const ctx = c.getContext('2d');
+          ctx.fillStyle = '#1a1a2e';
+          ctx.fillRect(0, 0, sz, sz);
+          ctx.strokeStyle = '#2a2a4e';
+          for (let i = 0; i <= gs; i++) {
+            ctx.beginPath();
+            ctx.moveTo(i * cs, 0); ctx.lineTo(i * cs, sz);
+            ctx.moveTo(0, i * cs); ctx.lineTo(sz, i * cs);
+            ctx.stroke();
+          }
+          const [gy, gx] = t.grid_cell;
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.6)';
+          ctx.fillRect(gx * cs, gy * cs, cs, cs);
+          const px = t.position_norm[0] * sz;
+          const py = t.position_norm[1] * sz;
+          ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2);
+          ctx.fillStyle = '#ef4444'; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(px, py);
+          ctx.lineTo(px + t.direction[0] * 15, py + t.direction[1] * 15);
+          ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.stroke();
+        }
+
+        // Draw augmented grid
+        if (at && at.objectness === 1.0) {
+          const c2 = document.getElementById('pi-target-grid-aug');
+          if (c2) {
+            const ctx2 = c2.getContext('2d');
+            ctx2.fillStyle = '#1a1a2e';
+            ctx2.fillRect(0, 0, sz, sz);
+            ctx2.strokeStyle = '#2a2a4e';
+            for (let i = 0; i <= gs; i++) {
+              ctx2.beginPath();
+              ctx2.moveTo(i * cs, 0); ctx2.lineTo(i * cs, sz);
+              ctx2.moveTo(0, i * cs); ctx2.lineTo(sz, i * cs);
+              ctx2.stroke();
+            }
+            const [agy, agx] = at.grid_cell;
+            ctx2.fillStyle = 'rgba(245, 158, 11, 0.6)';
+            ctx2.fillRect(agx * cs, agy * cs, cs, cs);
+            const apx = at.position_norm[0] * sz;
+            const apy = at.position_norm[1] * sz;
+            ctx2.beginPath(); ctx2.arc(apx, apy, 3, 0, Math.PI * 2);
+            ctx2.fillStyle = '#f59e0b'; ctx2.fill();
+            ctx2.beginPath(); ctx2.moveTo(apx, apy);
+            ctx2.lineTo(apx + at.direction[0] * 15, apy + at.direction[1] * 15);
+            ctx2.strokeStyle = '#f59e0b'; ctx2.lineWidth = 2; ctx2.stroke();
+          }
+        }
+      }, 50);
+    }
+  }
+
+  else if (stage === 'output') {
+    if (meta.error) {
+      html += `<div style="color: var(--amber);">\u26a0\ufe0f ${meta.error}</div>`;
+    } else {
+      html += piMeta('Checkpoint', `${meta.checkpoint?.filename} (epoch ${meta.checkpoint?.epoch})`);
+      html += piMeta('Predictions', meta.n_predictions);
+      html += piMeta('Crop Origin', `(${meta.crop_origin?.[0]}, ${meta.crop_origin?.[1]})`);
+
+      if (meta.predictions?.length > 0) {
+        html += '<div class="pi-pred-list">';
+        meta.predictions.forEach((p, i) => {
+          html += `<div class="pi-pred-item"><span>#${i}: ${(p.confidence * 100).toFixed(1)}%</span>`;
+          html += `<span>pos=(${p.position[0].toFixed(1)}, ${p.position[1].toFixed(1)})</span>`;
+          html += `<span>dir=(${p.direction[0].toFixed(2)}, ${p.direction[1].toFixed(2)})</span></div>`;
+        });
+        html += '</div>';
+      }
+
+      if (meta.confidence_heatmap && meta.grid_size) {
+        const gs = meta.grid_size;
+        const cs = Math.max(4, Math.floor(200 / gs));
+        const sz = gs * cs;
+        html += `<div style="margin-top:8px"><span class="meta-key">Confidence Heatmap:</span></div>`;
+        html += `<canvas id="pi-output-heatmap" width="${sz}" height="${sz}" class="pi-heatmap" style="width:${sz}px;height:${sz}px;"></canvas>`;
+        setTimeout(() => {
+          const c = document.getElementById('pi-output-heatmap');
+          if (!c) return;
+          const ctx = c.getContext('2d');
+          for (let y = 0; y < gs; y++) {
+            for (let x = 0; x < gs; x++) {
+              const v = meta.confidence_heatmap[y][x];
+              const intensity = Math.min(255, Math.floor(v * 255));
+              ctx.fillStyle = v > 0.5
+                ? `rgb(${255 - intensity}, ${intensity}, 50)`
+                : `rgb(${30 + intensity * 0.3}, ${30 + intensity * 0.3}, ${50 + intensity * 0.5})`;
+              ctx.fillRect(x * cs, y * cs, cs, cs);
+            }
+          }
+        }, 50);
+      }
+    }
+  }
+
+  metaDiv.innerHTML = html;
+}
+
+function piMeta(key, val) {
+  return `<div><span class="meta-key">${key}: </span><span class="meta-val">${val}</span></div>`;
+
+}
+
+// ==========================================================================
+//  External Videos — sidebar, loading, inference
+// ==========================================================================
+
+async function loadExternalVideos() {
+  try {
+    const data = await api('/api/external_videos');
+    state.externalVideos = data.videos || [];
+    if (state.externalVideos.length > 0) {
+      $('#ext-section').style.display = 'flex';
+      $('#ext-count').textContent = state.externalVideos.length;
+      renderExternalVideoList();
+    }
+  } catch (e) {
+    // No external videos endpoint — that's fine
+  }
+}
+
+function renderExternalVideoList() {
+  const list = $('#ext-list');
+  list.innerHTML = state.externalVideos.map(v => {
+    const label = v.video_name.replace('.mp4', '');
+    const info = v.error ? 'Error' : `${v.width}×${v.height} · ${v.duration}`;
+    const hasResults = v.has_results ? ' · ✓' : '';
+    const sel = v.video_name === state.currentVideo && state.isExternalVideo ? 'selected' : '';
+    return `
+      <div class="ext-item ${sel}" data-video="${v.video_name}">
+        <span class="ext-badge" title="External">E</span>
+        <span class="ext-name" title="${v.video_name}">${label}</span>
+        <span class="ext-info">${info}${hasResults}</span>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.ext-item').forEach(el => {
+    el.addEventListener('click', () => {
+      // Deselect recording sidebar
+      state.currentBaseId = null;
+      renderRecordingList($('#search-box').value);
+      // Select external video
+      selectExternalVideo(el.dataset.video);
+    });
+  });
+}
+
+async function selectExternalVideo(videoName) {
+  // Clear variant tabs — external videos don't have variants
+  $('#variant-tabs').innerHTML = `
+    <div class="variant-tab selected" style="border-bottom: 2px solid #8b5cf6;">
+      ${videoName.replace('.mp4', '')} <span style="color:var(--text-muted);font-size:10px;">(external)</span>
+    </div>
+  `;
+
+  // Use the shared selectVideo flow (it handles frame loading, annotations, etc.)
+  await selectVideo(videoName, true);
+
+  // Re-render external list to highlight selection  
+  renderExternalVideoList();
+}
+
+function updateInferControls() {
+  const show = state.isExternalVideo && state.currentVideo;
+  $('#infer-controls').style.display = show ? 'flex' : 'none';
+  if (show) {
+    const hasResults = state.predictions !== null;
+    const btn = $('#btn-infer');
+    if (hasResults && !state.inferenceRunning) {
+      btn.textContent = '🔬 Re-run Inference';
+    } else if (state.inferenceRunning) {
+      btn.textContent = '⏳ Running...';
+    } else {
+      btn.textContent = '🔬 Run Inference';
+    }
+  }
+}
+
+async function runInference() {
+  if (!state.currentVideo || state.inferenceRunning) return;
+
+  const btn = $('#btn-infer');
+  btn.classList.add('running');
+  btn.textContent = '⏳ Running...';
+  btn.disabled = true;
+  state.inferenceRunning = true;
+
+  $('#infer-progress').style.display = 'flex';
+  $('#infer-progress-fill').style.width = '0%';
+  $('#infer-progress-text').textContent = '0%';
+
+  try {
+    // Start inference (synchronous — will block until done)
+    // Poll progress concurrently
+    const videoName = state.currentVideo;
+    const pollId = setInterval(async () => {
+      try {
+        const status = await api(`/api/infer/${videoName}/status`);
+        if (status.status === 'running') {
+          const pct = status.progress || 0;
+          $('#infer-progress-fill').style.width = pct + '%';
+          $('#infer-progress-text').textContent = `${Math.round(pct)}%`;
+        }
+      } catch (e) { /* ignore poll errors */ }
+    }, 1000);
+
+    const resp = await fetch(`/api/infer/${videoName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ temporal_stride: 8 }),
+    });
+
+    clearInterval(pollId);
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || 'Inference failed');
+    }
+
+    const data = await resp.json();
+    state.predictions = { raw: data.raw, averaged: data.averaged };
+    state.checkpointInfo = data.checkpoint;
+    state.showPredictions = true;
+    $('#btn-predictions').classList.add('active');
+    $('#pred-controls').style.display = 'flex';
+    updateCheckpointBadge();
+
+    // Update progress to 100%
+    $('#infer-progress-fill').style.width = '100%';
+    $('#infer-progress-text').textContent = '100%';
+
+    console.log(`Inference complete: ${data.raw.length} raw → ${data.averaged.length} averaged (${data.n_windows} windows)`);
+
+    // Refresh display
+    loadAndRenderFrame(state.currentFrame);
+    renderTimeline();
+
+    // Update external video list (show ✓)
+    loadExternalVideos();
+
+  } catch (err) {
+    console.error('Inference failed:', err);
+    alert(`Inference failed: ${err.message}`);
+  } finally {
+    btn.classList.remove('running');
+    btn.disabled = false;
+    state.inferenceRunning = false;
+    updateInferControls();
+
+    // Hide progress after a delay
+    setTimeout(() => {
+      $('#infer-progress').style.display = 'none';
+    }, 2000);
+  }
+}
+
+$('#btn-infer').addEventListener('click', runInference);
+
+
+// ==========================================================================
+//  Cluster Visualization
+// ==========================================================================
+const CLUSTER_COLORS = [
+  '#8b5cf6', '#ec4899', '#06b6d4', '#f59e0b', '#22c55e',
+  '#ef4444', '#3b82f6', '#14b8a6', '#f97316', '#a3e635',
+  '#e879f9', '#38bdf8', '#fb923c', '#84cc16', '#f472b6',
+  '#2dd4bf', '#facc15', '#818cf8', '#fb7185', '#34d399',
+];
+
+async function fetchClusterData(params) {
+  if (!state.currentVideo) return;
+  const p = params || state.clusterParams;
+  try {
+    const resp = await fetch(`/api/cluster/${state.currentVideo}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(p),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      console.error('Cluster API error:', err.error);
+      return;
+    }
+    state.clusterData = await resp.json();
+    console.log(`Cluster data: ${state.clusterData.raw.length} raw → ${state.clusterData.n_clusters} clusters (${state.clusterData.n_noise} noise)`);
+
+    // Update stats and legend in the inspector panel
+    updateClusterStats();
+    buildClusterLegend();
+
+    // Refresh canvas if in clustered mode
+    if (state.predictionMode === 'clustered' && state.currentVideo) {
+      loadAndRenderFrame(state.currentFrame);
+      renderTimeline();
+    }
+  } catch (e) {
+    console.error('Failed to fetch cluster data:', e);
+  }
+}
+
+function updateClusterStats() {
+  const d = state.clusterData;
+  if (!d) return;
+  const statsEl = $('#cl-stats');
+  const totalRaw = d.raw.length;
+  const totalDets = d.consolidated.reduce((s, c) => s + (c.n_detections || 1), 0);
+  statsEl.innerHTML = `
+    <span class="stat-highlight">${totalRaw}</span> raw detections →
+    <span class="stat-highlight">${d.n_clusters}</span> clusters${d.n_noise > 0 ? ` · <span style="color:#ef4444;">${d.n_noise} noise</span>` : ''}
+    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold} ref-px · t=${d.params.temporal_threshold_ms}ms · min_samples=${d.params.min_samples || 1}</span>` : ''}
+  `;
+  statsEl.style.display = 'block';
+}
+
+function buildClusterLegend() {
+  const d = state.clusterData;
+  if (!d || !d.consolidated) return;
+  const legendEl = $('#cl-legend');
+  legendEl.innerHTML = d.consolidated.map((c, i) => {
+    const color = CLUSTER_COLORS[i % CLUSTER_COLORS.length];
+    const n = c.n_detections || 1;
+    const tRange = `${Math.round(c.temporal_offsets[0])}–${Math.round(c.temporal_offsets[1])}`;
+    return `<span class="cluster-legend-item" title="Cluster ${i}: ${n} detections, frames ${tRange}, conf=${(c.confidence*100).toFixed(0)}%">
+      <span class="cluster-legend-swatch" style="background:${color}"></span>
+      C${i} (${n})
+    </span>`;
+  }).join('');
+}
+
+function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
+  const d = state.clusterData;
+  if (!d || !d.consolidated) return;
+  const s = 1 / zoomLevel;
+  const pad = Math.round(state.videoFps);
+
+  // Pass 1: draw raw detection dots (all as grey since we no longer have per-detection cluster labels)
+  for (let ri = 0; ri < d.raw.length; ri++) {
+    const pred = d.raw[ri];
+    const [tStart, tEnd] = pred.temporal_offsets;
+    const conf = pred.confidence;
+    if (conf < state.predConfThreshold) continue;
+
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+    if (!isActive && !isGhost) continue;
+
+    const [px, py] = pred.position;
+    const alpha = isActive ? 0.5 : 0.15;
+    const dotR = Math.max(3 * s, 1);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(px, py, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = '#888';
+    ctx.fill();
+  }
+
+  // Pass 2: draw centroid diamonds with direction arrows
+  for (let ci = 0; ci < d.consolidated.length; ci++) {
+    const c = d.consolidated[ci];
+    const [tStart, tEnd] = c.temporal_offsets;
+    const isActive = frameIdx >= tStart && frameIdx <= tEnd;
+    const isGhost = !isActive && frameIdx >= (tStart - pad) && frameIdx <= (tEnd + pad);
+    if (!isActive && !isGhost) continue;
+
+    const [cx, cy] = c.position;
+    const [dx, dy] = c.direction;
+    const color = CLUSTER_COLORS[ci % CLUSTER_COLORS.length];
+    const alpha = isActive ? 1.0 : 0.3;
+    const diamondR = Math.max(7 * s, 2.5);
+
+    // Diamond shape
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - diamondR);
+    ctx.lineTo(cx + diamondR, cy);
+    ctx.lineTo(cx, cy + diamondR);
+    ctx.lineTo(cx - diamondR, cy);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = Math.max(1.5 * s, 0.6);
+    ctx.stroke();
+
+    // Direction arrow from centroid
+    if (isActive) {
+      const arrowLen = Math.max(35 * s, 10);
+      const endX = cx + dx * arrowLen;
+      const endY = cy + dy * arrowLen;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2.5 * s, 1);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = Math.max(8 * s, 3);
+      const angle = Math.atan2(dy, dx);
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(2 * s, 0.7);
+      ctx.stroke();
+
+      // Label: cluster index + member count
+      const fontSize = Math.max(10 * s, 4);
+      const label = `C${ci} (${c.n_detections || 1})`;
+      ctx.font = `bold ${fontSize}px Inter`;
+      ctx.textAlign = 'left';
+      const lx = cx + 10 * s;
+      const ly = cy - 10 * s;
+      const m = ctx.measureText(label);
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.fillRect(lx - 2 * s, ly - 10 * s, m.width + 6 * s, 14 * s);
+      ctx.fillStyle = color;
+      ctx.fillText(label, lx, ly);
+    }
+  }
+
+  ctx.globalAlpha = 1.0;
+}
+
+// --- Cluster tab in Pipeline Inspector ---
+function piShowCluster() {
+  const panel = $('#pi-cluster-panel');
+  panel.style.display = 'block';
+  // Hide other content
+  $('#pi-player-wrap').style.display = 'none';
+  $('#pi-metadata').style.display = 'none';
+  $('#pi-empty').style.display = 'none';
+  $('#pi-loading').style.display = 'none';
+
+  // If we have predictions but no cluster data yet, fetch it
+  if (state.predictions && !state.clusterData) {
+    fetchClusterData();
+  } else if (state.clusterData) {
+    updateClusterStats();
+    buildClusterLegend();
+  }
+}
+
+// Live slider value display
+$('#cl-spatial').addEventListener('input', (e) => {
+  $('#cl-spatial-val').textContent = e.target.value;
+});
+$('#cl-temporal').addEventListener('input', (e) => {
+  $('#cl-temporal-val').textContent = e.target.value;
+});
+$('#cl-conf').addEventListener('input', (e) => {
+  $('#cl-conf-val').textContent = parseFloat(e.target.value).toFixed(2);
+});
+$('#cl-minsamp').addEventListener('input', (e) => {
+  $('#cl-minsamp-val').textContent = e.target.value;
+});
+$('#cl-dirthresh').addEventListener('input', (e) => {
+  $('#cl-dirthresh-val').textContent = e.target.value;
+});
+
+// Apply button — re-cluster with current slider values
+$('#cl-apply').addEventListener('click', async () => {
+  const btn = $('#cl-apply');
+  btn.disabled = true;
+  btn.textContent = '⏳ …';
+
+  state.clusterParams = {
+    spatial_threshold: parseFloat($('#cl-spatial').value),
+    temporal_threshold_ms: parseFloat($('#cl-temporal').value),
+    confidence_threshold: parseFloat($('#cl-conf').value),
+    min_samples: parseInt($('#cl-minsamp').value),
+    direction_threshold_deg: parseFloat($('#cl-dirthresh').value),
+    mode: 'median',
+  };
+
+  await fetchClusterData(state.clusterParams);
+
+  // Also switch view to clustered mode
+  state.predictionMode = 'clustered';
+  $('#pred-mode-select').value = 'clustered';
+  state.showPredictions = true;
+  $('#btn-predictions').classList.add('active');
+  $('#pred-controls').style.display = 'flex';
+
+  if (state.currentVideo) {
+    loadAndRenderFrame(state.currentFrame);
+    renderTimeline();
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🔄 Apply';
+});
+
+// Reset button
+$('#cl-reset').addEventListener('click', () => {
+  $('#cl-spatial').value = 30; $('#cl-spatial-val').textContent = '30';
+  $('#cl-temporal').value = 300; $('#cl-temporal-val').textContent = '300';
+  $('#cl-conf').value = 0; $('#cl-conf-val').textContent = '0.00';
+  $('#cl-minsamp').value = 1; $('#cl-minsamp-val').textContent = '1';
+  $('#cl-dirthresh').value = 30; $('#cl-dirthresh-val').textContent = '30';
+  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median' };
+});
+
+
+// ==========================================================================
+//  Init
+// ==========================================================================
+(async function init() {
+  await loadRecordingList();
+  updateFrameInfo();
+  renderTimeline();
+
+  // Load external videos list
+  await loadExternalVideos();
+
+  // Check if a model checkpoint is loaded
+  try {
+    const ckptInfo = await api('/api/checkpoint/info');
+    if (ckptInfo.loaded) {
+      state.checkpointInfo = ckptInfo;
+      updateCheckpointBadge();
+      await fetchDeviceInfo();
+      console.log(`Model loaded: ${ckptInfo.filename} (epoch ${ckptInfo.epoch})`);
+    } else {
+      // No model — disable predictions button
+      $('#btn-predictions').style.opacity = '0.4';
+      $('#btn-predictions').title = 'No checkpoint loaded (start server with --checkpoint)';
+    }
+  } catch (e) {
+    console.log('No checkpoint endpoint available');
+  }
+})();
+</script>
+</body>
+</html>
