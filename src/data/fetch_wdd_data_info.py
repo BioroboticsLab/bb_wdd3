@@ -67,51 +67,109 @@ def get_video_info(video_path):
     raise RuntimeError(f"no video stream found in {video_path}")
 
 
-def count_dances(csv_path):
-    """Counts waggle dances in a CSV annotation file."""
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        fieldnames = [h.strip().lower() for h in (reader.fieldnames or [])]
-        if "dance_number" in fieldnames:
-            unique_numbers = set()
-            for row in reader:
-                raw = row.get("dance_number")
-                if raw is None:
-                    continue
-                raw = str(raw).strip()
-                if raw == "" or raw.lower() == "nan":
-                    continue
-                unique_numbers.add(raw)
-            return len(unique_numbers)
+def count_dances(file_path):
+    """Counts waggle dances in a CSV or XLSX annotation file."""
+    if file_path.suffix.lower() == ".xlsx":
+        if pd is None:
+            return 0
+        try:
+            df = pd.read_excel(file_path, dtype=str)
+            columns = [c.strip() for c in df.columns.astype(str)]
+            df.columns = columns
+            fieldnames = [c.lower() for c in columns]
 
-        if "waggle_start_frames" in fieldnames:
-            total = 0
-            for row in reader:
-                raw = row.get("waggle_start_frames", "[]")
-                if raw is None:
-                    continue
-                raw = str(raw).strip()
-                if raw == "" or raw.lower() == "nan":
-                    continue
-                try:
-                    frames = ast.literal_eval(raw)
-                except (ValueError, SyntaxError):
-                    frames = []
-                total += len(frames)
-            return total
+            if "dance_number" in fieldnames:
+                unique_numbers = set()
+                for _, row in df.iterrows():
+                    raw = row.get("dance_number")
+                    if raw is None:
+                        continue
+                    raw = str(raw).strip()
+                    if raw == "" or raw.lower() == "nan":
+                        continue
+                    unique_numbers.add(raw)
+                return len(unique_numbers)
 
-        if "start_frame" in fieldnames and "end_frame" in fieldnames:
+            if "waggle_start_frames" in fieldnames:
+                total = 0
+                for _, row in df.iterrows():
+                    raw = row.get("waggle_start_frames", "[]")
+                    if raw is None:
+                        continue
+                    raw = str(raw).strip()
+                    if raw == "" or raw.lower() == "nan":
+                        continue
+                    try:
+                        frames = ast.literal_eval(raw)
+                    except (ValueError, SyntaxError):
+                        frames = []
+                    total += len(frames)
+                return total
+
+            if "start_frame" in fieldnames and "end_frame" in fieldnames:
+                count = 0
+                for _, row in df.iterrows():
+                    if row.get("start_frame") or row.get("end_frame"):
+                        count += 1
+                return count
+
             count = 0
-            for row in reader:
-                if row.get("start_frame") or row.get("end_frame"):
+            for _, row in df.iterrows():
+                if any((str(row.get(col)).strip() not in ("", "nan", "None") for col in columns)):
                     count += 1
             return count
+        except Exception:
+            return 0
 
-        count = 0
-        for row in reader:
-            if any((str(row.get(col)).strip() not in ("", "nan", "None") for col in fieldnames)):
-                count += 1
-        return count
+    else:
+        # CSV
+        try:
+            with open(file_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                fieldnames = [h.strip().lower() for h in (reader.fieldnames or [])]
+
+                if "dance_number" in fieldnames:
+                    unique_numbers = set()
+                    for row in reader:
+                        raw = row.get("dance_number")
+                        if raw is None:
+                            continue
+                        raw = str(raw).strip()
+                        if raw == "" or raw.lower() == "nan":
+                            continue
+                        unique_numbers.add(raw)
+                    return len(unique_numbers)
+
+                if "waggle_start_frames" in fieldnames:
+                    total = 0
+                    for row in reader:
+                        raw = row.get("waggle_start_frames", "[]")
+                        if raw is None:
+                            continue
+                        raw = str(raw).strip()
+                        if raw == "" or raw.lower() == "nan":
+                            continue
+                        try:
+                            frames = ast.literal_eval(raw)
+                        except (ValueError, SyntaxError):
+                            frames = []
+                        total += len(frames)
+                    return total
+
+                if "start_frame" in fieldnames and "end_frame" in fieldnames:
+                    count = 0
+                    for row in reader:
+                        if row.get("start_frame") or row.get("end_frame"):
+                            count += 1
+                    return count
+
+                count = 0
+                for row in reader:
+                    if any((str(row.get(col)).strip() not in ("", "nan", "None") for col in fieldnames)):
+                        count += 1
+                return count
+        except Exception:
+            return 0
 
 
 def load_xlsx_metadata(base):
@@ -167,42 +225,64 @@ def load_xlsx_metadata(base):
 
 
 def build_annotation_index(base):
-    csv_paths = sorted(base.glob("*.csv"))
+    annotation_paths = sorted([p for p in base.glob("*.csv") if p.is_file()] + [p for p in base.glob("*.xlsx") if p.is_file()])
     prefix_map = defaultdict(list)
     video_name_map = defaultdict(list)
-    all_csvs = []
+    all_annotations = []
 
-    for csv_path in csv_paths:
-        stem = normalize_name(csv_path.stem)
+    for ann_path in annotation_paths:
+        stem = normalize_name(ann_path.stem)
         kind = "unknown"
         prefix = stem
-        if stem.endswith("_waggle_annotations_simple"):
+        if ann_path.suffix.lower() == ".xlsx":
+            kind = "xlsx"
+        elif stem.endswith("_waggle_annotations_simple"):
             kind = "simple"
             prefix = stem[: -len("_waggle_annotations_simple")]
         elif stem.endswith("_waggle_annotations"):
             kind = "raw"
             prefix = stem[: -len("_waggle_annotations")]
 
-        annotation = {"path": csv_path, "kind": kind, "prefix": prefix, "stem": stem}
-        all_csvs.append(annotation)
+        annotation = {"path": ann_path, "kind": kind, "prefix": prefix, "stem": stem}
+        all_annotations.append(annotation)
         prefix_map[prefix].append(annotation)
 
-    for annotation in all_csvs:
-        try:
-            with open(annotation["path"], newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                headers = [h.strip().lower() for h in (reader.fieldnames or [])]
-                if "video_name" not in headers:
+    for annotation in all_annotations:
+        if annotation["path"].suffix.lower() == ".xlsx":
+            if pd is None:
+                continue
+            try:
+                df = pd.read_excel(annotation["path"], dtype=str)
+                columns = [c.strip() for c in df.columns.astype(str)]
+                if "video_name" not in [c.lower() for c in columns]:
                     continue
-                for row in reader:
-                    raw = row.get("video_name")
+                video_col = next((c for c in columns if c.lower() == "video_name"), None)
+                if video_col is None:
+                    continue
+                for _, row in df.iterrows():
+                    raw = row.get(video_col)
                     name = normalize_name(raw)
                     if name:
                         video_name_map[name].append(annotation)
-        except Exception:
-            continue
+            except Exception:
+                continue
+        else:
+            # CSV
+            try:
+                with open(annotation["path"], newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+                    if "video_name" not in headers:
+                        continue
+                    for row in reader:
+                        raw = row.get("video_name")
+                        name = normalize_name(raw)
+                        if name:
+                            video_name_map[name].append(annotation)
+            except Exception:
+                continue
 
-    return prefix_map, video_name_map, csv_paths
+    return prefix_map, video_name_map, annotation_paths
 
 
 def find_annotation_candidate(video, prefix_map, video_name_map):
@@ -231,6 +311,9 @@ def choose_best_annotation_csv(candidates):
     raw = [c for c in candidates if c["kind"] == "raw"]
     if raw:
         return raw[0]["path"]
+    xlsx = [c for c in candidates if c["kind"] == "xlsx"]
+    if xlsx:
+        return xlsx[0]["path"]
     return candidates[0]["path"]
 
 
@@ -244,10 +327,21 @@ def main():
     if not base.exists():
         raise FileNotFoundError(f"folder not found: {base}")
 
-    videos = sorted([p for p in base.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTS])
-    csv_paths = sorted([p for p in base.iterdir() if p.is_file() and p.suffix.lower() == ".csv"])
+    videos = []
+    all_video_paths = sorted([p for p in base.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTS])
+    video_names = {normalize_name(p.name) for p in all_video_paths}
+    
+    for video_path in all_video_paths:
+        normalized = normalize_name(video_path.name)
+        # skip reencoded mmp4 if the original mkv exists
+        if video_path.suffix.lower() == ".mp4" and "_reencoded" in video_path.name:
+            base_name = normalized.replace("_reencoded", "")
+            if base_name in video_names:
+                continue  # Skip bcs original exists
+        videos.append(video_path)
+    annotation_files = sorted([p for p in base.iterdir() if p.is_file() and p.suffix.lower() in {".csv", ".xlsx"}])
     print(f"found {len(videos)} videos in {base}")
-    print(f"found {len(csv_paths)} CSV annotation files in {base}\n")
+    print(f"found {len(annotation_files)} annotation files in {base}\n")
 
     metadata = load_xlsx_metadata(base)
     if metadata:
@@ -312,9 +406,9 @@ def main():
             print(f"  {n}")
 
     matched_csv_names = {n for n in video_csv_map.values()}
-    unmatched_csvs = [p.name for p in csv_paths if p.name not in matched_csv_names]
+    unmatched_csvs = [p.name for p in annotation_files if p.name not in matched_csv_names]
     if unmatched_csvs:
-        print("\nunmatched CSV annotation files:")
+        print("\nunmatched annotation files:")
         for n in unmatched_csvs:
             print(f"  {n}")
 
