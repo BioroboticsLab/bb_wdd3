@@ -5,16 +5,9 @@ import json
 import subprocess
 from pathlib import Path
 from collections import defaultdict
+import cv2
+import pandas as pd
 
-try:
-    import cv2
-except ImportError:
-    cv2 = None
-
-try:
-    import pandas as pd
-except ImportError:
-    pd = None
 
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov"}
 SUFFIXES_TO_STRIP = ("_downsample", "_original", "_reencoded", "_reencoded2", "_reencoded_", "_trimmed", "_resized")
