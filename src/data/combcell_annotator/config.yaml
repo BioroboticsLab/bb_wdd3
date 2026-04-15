@@ -1,0 +1,14 @@
+data_path: ../data
+
+subfolders:
+  - name: wdd_videos_2024_berlin
+    rotation: 90        # degrees clockwise (0, 90, 180, 270)
+  - name: wdd_videos_2025_nieh
+  - name: wdd_videos_2025_sharoni
+
+n_videos: 1       # number of videos to randomly sample per subfolder
+n_frames: 1       # number of evenly spaced frames to extract per video
+
+shape: circle     # circle or hexagon
+
+save_csv: false    # save annotations to a CSV file when done
