@@ -56,5 +56,7 @@ tests/**/*.jpeg
 .DS_Store
 .idea/
 .vscode/
-viewer/.eval_cache.pkl
+viewer/.eval_cache.pkl*
+configs/*.bak.*
+external/
 .commitmsg

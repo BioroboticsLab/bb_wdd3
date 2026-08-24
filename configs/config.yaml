@@ -6,7 +6,7 @@ data:
   width: 224
   height: 224
   window_size: 16
-  data_fraction_divisor: 1
+  data_fraction_divisor: 4
 augmentations:
   width: 224
   height: 224
@@ -86,14 +86,15 @@ train:
 val:
   batch_size: 32
 post_process:
-  spatial_threshold: 163.2
-  temporal_threshold_ms: 288.8
-  confidence_threshold: 0.2451
+  spatial_threshold: 49.4
+  temporal_threshold_ms: 130.3
+  confidence_threshold: 0.2175
   min_samples: 2
-  direction_threshold_deg: 0
+  direction_threshold_deg: 45
   mode: mean
   temporal_threshold: 8
   strategy: cluster_consolidate
+  bee_size_multiplier: 0.5
 loss:
   lambda_obj: 12.0
   lambda_coord: 7.5
@@ -112,24 +113,41 @@ system:
 logging:
   log_dir: ./logs
   checkpoint_dir: ./checkpoints
+  wandb_project: wagglenet
 eval:
   batch_size: 64
   confidence_threshold: 0.001
-  consolidation_strategy: cluster_consolidate
-  pos_thresholds:
-  - 10
-  - 15
-  - 20
-  - 25
-  - 30
-  iou_thresholds:
-  - 0.25
-  - 0.75
-  angular_thresholds:
-  - 10
-  - 15
-  - 20
+  max_dets: 10
   metric: loss
-  match_pairs: hungarian
-  max_dets: 5
   map_freq: 5
+  window_level:
+    enabled: false
+    pos_thresholds:
+    - 10
+    - 15
+    - 20
+    - 25
+    - 30
+    iou_thresholds:
+    - 0.1
+    - 0.5
+    angular_thresholds:
+    - 15
+    - 20
+    - 30
+    match_pairs: hungarian
+  dance_level:
+    enabled: true
+    pos_thresholds:
+    - 0.02
+    - 0.04
+    - 0.06
+    - 0.08
+    - 0.1
+    iou_thresholds:
+    - 0.1
+    - 0.5
+    angular_thresholds:
+    - 15
+    - 20
+    - 30

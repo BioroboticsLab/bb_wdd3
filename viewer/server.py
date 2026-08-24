@@ -811,6 +811,7 @@ class SlidingWindowInference:
             min_samples=config['post_process'].get('min_samples', 1),
             mode=config['post_process'].get('mode', 'mean'),
             direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
+            bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),
         )
 
         # Convert normalized [0,1] → pixel space for frontend rendering
@@ -1037,11 +1038,12 @@ class EvaluationEngine:
                             self._cached_original_res,
                             video_fps=video_fps,
                             spatial_threshold=pp.get('spatial_threshold', 30),
-                            temporal_threshold_sec=pp.get('temporal_threshold', 8) / 30.0,
+                            temporal_threshold_sec=pp.get('temporal_threshold_ms', 300) / 1000.0,
                             confidence_threshold=pp.get('confidence_threshold', 0.0),
-                            min_samples=1,
+                            min_samples=pp.get('min_samples', 1),
                             mode=pp.get('mode', 'mean'),
                             direction_threshold_deg=pp.get('direction_threshold_deg', 30.0),
+                            bee_size_multiplier=pp.get('bee_size_multiplier'),
                         )
                         dance_metrics = compute_dance_level_metrics(
                             predicted_runs, gt_dances, video_res,
@@ -1360,20 +1362,20 @@ class EvaluationEngine:
 
             test_metrics = get_eval_metrics_fast(
                 test_preds, test_gts,
-                pos_thresholds=config['eval']['pos_thresholds'],
-                iou_threshold_range=config['eval']['iou_thresholds'],
-                angular_thresholds=config['eval']['angular_thresholds'],
-                match_pairs=config['eval']['match_pairs'],
+                pos_thresholds=config['eval']['window_level']['pos_thresholds'],
+                iou_threshold_range=config['eval']['window_level']['iou_thresholds'],
+                angular_thresholds=config['eval']['window_level']['angular_thresholds'],
+                match_pairs=config['eval']['window_level']['match_pairs'],
                 waggle_run_ids=waggle_run_ids,
                 video_names=all_video_names,
             )
 
             post_test_metrics = get_eval_metrics_fast(
                 post_test_preds, test_gts,
-                pos_thresholds=config['eval']['pos_thresholds'],
-                iou_threshold_range=config['eval']['iou_thresholds'],
-                angular_thresholds=config['eval']['angular_thresholds'],
-                match_pairs=config['eval']['match_pairs'],
+                pos_thresholds=config['eval']['window_level']['pos_thresholds'],
+                iou_threshold_range=config['eval']['window_level']['iou_thresholds'],
+                angular_thresholds=config['eval']['window_level']['angular_thresholds'],
+                match_pairs=config['eval']['window_level']['match_pairs'],
                 waggle_run_ids=waggle_run_ids,
                 video_names=all_video_names,
             )
@@ -1430,11 +1432,12 @@ class EvaluationEngine:
                 all_original_res,
                 video_fps=video_fps,
                 spatial_threshold=config['post_process']['spatial_threshold'],
-                temporal_threshold_sec=config['post_process']['temporal_threshold'] / 30.0,
+                temporal_threshold_sec=config['post_process'].get('temporal_threshold_ms', 300) / 1000.0,
                 confidence_threshold=config['post_process']['confidence_threshold'],
-                min_samples=1,
+                min_samples=config['post_process'].get('min_samples', 1),
                 mode=config['post_process'].get('mode', 'mean'),
                 direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
+                bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),
             )
 
             dance_metrics = compute_dance_level_metrics(
@@ -1488,19 +1491,23 @@ class EvaluationEngine:
                 'checkpoint': pred_engine.checkpoint_meta,
                 'config': {
                     'eval': {
-                        'pos_thresholds': config['eval']['pos_thresholds'],
-                        'iou_thresholds': config['eval']['iou_thresholds'],
-                        'angular_thresholds': config['eval']['angular_thresholds'],
-                        'match_pairs': config['eval']['match_pairs'],
+                        'pos_thresholds': config['eval']['window_level']['pos_thresholds'],
+                        'iou_thresholds': config['eval']['window_level']['iou_thresholds'],
+                        'angular_thresholds': config['eval']['window_level']['angular_thresholds'],
+                        'match_pairs': config['eval']['window_level']['match_pairs'],
                         'confidence_threshold': config['eval']['confidence_threshold'],
                         'max_dets': config['eval']['max_dets'],
                     },
                     'post_process': {
                         'spatial_threshold': config['post_process']['spatial_threshold'],
                         'temporal_threshold': config['post_process']['temporal_threshold'],
+                        'temporal_threshold_ms': config['post_process'].get('temporal_threshold_ms', 300),
                         'confidence_threshold': config['post_process']['confidence_threshold'],
                         'strategy': config['post_process']['strategy'],
                         'mode': config['post_process']['mode'],
+                        'min_samples': config['post_process'].get('min_samples', 1),
+                        'direction_threshold_deg': config['post_process'].get('direction_threshold_deg', 30.0),
+                        'bee_size_multiplier': config['post_process'].get('bee_size_multiplier'),
                     },
                 },
                 'n_val_windows': int(len(test_df)),
@@ -1570,10 +1577,12 @@ class EvaluationEngine:
         # Merge defaults with provided params
         pp = {
             'spatial_threshold': config['post_process']['spatial_threshold'],
-            'temporal_threshold': config['post_process']['temporal_threshold'],
+            'temporal_threshold_ms': config['post_process'].get('temporal_threshold_ms', 300),
             'confidence_threshold': config['post_process']['confidence_threshold'],
             'mode': config['post_process']['mode'],
-            'min_samples': 1,
+            'min_samples': config['post_process'].get('min_samples', 1),
+            'direction_threshold_deg': config['post_process'].get('direction_threshold_deg', 30.0),
+            'bee_size_multiplier': config['post_process'].get('bee_size_multiplier'),
         }
         pp.update(post_params)
 
@@ -1617,6 +1626,7 @@ class EvaluationEngine:
             min_samples=pp.get('min_samples', 1),
             mode=pp.get('mode', 'mean'),
             direction_threshold_deg=pp.get('direction_threshold_deg', 30.0),
+            bee_size_multiplier=pp.get('bee_size_multiplier'),  # None = unchanged default behavior
         )
 
         # 3. Dance-level metrics
@@ -1907,6 +1917,10 @@ def api_cluster(video_name):
     confidence_threshold = float(params.get('confidence_threshold', 0.0))
     min_samples = int(params.get('min_samples', 1))
     mode = params.get('mode', 'median')
+    # None = unchanged default behavior (matches recluster() / ckpt_eval.py)
+    bee_size_multiplier = params.get('bee_size_multiplier')
+    if bee_size_multiplier is not None:
+        bee_size_multiplier = float(bee_size_multiplier)
 
     # Run clustering using the unified eval pipeline
     import copy
@@ -1924,6 +1938,7 @@ def api_cluster(video_name):
         min_samples=min_samples,
         mode=mode,
         direction_threshold_deg=direction_threshold_deg,
+        bee_size_multiplier=bee_size_multiplier,
     )
 
     # Convert normalized [0,1] → pixel space for frontend canvas rendering
@@ -1965,6 +1980,8 @@ def api_cluster(video_name):
             'confidence_threshold': confidence_threshold,
             'min_samples': min_samples,
             'mode': mode,
+            'direction_threshold_deg': direction_threshold_deg,
+            'bee_size_multiplier': bee_size_multiplier,
         },
     }))
 
@@ -2154,6 +2171,8 @@ def api_eval_recluster():
         pp['spatial_threshold'] = float(params['spatial_threshold'])
     if 'temporal_threshold' in params:
         pp['temporal_threshold'] = int(params['temporal_threshold'])
+    if 'temporal_threshold_ms' in params:
+        pp['temporal_threshold_ms'] = float(params['temporal_threshold_ms'])
     if 'confidence_threshold' in params:
         pp['confidence_threshold'] = float(params['confidence_threshold'])
     if 'strategy' in params:
@@ -2162,6 +2181,12 @@ def api_eval_recluster():
         pp['mode'] = str(params['mode'])
     if 'min_samples' in params:
         pp['min_samples'] = int(params['min_samples'])
+    if 'direction_threshold_deg' in params:
+        pp['direction_threshold_deg'] = float(params['direction_threshold_deg'])
+    if 'bee_size_multiplier' in params:
+        pp['bee_size_multiplier'] = (
+            float(params['bee_size_multiplier']) if params['bee_size_multiplier'] is not None else None
+        )
     if 'remove_outliers' in params:
         pp['remove_outliers'] = bool(params['remove_outliers'])
     if 'outlier_method' in params:
@@ -2215,6 +2240,10 @@ def api_eval_optimize():
     n_trials = int(params.get('n_trials', 60))
     metric = params.get('metric', 'f1')  # f1, map, recall, precision
     ranges = params.get('ranges', {})
+    # Opt-in: search bee_size_multiplier (N bee-lengths) instead of a fixed
+    # spatial_threshold. Off by default -- omitting this flag reproduces the
+    # exact existing search unchanged.
+    bee_size_aware = bool(params.get('bee_size_aware', False))
 
     # Search ranges (defaults match slider ranges)
     sp_lo = float(ranges.get('spatial_min', 5))
@@ -2227,6 +2256,10 @@ def api_eval_optimize():
     ms_hi = int(ranges.get('min_samples_max', 5))
     dr_lo = float(ranges.get('direction_deg_min', 0))
     dr_hi = float(ranges.get('direction_deg_max', 90))
+    # "N bee-lengths" -- how many bee-lengths apart still counts as the same
+    # dance. Only used when bee_size_aware is True.
+    n_lo = float(ranges.get('bee_n_min', 0.5))
+    n_hi = float(ranges.get('bee_n_max', 20.0))
 
     _optim_state.update(
         running=True, trial_current=0, trial_total=n_trials,
@@ -2236,14 +2269,17 @@ def api_eval_optimize():
     )
 
     def _run_optimization():
-        import optuna, time as _time
-
         def objective(trial):
+            # spatial_threshold stays in the search either way: it's still the
+            # fallback eps for any video whose lab isn't in BEE_LENGTH_FRACTION,
+            # and it's the only spatial parameter at all when bee_size_aware=False.
             spatial = trial.suggest_float('spatial_threshold', sp_lo, sp_hi)
             temporal_ms = trial.suggest_float('temporal_threshold_ms', tp_lo, tp_hi, log=True)
             conf = trial.suggest_float('confidence_threshold', cf_lo, cf_hi)
             min_samp = trial.suggest_int('min_samples', ms_lo, ms_hi)
             dir_deg = trial.suggest_float('direction_threshold_deg', dr_lo, dr_hi, step=5)
+            bee_n = trial.suggest_float('bee_size_multiplier', n_lo, n_hi) if bee_size_aware else None
+            mode = trial.suggest_categorical('mode', ['mean', 'median'])
 
             pp = {
                 'spatial_threshold': spatial,
@@ -2251,7 +2287,8 @@ def api_eval_optimize():
                 'confidence_threshold': conf,
                 'min_samples': min_samp,
                 'direction_threshold_deg': dir_deg,
-                'mode': 'mean',
+                'bee_size_multiplier': bee_n,
+                'mode': mode,
             }
             results = evaluation_engine.recluster(pp, verbose=False)
             dance = results.get('dance', {})
@@ -2291,6 +2328,7 @@ def api_eval_optimize():
             return value
 
         try:
+            import optuna, time as _time
             t0 = _time.time()
             optuna.logging.set_verbosity(optuna.logging.WARNING)
             study = optuna.create_study(direction='maximize',
@@ -2305,8 +2343,10 @@ def api_eval_optimize():
                 'confidence_threshold': best['confidence_threshold'],
                 'min_samples': best['min_samples'],
                 'direction_threshold_deg': best['direction_threshold_deg'],
-                'mode': 'mean',
+                'mode': best['mode'],
             }
+            if bee_size_aware:
+                best_pp['bee_size_multiplier'] = best['bee_size_multiplier']
             # Apply the best params as a final recluster so the dashboard updates
             final_results = evaluation_engine.recluster(best_pp)
 
@@ -2358,6 +2398,22 @@ def api_eval_optimize_cancel():
     return jsonify({"status": "cancelled"})
 
 
+@app.route("/api/config/post_process")
+def api_config_post_process():
+    """Return the current post_process section of config.yaml.
+
+    Unlike /api/eval/results, this doesn't require an eval run first --
+    it just reflects whatever is currently on disk, so pages like the
+    per-video inspector can sync their cluster-param sliders on load.
+    """
+    try:
+        with open(CONFIG_PATH) as f:
+            config = yaml.safe_load(f)
+        return jsonify({"post_process": config.get("post_process", {})})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/config/update_post_process", methods=["POST"])
 def api_config_update_post_process():
     """Persist optimized post_process parameters to config.yaml.
@@ -2381,6 +2437,8 @@ def api_config_update_post_process():
         'confidence_threshold': (int, float),
         'min_samples': (int,),
         'direction_threshold_deg': (int, float),
+        'bee_size_multiplier': (int, float),
+        'mode': (str,),
     }
 
     updates = {}

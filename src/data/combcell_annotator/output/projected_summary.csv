@@ -1,0 +1,9 @@
+lab,res_w,res_h,avg_diameter_px,bee_width_px,bee_length_px,n_source_videos,measured
+berlin,2304,1760,25.80,25.80,51.60,1,True
+berlin,1152,880,12.90,12.90,25.80,1,False
+berlin,576,440,6.45,6.45,12.90,1,False
+nieh,960,540,37.20,37.20,74.40,1,True
+nieh,480,270,18.60,18.60,37.20,1,False
+sharoni,1224,1024,20.18,20.18,40.36,1,True
+sharoni,612,512,10.09,10.09,20.18,1,False
+sharoni,306,256,5.05,5.05,10.10,1,False

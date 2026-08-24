@@ -207,6 +207,14 @@
                        min="0" max="90" step="5" value="30">
                 <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">0 = disabled · angular separation for clustering</span>
               </div>
+              <div class="cluster-slider-group">
+                <label class="cluster-slider-label" title="Use a per-lab bee-length-relative spatial threshold (N x measured bee size) instead of the fixed Spatial ε above">
+                  <input type="checkbox" id="cl-bee-aware"> Bee-size aware
+                </label>
+                <input type="range" class="cluster-slider" id="cl-bee-n"
+                       min="0.1" max="20" step="0.1" value="0.5" disabled>
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">N = <span class="cluster-slider-val" id="cl-bee-n-val">0.5</span> bee-lengths apart still counts as the same dance</span>
+              </div>
               <div class="cluster-action-row">
                 <button class="cluster-apply-btn" id="cl-apply" title="Re-run clustering with current parameters">🔄 Apply</button>
                 <button class="cluster-reset-btn" id="cl-reset" title="Reset to config defaults">↩ Reset</button>
@@ -276,7 +284,7 @@ const state = {
   predictions: null,      // { raw: [...], averaged: [...] }
   predictionsLoading: false,
   clusterData: null,      // { raw, consolidated, n_clusters, n_noise, params }
-  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median' },
+  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median', bee_size_multiplier: null },
   checkpointInfo: null,
   showModelView: false,
   showPipeline: false,
@@ -2648,7 +2656,7 @@ function updateClusterStats() {
   statsEl.innerHTML = `
     <span class="stat-highlight">${totalRaw}</span> raw detections →
     <span class="stat-highlight">${d.n_clusters}</span> clusters${d.n_noise > 0 ? ` · <span style="color:#ef4444;">${d.n_noise} noise</span>` : ''}
-    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold} ref-px · t=${d.params.temporal_threshold_ms}ms · min_samples=${d.params.min_samples || 1}</span>` : ''}
+    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold} ref-px · t=${d.params.temporal_threshold_ms}ms · min_samples=${d.params.min_samples || 1}${d.params.bee_size_multiplier != null ? ` · bee-size N=${d.params.bee_size_multiplier}` : ''}</span>` : ''}
   `;
   statsEl.style.display = 'block';
 }
@@ -2801,6 +2809,12 @@ $('#cl-minsamp').addEventListener('input', (e) => {
 $('#cl-dirthresh').addEventListener('input', (e) => {
   $('#cl-dirthresh-val').textContent = e.target.value;
 });
+$('#cl-bee-n').addEventListener('input', (e) => {
+  $('#cl-bee-n-val').textContent = e.target.value;
+});
+$('#cl-bee-aware').addEventListener('change', (e) => {
+  $('#cl-bee-n').disabled = !e.target.checked;
+});
 
 // Apply button — re-cluster with current slider values
 $('#cl-apply').addEventListener('click', async () => {
@@ -2815,6 +2829,7 @@ $('#cl-apply').addEventListener('click', async () => {
     min_samples: parseInt($('#cl-minsamp').value),
     direction_threshold_deg: parseFloat($('#cl-dirthresh').value),
     mode: 'median',
+    bee_size_multiplier: $('#cl-bee-aware').checked ? parseFloat($('#cl-bee-n').value) : null,
   };
 
   await fetchClusterData(state.clusterParams);
@@ -2842,7 +2857,9 @@ $('#cl-reset').addEventListener('click', () => {
   $('#cl-conf').value = 0; $('#cl-conf-val').textContent = '0.00';
   $('#cl-minsamp').value = 1; $('#cl-minsamp-val').textContent = '1';
   $('#cl-dirthresh').value = 30; $('#cl-dirthresh-val').textContent = '30';
-  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median' };
+  $('#cl-bee-aware').checked = false;
+  $('#cl-bee-n').value = 0.5; $('#cl-bee-n-val').textContent = '0.5'; $('#cl-bee-n').disabled = true;
+  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median', bee_size_multiplier: null };
 });
 
 
@@ -2872,6 +2889,54 @@ $('#cl-reset').addEventListener('click', () => {
     }
   } catch (e) {
     console.log('No checkpoint endpoint available');
+  }
+
+  // Sync cluster panel sliders with the current on-disk post_process config
+  try {
+    const cfg = await api('/api/config/post_process');
+    const pc = cfg.post_process || {};
+    if (pc.spatial_threshold != null) {
+      $('#cl-spatial').value = pc.spatial_threshold;
+      $('#cl-spatial-val').textContent = pc.spatial_threshold;
+    }
+    if (pc.temporal_threshold_ms != null) {
+      $('#cl-temporal').value = pc.temporal_threshold_ms;
+      $('#cl-temporal-val').textContent = pc.temporal_threshold_ms;
+    } else if (pc.temporal_threshold != null) {
+      // Legacy: convert frames (at ~30fps) to ms
+      const ms = Math.round(pc.temporal_threshold / 30.0 * 1000);
+      $('#cl-temporal').value = ms;
+      $('#cl-temporal-val').textContent = ms;
+    }
+    if (pc.confidence_threshold != null) {
+      $('#cl-conf').value = pc.confidence_threshold;
+      $('#cl-conf-val').textContent = parseFloat(pc.confidence_threshold).toFixed(2);
+    }
+    if (pc.min_samples != null) {
+      $('#cl-minsamp').value = pc.min_samples;
+      $('#cl-minsamp-val').textContent = pc.min_samples;
+    }
+    if (pc.direction_threshold_deg != null) {
+      $('#cl-dirthresh').value = pc.direction_threshold_deg;
+      $('#cl-dirthresh-val').textContent = pc.direction_threshold_deg;
+    }
+    if (pc.bee_size_multiplier != null) {
+      $('#cl-bee-aware').checked = true;
+      $('#cl-bee-n').disabled = false;
+      $('#cl-bee-n').value = pc.bee_size_multiplier;
+      $('#cl-bee-n-val').textContent = pc.bee_size_multiplier;
+    }
+    state.clusterParams = {
+      spatial_threshold: parseFloat($('#cl-spatial').value),
+      temporal_threshold_ms: parseFloat($('#cl-temporal').value),
+      confidence_threshold: parseFloat($('#cl-conf').value),
+      min_samples: parseInt($('#cl-minsamp').value),
+      direction_threshold_deg: parseFloat($('#cl-dirthresh').value),
+      mode: 'median',
+      bee_size_multiplier: $('#cl-bee-aware').checked ? parseFloat($('#cl-bee-n').value) : null,
+    };
+  } catch (e) {
+    console.log('No post_process config available, using built-in defaults');
   }
 })();
 </script>

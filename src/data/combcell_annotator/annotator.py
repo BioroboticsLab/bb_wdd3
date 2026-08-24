@@ -22,8 +22,8 @@ Shared controls:
 
 import csv
 import random
+import re
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -63,6 +63,70 @@ def get_video_files(folder: Path) -> list:
     for ext in extensions:
         videos.extend(folder.glob(ext))
     return videos
+
+
+def parse_resolution(filename: str):
+    """Extract (width, height) from a trailing '_W_H' tag, e.g. '001_2304_1760.mp4'.
+    Returns None if the filename has no such tag."""
+    m = re.search(r'_(\d+)_(\d+)(?:_ds\d+fps)?\.\w+$', filename)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def lab_source(filename: str) -> str:
+    """Identify which lab a video came from, based on filename prefix.
+    Mirrors get_video_category() in src/utils/video_utils.py (numeric prefix ->
+    Berlin, 'T' prefix -> Nieh, 'C' prefix -> Sharoni/Jerusalem) but reimplemented
+    here, with human-readable names, so this standalone tool doesn't have to
+    import that module (it pulls in torch/torchvision/cv2 at module level)."""
+    if filename.startswith('0'):
+        return "berlin"
+    elif filename.startswith('T'):
+        return "nieh"
+    elif filename.startswith('C'):
+        return "sharoni"
+    else:
+        return "other"
+
+
+def base_stem(filename: str) -> str:
+    """Strip the resolution (and _dsXXfps) suffix to identify the source recording,
+    so that '001_2304_1760.mp4' and '001_576_440.mp4' are recognized as the same
+    underlying video at different pixel resolutions (same duration/fps/frame count --
+    a plain re-encode, not a different recording)."""
+    name = re.sub(r'\.\w+$', '', filename)
+    name = re.sub(r'_ds\d+fps$', '', name)
+    name = re.sub(r'_\d+_\d+$', '', name)
+    return name
+
+
+def group_by_source(videos: list) -> list:
+    """Group same-source videos (different resolution encodes of one recording)
+    and return one representative per source: the highest-resolution file, plus
+    the full set of resolutions available for that source.
+
+    We only ever need to annotate the highest-resolution copy -- the measured
+    diameter can be projected exactly to every sibling resolution afterwards,
+    since they're pixel-exact rescales of each other.
+
+    Returns: list of (representative_path, representative_res, sibling_resolutions)
+    """
+    groups = defaultdict(list)
+    for v in videos:
+        groups[base_stem(v.name)].append((v, parse_resolution(v.name)))
+
+    representatives = []
+    for entries in groups.values():
+        with_res = [(v, r) for v, r in entries if r is not None]
+        if with_res:
+            best_v, best_r = max(with_res, key=lambda t: t[1][0] * t[1][1])
+            siblings = sorted({r for _, r in with_res}, key=lambda r: -r[0] * r[1])
+        else:
+            best_v, best_r = entries[0]
+            siblings = []
+        representatives.append((best_v, best_r, siblings))
+    return representatives
 
 
 def get_total_frames(video_path: Path) -> int:
@@ -132,6 +196,17 @@ def get_frame_indices(total_frames: int, n_frames: int) -> list:
     # frames, which often have bad lighting or are still starting up.
     step = total_frames // (n_frames + 1)
     return [step * (i + 1) for i in range(n_frames)]
+
+
+def pick_frame_index(total_frames: int, exclude: set) -> int:
+    """Pick a random frame not already tried, avoiding the very start/end (bad
+    lighting / not-yet-stable footage). Used when the user skips a frame that
+    has too few visible comb cells."""
+    margin = total_frames // 10
+    candidates = [i for i in range(margin, total_frames - margin) if i not in exclude]
+    if not candidates:
+        candidates = [i for i in range(total_frames) if i not in exclude]
+    return random.choice(candidates) if candidates else 0
 
 
 # Map rotation angles to the corresponding OpenCV constants
@@ -475,9 +550,11 @@ def annotate_frame(frame: np.ndarray, window_name: str, label: str, shape: str =
     Show one video frame and let the user annotate it.
 
     shape: 'circle' or 'hexagon'
-    Returns (annotations, quit_flag).
+    Returns (annotations, quit_flag, skip_flag).
       circle  -> annotations = [(cx, cy, radius), ...]
       hexagon -> annotations = [[(x,y) x6], ...]
+    skip_flag means the frame had too few visible cells -- caller should
+    discard annotations and show a different frame from the same video instead.
     """
     # Pick the right annotator and instruction text for the chosen shape mode
     if shape == "hexagon":
@@ -500,7 +577,8 @@ def annotate_frame(frame: np.ndarray, window_name: str, label: str, shape: str =
     bar_h     = 55
     info_base = (
         f"{shape_label}   |   R-drag/arrows: pan   |   "
-        f"+/-: zoom   |   B: reset   |   U: undo   |   D: done   |   Q: quit"
+        f"+/-: zoom   |   B: reset   |   U: undo   |   D: done   |   "
+        f"S: skip frame (too few cells)   |   Q: quit"
     )
 
     while True:
@@ -554,78 +632,127 @@ def annotate_frame(frame: np.ndarray, window_name: str, label: str, shape: str =
                 annotator.undo()
             elif char in (ord('d'), ord('D')):
                 break
+            elif char in (ord('s'), ord('S')):
+                # Too few cells visible here -- discard and let the caller
+                # show a different frame from the same video instead.
+                return [], False, True
             elif char in (ord('q'), ord('Q')):
                 # Quit early still return what has been annotated so far
                 result = annotator.hexagons if shape == "hexagon" else annotator.circles
-                return result, True
+                return result, True, False
 
     result = annotator.hexagons if shape == "hexagon" else annotator.circles
-    return result, False
+    return result, False, False
 
 
 # Output summary and CSV
 
 def compute_summary(all_annotations: dict, shape: str) -> dict:
-    # Collect all diameter measurements per subfolder and compute mean and std
+    """
+    For each subfolder, returns a dict keyed by resolution tier (width, height):
+        { "avg_diameter_px", "n_source_videos", "measured" }
+
+    Each annotated video is measured once, at its own (highest available)
+    resolution, then that measurement is projected to every sibling resolution
+    present for the same source recording using the exact width ratio -- since
+    sibling files are pixel-exact rescales of one another (same duration/fps/
+    frame count, verified separately). "measured" is True only for the tier(s)
+    actually clicked on; every other tier's value is a derived projection.
+    """
     summary = {}
     for subfolder, entries in all_annotations.items():
-        diameters = []
-        for _, _, annotations in entries:
-            if shape == "hexagon":
-                for hex_pts in annotations:
-                    if len(hex_pts) == HEX_VERTICES:
-                        diameters.append(_hexagon_diameter(hex_pts))
-            else:
-                for _, _, r in annotations:
-                    diameters.append(r * 2)  # diameter = 2 * radius
+        per_target = defaultdict(list)   # target_res -> [projected diameters]
+        measured_res = set()
 
-        if diameters:
-            summary[subfolder] = {
-                "avg_diameter_px": float(np.mean(diameters)),
-                "std_diameter_px": float(np.std(diameters)),
-                "n_annotations":   len(diameters),
+        for _, _, annotations, res, sibling_res in entries:
+            if shape == "hexagon":
+                diam_list = [_hexagon_diameter(p) for p in annotations if len(p) == HEX_VERTICES]
+            else:
+                diam_list = [r * 2 for _, _, r in annotations]  # diameter = 2 * radius
+            if not diam_list or res is None:
+                continue
+
+            avg_native = float(np.mean(diam_list))
+            measured_res.add(res)
+            per_target[res].append(avg_native)
+            for sib in sibling_res:
+                if sib == res:
+                    continue
+                ratio = sib[0] / res[0]
+                per_target[sib].append(avg_native * ratio)
+
+        res_summary = {}
+        for target_res, vals in sorted(per_target.items(), key=lambda kv: -kv[0][0] * kv[0][1]):
+            res_summary[target_res] = {
+                "avg_diameter_px": float(np.mean(vals)),
+                "n_source_videos": len(vals),
+                "measured": target_res in measured_res,
             }
-        else:
-            summary[subfolder] = {
-                "avg_diameter_px": None,
-                "std_diameter_px": None,
-                "n_annotations":   0,
-            }
+        summary[subfolder] = res_summary
     return summary
 
 
 def save_annotations_csv(all_annotations: dict, shape: str, output_path: Path):
-    # Write annotations to CSV. The columns differ between circle and hexagon modes.
+    # Write raw annotations to CSV. The columns differ between circle and hexagon modes.
+    # Resolution columns record the file the annotation was actually made on --
+    # projections to other tiers are computed separately, see save_projection_csv.
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
-        
+
         # hexagon mode store
         if shape == "hexagon":
             # Store all 6 vertex coordinates and the computed diameter per row
             writer.writerow([
-                "subfolder", "video", "frame_idx", "hex_idx",
+                "lab", "video", "res_w", "res_h", "frame_idx", "hex_idx",
                 "x1","y1","x2","y2","x3","y3","x4","y4","x5","y5","x6","y6",
                 "diameter_px",
             ])
             for subfolder, entries in all_annotations.items():
-                for video, frame_idx, hexagons in entries:
+                for video, frame_idx, hexagons, res, _sibling_res in entries:
+                    res_w, res_h = res if res else ("", "")
                     for i, pts in enumerate(hexagons):
                         flat = [c for p in pts for c in p]  # [(x,y),...] -> [x,y,x,y,...]
                         diam = _hexagon_diameter(pts)
                         writer.writerow(
-                            [subfolder, Path(video).name, frame_idx, i] + flat + [f"{diam:.2f}"]
+                            [subfolder, Path(video).name, res_w, res_h, frame_idx, i] + flat + [f"{diam:.2f}"]
                         )
         else:
             writer.writerow([
-                "subfolder", "video", "frame_idx",
+                "lab", "video", "res_w", "res_h", "frame_idx",
                 "circle_idx", "center_x", "center_y", "radius_px", "diameter_px",
             ])
             for subfolder, entries in all_annotations.items():
-                for video, frame_idx, circles in entries:
+                for video, frame_idx, circles, res, _sibling_res in entries:
+                    res_w, res_h = res if res else ("", "")
                     for i, (cx, cy, r) in enumerate(circles):
                         writer.writerow(
-                            [subfolder, Path(video).name, frame_idx, i, cx, cy, r, r * 2]
+                            [subfolder, Path(video).name, res_w, res_h, frame_idx, i, cx, cy, r, r * 2]
                         )
+
+
+# A worker bee's body is roughly as wide as a comb cell is across, and about
+# twice as long -- see docs.txt for the caveats on this approximation.
+BEE_WIDTH_RATIO = 1.0
+BEE_LENGTH_RATIO = 2.0
+
+
+def save_projection_csv(summary: dict, output_path: Path):
+    """Write the per-resolution-tier projected summary (the actual deliverable
+    for deciding model grid scales / postprocessing thresholds) to its own CSV."""
+    with open(output_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "lab", "res_w", "res_h", "avg_diameter_px",
+            "bee_width_px", "bee_length_px", "n_source_videos", "measured",
+        ])
+        for subfolder, res_summary in summary.items():
+            for (w, h), stats in res_summary.items():
+                diam = stats["avg_diameter_px"]
+                writer.writerow([
+                    subfolder, w, h, f"{diam:.2f}",
+                    f"{diam * BEE_WIDTH_RATIO:.2f}", f"{diam * BEE_LENGTH_RATIO:.2f}",
+                    stats["n_source_videos"], stats["measured"],
+                ])
 def main():
     # Load config from the same folder as this script
     config_path = Path(__file__).parent / "config.yaml"
@@ -642,38 +769,49 @@ def main():
     assert shape in ("circle", "hexagon"), \
         f"shape must be 'circle' or 'hexagon', got '{shape}'"
 
-    # all_annotations maps subfolder name -> list of (video_path, frame_idx, annotations)
+    # all_annotations maps lab name (berlin/nieh/sharoni) -> list of
+    # (video_path, frame_idx, annotations, resolution, sibling_resolutions)
     all_annotations = defaultdict(list)
     window_name = "Comb Cell Annotator"
 
     print(f"Mode: {shape.upper()}")
 
-    quit_early = False
-    quit_early = False
+    # Collect every video across all configured folders, then group into one
+    # representative per source recording (highest-resolution copy -- see
+    # group_by_source). We bucket by lab (parsed from the filename) rather than
+    # by folder, since e.g. data/videos holds all three labs mixed together.
+    representatives = []
     for subfolder_cfg in subfolders:
-        # Subfolder entries can be a plain string or a dict with name + rotation
-        if isinstance(subfolder_cfg, dict):
-            subfolder = subfolder_cfg["name"]
-            rotation  = subfolder_cfg.get("rotation", 0)
-        else:
-            subfolder = subfolder_cfg
-            rotation  = 0
-
+        subfolder = subfolder_cfg["name"] if isinstance(subfolder_cfg, dict) else subfolder_cfg
         folder_path = data_root / subfolder
         if not folder_path.exists():
             print(f"[Skip] Not found: {folder_path}")
             continue
-
         videos = get_video_files(folder_path)
         if not videos:
             print(f"[Skip] No videos in: {folder_path}")
             continue
+        representatives.extend(group_by_source(videos))
 
-        sampled = random.sample(videos, min(n_videos, len(videos)))
-        rot_str = f", rotation={rotation}°" if rotation else ""
-        print(f"\n[{subfolder}] {len(sampled)} video(s) selected{rot_str}")
+    by_lab = defaultdict(list)
+    for rep in representatives:
+        video_path, _res, _sib = rep
+        by_lab[lab_source(video_path.name)].append(rep)
 
-        for video_path in sampled:
+    # Videos are already the preprocessed training clips, assumed correctly
+    # oriented already -- rotate manually in the viewer (B/+/- keys) if not.
+    rotation = 0
+
+    quit_early = False
+    for lab, lab_reps in sorted(by_lab.items()):
+        sampled = random.sample(lab_reps, min(n_videos, len(lab_reps)))
+        print(f"\n[{lab}] {len(sampled)} video(s) selected "
+              f"(out of {len(lab_reps)} distinct source recordings)")
+
+        for video_path, res, sibling_res in sampled:
+            if res:
+                print(f"  {video_path.name}: annotating at {res[0]}x{res[1]}"
+                      + (f" (projects to {len(sibling_res) - 1} other tier(s))" if len(sibling_res) > 1 else ""))
             total = get_total_frames(video_path)
             if total == 0:
                 print(f"  [Skip] Could not read {video_path.name}")
@@ -683,32 +821,46 @@ def main():
             print(f"  {video_path.name} ({total} frames) -> frames {indices}")
 
             for frame_idx in indices:
-                try:
-                    frame = extract_frame(video_path, frame_idx)
-                except ValueError:
-                    print(f"  [Skip] {video_path.name}: could not read frame {frame_idx}")
-                    if "downsample" in video_path.name.lower():
-                        # For some reason opencv cannot decode the downsampled versions of the 
-                        # Nieh Lab, but original works. If it doesnt work and original exist use
-                        # original.
-                        original_name = video_path.name.lower().replace("downsample", "original")
-                        original_path = video_path.parent / original_name
-                        if original_path.exists():
-                            print(f"      Trying {original_path.name} instead.")
-                            video_path = original_path
-                            try:
-                                frame = extract_frame(video_path, frame_idx)
-                            except ValueError:
-                                print(f"  [Skip] {original_path.name}: could not read frame {frame_idx} either")
+                tried_indices = set()
+                while True:
+                    tried_indices.add(frame_idx)
+                    try:
+                        frame = extract_frame(video_path, frame_idx)
+                    except ValueError:
+                        print(f"  [Skip] {video_path.name}: could not read frame {frame_idx}")
+                        if "downsample" in video_path.name.lower():
+                            # For some reason opencv cannot decode the downsampled versions of the
+                            # Nieh Lab, but original works. If it doesnt work and original exist use
+                            # original.
+                            original_name = video_path.name.lower().replace("downsample", "original")
+                            original_path = video_path.parent / original_name
+                            if original_path.exists():
+                                print(f"      Trying {original_path.name} instead.")
+                                video_path = original_path
+                                try:
+                                    frame = extract_frame(video_path, frame_idx)
+                                except ValueError:
+                                    print(f"  [Skip] {original_path.name}: could not read frame {frame_idx} either")
+                                    break
+                            else:
+                                print(f"      No original found. Skipping.")
                                 break
                         else:
-                            print(f"      No original found. Skipping.")
                             break
-                if rotation:
-                    frame = rotate_frame(frame, rotation)
-                label = f"{subfolder}  |  {video_path.name}  |  frame {frame_idx}"
-                annotations, quit_early = annotate_frame(frame, window_name, label, shape)
-                all_annotations[subfolder].append((str(video_path), frame_idx, annotations))
+                    if rotation:
+                        frame = rotate_frame(frame, rotation)
+                    res_str = f" ({res[0]}x{res[1]})" if res else ""
+                    label = f"{lab}  |  {video_path.name}{res_str}  |  frame {frame_idx}"
+                    annotations, quit_early, skip_frame = annotate_frame(frame, window_name, label, shape)
+
+                    if skip_frame and not quit_early:
+                        new_idx = pick_frame_index(total, tried_indices)
+                        print(f"    frame {frame_idx}: too few cells, trying frame {new_idx} instead")
+                        frame_idx = new_idx
+                        continue
+                    break
+
+                all_annotations[lab].append((str(video_path), frame_idx, annotations, res, sibling_res))
                 print(f"    frame {frame_idx}: {len(annotations)} {shape}(s)")
                 if quit_early:
                     break
@@ -725,22 +877,28 @@ def main():
     print("\n" + "=" * 60)
     print(f"Annotation Summary  (shape={shape})")
     print("=" * 60)
-    for subfolder, stats in summary.items():
-        if stats["avg_diameter_px"] is not None:
-            print(f"\n{subfolder}:")
-            print(f"  avg cell diameter : {stats['avg_diameter_px']:.1f} px")
-            print(f"  std               : {stats['std_diameter_px']:.1f} px")
-            print(f"  n annotations     : {stats['n_annotations']}")
-        else:
+    for subfolder, res_summary in summary.items():
+        if not res_summary:
             print(f"\n{subfolder}: nothing annotated")
+            continue
+        print(f"\n{subfolder}:")
+        for (w, h), stats in res_summary.items():
+            tag = "measured" if stats["measured"] else "projected"
+            print(f"  {w:>5}x{h:<5} : {stats['avg_diameter_px']:6.1f} px "
+                  f"({tag}, from {stats['n_source_videos']} source video(s))")
 
     if save_csv:
+        # Fixed filenames, overwritten on every run -- only the latest
+        # annotation session's results are kept, not a history of runs.
         output_dir = Path(__file__).parent / "output"
         output_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_path  = output_dir / f"annotations_{shape}_{timestamp}.csv"
+        csv_path  = output_dir / f"annotations_{shape}.csv"
         save_annotations_csv(all_annotations, shape, csv_path)
         print(f"\nAnnotations saved to: {csv_path}")
+
+        proj_path = output_dir / "projected_summary.csv"
+        save_projection_csv(summary, proj_path)
+        print(f"Per-resolution summary saved to: {proj_path}")
 
 
 if __name__ == "__main__":

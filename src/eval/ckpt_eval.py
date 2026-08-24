@@ -28,7 +28,15 @@ from src.utils.video_utils import frames_to_video
 from src.utils.draw_utils import  draw_waggle, draw_waggle_batch, draw_waggle_batch_union
 from src.utils.model_utils import load_pretrained_model, EMA
 from src.utils.video_utils import get_video_category
-from src.utils.diagnostic import compute_pass_rates, plot_confidence_histogram
+from src.utils.diagnostic import compute_pass_rates, compute_dance_pass_rates, plot_confidence_histogram
+from src.utils.dance_eval import (
+    compute_crop_origins,
+    deduplicate_gt_dances,
+    average_overlapping_predictions,
+    cross_window_cluster_predictions,
+    compute_dance_level_metrics,
+)
+import cv2
 import wandb
 
 SEED = 42
@@ -136,28 +144,28 @@ def main(args):
         # batch_idx_for_frames is set to 0 indicating that it will index into the first batch of the entire data loader and store the frames in there
         # if batch_size is set to 16, that means we have 16*window_size frames in our case 16 * 16, each individual batch represents a single waggle dance event of 16 frames
         # with 16 batches that is 16 * 16
-        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , test_frames, _ = get_preds_gt(model, 
-                                                                                                       test_loader, 
-                                                                                                       device, 
-                                                                                                       return_frames=True, 
+        test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, test_all_video_names, test_frames, test_all_original_res = get_preds_gt(model,
+                                                                                                       test_loader,
+                                                                                                       device,
+                                                                                                       return_frames=True,
                                                                                                 batch_idx_for_frames=0)
         # denorms imgs
-        test_frames = reverse_transform_batch(test_frames, 
+        test_frames = reverse_transform_batch(test_frames,
                                               original_size=(224,224))
 
         # visualize fetched test frames as a video if you want
         #frames_to_video(test_frames, output_name= 'data_loader_batches_0')
-        
+
         # Transform yolo coordinates onto image domain for both gt and predicted values
-        test_gts = yolo_to_img_space_gt(test_gt_raw, 
-                                        all_starts=test_all_starts, 
+        test_gts = yolo_to_img_space_gt(test_gt_raw,
+                                        all_starts=test_all_starts,
                                         all_ends=test_all_ends,
                                         window_size = config['data']['window_size'],
                                         original_size=(config['data']['width'],
                                                        config['data']['height']))
-        
-        test_preds  = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends, 
-                                        confidence_threshold=config['eval']['confidence_threshold'], 
+
+        test_preds  = yolo_to_img_space(test_preds_raw, all_starts=test_all_starts, all_ends=test_all_ends,
+                                        confidence_threshold=config['eval']['confidence_threshold'],
                                         window_size = config['data']['window_size'],
                                         original_size=(config['data']['width'],
                                                        config['data']['height']),
@@ -176,10 +184,12 @@ def main(args):
                                   )
 
 
-        compute_pass_rates(test_preds=test_preds, test_gts=test_gts, 
-                           pos_threshold=config['eval']['pos_thresholds'][0],
-                           iou_threshold=config['eval']['iou_thresholds'][0],
-                           angular_threshold=config['eval']['angular_thresholds'][0])
+        wl_cfg = config['eval']['window_level']
+        if wl_cfg.get('enabled', True):
+            compute_pass_rates(test_preds=test_preds, test_gts=test_gts,
+                               pos_threshold=wl_cfg['pos_thresholds'][0],
+                               iou_threshold=wl_cfg['iou_thresholds'][0],
+                               angular_threshold=wl_cfg['angular_thresholds'][0])
 
        
         # Draw gt and predictions onto frames and saves as video
@@ -203,19 +213,6 @@ def main(args):
         #    all_start_frame_idxs=test_all_starts[:16],  # Only first 16 start indices
         #    output_dir='./outputs/vids'
         #)
-
-        # Post Process all predictions
-        # You can try different strategies if you want but, only cluster_consolidate is important for our purpose. 
-        # 'cluster_consolidate' is DBSCAN across spatial and temporal aspect. 4 strategies are supported you can have a look if you want. 
-        # mode supporst mean or median, meaning it will compute a point that summarises a cluster based on median or mean summary. 
-        post_test_preds = batch_postprocess_predictions(test_preds, 
-                                                        spatial_threshold=config['post_process']['spatial_threshold'], 
-                                                        temporal_threshold=config['post_process']['temporal_threshold'], 
-                                                        confidence_threshold=config['post_process']['confidence_threshold'], 
-                                                        strategy=config['post_process']['strategy'], 
-                                                        mode=config['post_process']['mode'],
-                                                        remove_outliers=False,
-                                                        min_samples=config['post_process'].get('min_samples', 1))
 
         # Can postprocess entire predictions no need for limit to 16 sequences, its only needed when we visualise
         #save_preds_to_csv(test_preds, f'raw_predictions_epoch_{epoch}.csv', 'raw', './outputs/preds_csv')
@@ -249,19 +246,104 @@ def main(args):
         #)
 
         # Compute eval metrics
-        test_metrics = get_eval_metrics(test_preds, test_gts, 
-                                        pos_thresholds=config['eval']['pos_thresholds'],
-                                        iou_threshold_range=config['eval']['iou_thresholds'],
-                                        angular_thresholds=config['eval']['angular_thresholds'],
-                                        match_pairs=config['eval']['match_pairs'])
-        
-        post_test_metrics = get_eval_metrics(post_test_preds, test_gts, 
-                                        pos_thresholds=config['eval']['pos_thresholds'],
-                                        iou_threshold_range=config['eval']['iou_thresholds'],
-                                        angular_thresholds=config['eval']['angular_thresholds'],
-                                        match_pairs=config['eval']['match_pairs'])
-        
-        print_evaluation_results(test_metrics, post_test_metrics)
+        if wl_cfg.get('enabled', True):
+            # Post Process all predictions -- only needed for window-level
+            # metrics below, so skip the work entirely when disabled.
+            # You can try different strategies if you want but, only cluster_consolidate is important for our purpose.
+            # 'cluster_consolidate' is DBSCAN across spatial and temporal aspect. 4 strategies are supported you can have a look if you want.
+            # mode supporst mean or median, meaning it will compute a point that summarises a cluster based on median or mean summary.
+            post_test_preds = batch_postprocess_predictions(test_preds,
+                                                            spatial_threshold=config['post_process']['spatial_threshold'],
+                                                            temporal_threshold=config['post_process']['temporal_threshold'],
+                                                            confidence_threshold=config['post_process']['confidence_threshold'],
+                                                            strategy=config['post_process']['strategy'],
+                                                            mode=config['post_process']['mode'],
+                                                            remove_outliers=False,
+                                                            min_samples=config['post_process'].get('min_samples', 1))
+
+            test_metrics = get_eval_metrics(test_preds, test_gts,
+                                            pos_thresholds=wl_cfg['pos_thresholds'],
+                                            iou_threshold_range=wl_cfg['iou_thresholds'],
+                                            angular_thresholds=wl_cfg['angular_thresholds'],
+                                            match_pairs=wl_cfg['match_pairs'])
+
+            post_test_metrics = get_eval_metrics(post_test_preds, test_gts,
+                                            pos_thresholds=wl_cfg['pos_thresholds'],
+                                            iou_threshold_range=wl_cfg['iou_thresholds'],
+                                            angular_thresholds=wl_cfg['angular_thresholds'],
+                                            match_pairs=wl_cfg['match_pairs'])
+
+            print_evaluation_results(test_metrics, post_test_metrics)
+        else:
+            print("\n(window-level metrics disabled via config)")
+
+        # Dance-level metrics: cluster detections across windows into full dance
+        # runs and compare against real dances instead of scoring window by window
+        dl_cfg = config['eval']['dance_level']
+        if dl_cfg.get('enabled', True):
+            crop_origins = compute_crop_origins(
+                test_df,
+                crop_w=config['data']['width'],
+                crop_h=config['data']['height'],
+                all_original_res=test_all_original_res,
+            )
+
+            video_res = {}
+            video_fps = {}
+            for vn, res in zip(test_all_video_names, test_all_original_res):
+                video_res[vn] = res
+                if vn not in video_fps:
+                    vpath = os.path.join(config['data']['data_dir'], vn)
+                    cap = cv2.VideoCapture(vpath)
+                    video_fps[vn] = float(cap.get(cv2.CAP_PROP_FPS)) or 15.0
+                    cap.release()
+
+            gt_dances = deduplicate_gt_dances(test_df)
+
+            averaged_preds = average_overlapping_predictions(
+                test_preds, crop_origins, test_all_video_names,
+                window_ranges=list(zip(test_all_starts, test_all_ends)),
+                video_fps=video_fps,
+            )
+
+            predicted_runs = cross_window_cluster_predictions(
+                averaged_preds, crop_origins, test_all_video_names, test_all_original_res,
+                video_fps=video_fps,
+                spatial_threshold=config['post_process']['spatial_threshold'],
+                temporal_threshold_sec=config['post_process'].get('temporal_threshold_ms', 300) / 1000.0,
+                confidence_threshold=config['post_process']['confidence_threshold'],
+                min_samples=config['post_process'].get('min_samples', 1),
+                mode=config['post_process'].get('mode', 'mean'),
+                direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
+                bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),  # None = unchanged default behavior
+            )
+
+            dance_metrics = compute_dance_level_metrics(
+                predicted_runs, gt_dances, video_res,
+                pos_thresholds=dl_cfg['pos_thresholds'],
+                iou_threshold_range=tuple(dl_cfg['iou_thresholds']),
+                angular_thresholds=dl_cfg['angular_thresholds'],
+            )
+
+            print("\n=== Dance-level metrics ===")
+            print(f"  Dance mAP:        {dance_metrics['comprehensive']['map']:.4f}")
+            print(f"  Mean Precision:   {dance_metrics['comprehensive']['mean_precision']:.4f}")
+            print(f"  Mean Recall:      {dance_metrics['comprehensive']['mean_recall']:.4f}")
+            print(f"  Mean F1:          {dance_metrics['comprehensive']['mean_f1']:.4f}")
+            print(f"  Detected/Total:   {dance_metrics['coverage']['detected_dances']}/{dance_metrics['coverage']['total_gt_dances']} "
+                  f"(recall={dance_metrics['coverage']['recall']:.4f}, precision={dance_metrics['coverage']['precision']:.4f})")
+            print(f"  Spatial error:    mean={dance_metrics['spatial']['mean_error']:.4f}  median={dance_metrics['spatial']['median_error']:.4f}")
+            print(f"  Temporal IoU:     mean={dance_metrics['temporal']['mean_iou']:.4f}  median={dance_metrics['temporal']['median_iou']:.4f}")
+            print(f"  Directional err:  mean={dance_metrics['directional']['mean_error']:.2f} deg  median={dance_metrics['directional']['median_error']:.2f} deg")
+
+            compute_dance_pass_rates(
+                predicted_runs, gt_dances, video_res,
+                pos_threshold=dl_cfg['pos_thresholds'][0],
+                iou_threshold=dl_cfg['iou_thresholds'][0],
+                angular_threshold=dl_cfg['angular_thresholds'][0],
+            )
+        else:
+            print("\n(dance-level metrics disabled via config)")
 
         # Restore original parameters after metrics
         ema.restore()

@@ -286,16 +286,19 @@ def cluster_and_consolidate_waggles(predictions, spatial_threshold=30.0, tempora
         raise ValueError(f"Unknown clustering_method: {clustering_method}. Use 'dbscan' or 'hdbscan'")
     
     labels = clustering.labels_
-    
+
     # dbscan silently skips outliers, hdbscan gives them -1 so we can count them
     noise_count = np.sum(labels == -1)
-    if noise_count > 0:
-        print(f"[{clustering_method}] {noise_count} points assigned as noise and skipped")
 
     consolidated = []
     for cluster_id in np.unique(labels):
+        if cluster_id == -1:
+            # Noise points aren't a real cluster — drop them rather than
+            # averaging unrelated isolated detections together.
+            continue
+
         cluster_points = [p for p, lbl in zip(preds, labels) if lbl == cluster_id]
-        
+
         if not cluster_points:
             continue
             
@@ -396,12 +399,13 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
         outlier_method: 'density' or 'isolation_forest'
         outlier_min_neighbors: Min neighbors for density-based outlier removal
     """ 
+    n_noise = 0
     if strategy == 'cluster_consolidate':
-        preds = cluster_and_consolidate_waggles(
-            predictions, 
+        result = cluster_and_consolidate_waggles(
+            predictions,
             spatial_threshold=spatial_threshold,
             temporal_threshold=temporal_threshold,
-            min_confidence=confidence_threshold, 
+            min_confidence=confidence_threshold,
             mode=mode,
             remove_outliers=remove_outliers,
             outlier_method=outlier_method,
@@ -409,21 +413,24 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
             clustering_method=clustering_method,
             hdbscan_min_cluster_size=hdbscan_min_cluster_size,
             min_samples=min_samples,
+            return_mapping=True,
         )
+        preds = result['consolidated']
+        n_noise = result['n_noise']
     elif strategy == 'nms':
         preds = point_nms(predictions, confidence_threshold, spatial_threshold)
     elif strategy == 'max':
         preds = max_confidence_filter(predictions, confidence_threshold)
     elif strategy == 'weighted':
         preds = weighted_mean_point(predictions, confidence_threshold, spatial_threshold)
-    elif strategy == 'cluster_max': 
+    elif strategy == 'cluster_max':
         preds = cluster_and_select_max(predictions, confidence_threshold, spatial_threshold)
     elif strategy == 'line_nms':
-        predictions = cluster_and_consolidate_waggles(
-            predictions, 
+        result = cluster_and_consolidate_waggles(
+            predictions,
             spatial_threshold=spatial_threshold,
             temporal_threshold=temporal_threshold,
-            min_confidence=confidence_threshold, 
+            min_confidence=confidence_threshold,
             mode=mode,
             remove_outliers=remove_outliers,
             outlier_method=outlier_method,
@@ -431,13 +438,16 @@ def postprocess_predictions(predictions, strategy='cluster_consolidate',
             clustering_method=clustering_method,
             hdbscan_min_cluster_size=hdbscan_min_cluster_size,
             min_samples=min_samples,
+            return_mapping=True,
         )
+        predictions = result['consolidated']
+        n_noise = result['n_noise']
         groups = line_nms_group(predictions, temporal_gap_thresh=temporal_threshold)
         preds = line_nms_collapse(predictions, groups)
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
-    
-    return {'filtered_predictions': preds}
+
+    return {'filtered_predictions': preds, 'n_noise': n_noise}
 
 
 def batch_postprocess_predictions(batch_predictions,
@@ -453,6 +463,7 @@ def batch_postprocess_predictions(batch_predictions,
                                   min_samples=1):
     """Apply post-processing to a batch of prediction lists"""
     processed_batch = []
+    total_noise = 0
     for sample_predictions in batch_predictions:
         if not sample_predictions:
             processed_batch.append([])
@@ -467,11 +478,17 @@ def batch_postprocess_predictions(batch_predictions,
             remove_outliers=remove_outliers,
             outlier_method=outlier_method,
             outlier_min_neighbors=outlier_min_neighbors,
-            clustering_method=clustering_method, 
+            clustering_method=clustering_method,
             hdbscan_min_cluster_size=hdbscan_min_cluster_size,
             min_samples=min_samples,
         )
         processed_batch.append(processed['filtered_predictions'])
+        total_noise += processed['n_noise']
+
+    if total_noise > 0:
+        print(f"[{clustering_method}] {total_noise} noise detections dropped "
+              f"across {len(batch_predictions)} samples")
+
     return processed_batch
 
 def line_nms_group(

@@ -65,25 +65,25 @@ def get_preds_gt(model, dataloader, device, return_frames=False, batch_idx_for_f
         return all_outputs, all_targets, all_starts, all_ends, all_video_names, None, all_original_res
 
 def transform_yolo_to_image_coords(
-    norm_x: float, 
-    norm_y: float, 
-    grid_cell_j: int, 
-    grid_cell_i: int, 
-    grid_size: int, 
+    norm_x: float,
+    norm_y: float,
+    grid_cell_j: int,
+    grid_cell_i: int,
+    grid_size: int,
     original_size: tuple = (960, 540)
 ) -> tuple:
     """Transform YOLO normalized coordinates to image space coordinates."""
     orig_w, orig_h = original_size
     cell_width = orig_w / grid_size
     cell_height = orig_h / grid_size
-    
+
     pos_x = (grid_cell_j + norm_x) * cell_width
     pos_y = (grid_cell_i + norm_y) * cell_height
-    
+
     # clamp to image boundaries
     pos_x = max(0, min(pos_x, orig_w - 1))
     pos_y = max(0, min(pos_y, orig_h - 1))
-    
+
     return float(pos_x), float(pos_y)
 
 def compute_temporal_window(
@@ -114,12 +114,12 @@ def yolo_to_img_space(
 ) -> List[List[Dict]]:
     all_detections = []
     batch_size, grid_size, _, _, _ = model_output.shape
-    
+
     for b in range(batch_size):
         sample_detections = []
-        window_start = all_starts[b]  
+        window_start = all_starts[b]
         window_end = all_ends[b]
-        
+
         for i in range(grid_size):
             for j in range(grid_size):
                 for k in range(model_output.shape[3]):
@@ -140,7 +140,7 @@ def yolo_to_img_space(
                         start_frame, end_frame = compute_temporal_window(
                             start_offset, end_offset, window_start, window_end, window_size
                         )
-                        
+
                         sample_detections.append({
                             "confidence": float(confidence),
                             "position": [pos_x, pos_y],
@@ -173,9 +173,9 @@ def yolo_to_img_space_gt(
     batch_size, grid_size, _, _, _ = model_output.shape
     for b in range(batch_size):
         sample_detections = []
-        window_start = all_starts[b]  
+        window_start = all_starts[b]
         window_end = all_ends[b]
-        
+
         for i in range(grid_size):
             for j in range(grid_size):
                 for k in range(model_output.shape[3]):
@@ -197,7 +197,7 @@ def yolo_to_img_space_gt(
                         start_frame, end_frame = compute_temporal_window(
                             start_offset, end_offset, window_start, window_end, window_size
                         )
-                        
+
                         sample_detections.append({
                             "confidence": float(confidence),  # is 1.0 for GT
                             "position": [pos_x, pos_y],
@@ -360,8 +360,8 @@ def calculate_temporal_metrics(matched_pairs, iou_threshold_range=(0.25, 0.75)):
     
     temporal_iou_scores = np.array(temporal_iou_scores)
     
-    # calculate IoU thresholds in the specified range with step of 0.05
-    iou_thresholds = np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.05, 0.05)
+    # calculate IoU thresholds in the specified range with step of 0.1
+    iou_thresholds = np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.1, 0.1)
     iou_values = []
     
     for threshold in iou_thresholds:
@@ -444,7 +444,7 @@ def calculate_detection_metrics(preds, gts, pos_thresholds=[5, 10, 15, 20, 25, 3
         raise ValueError(f"Unknown matching: '{match_pairs}'. Use 'greedy' or 'hungarian'.")
 
     iou_thresholds = [round(t, 2) for t in
-                      np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.05, 0.05)]
+                      np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.1, 0.1)]
 
     total_gts = sum(len(g) for g in gts)
 

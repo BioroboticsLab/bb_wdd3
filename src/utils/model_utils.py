@@ -21,7 +21,6 @@ def load_pretrained_model(checkpoint_path, config,
                                     )
     
     print(f"Loading pretrained weights from {checkpoint_path}")
-    torch.serialization.add_safe_globals([np._core.multiarray.scalar])
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # Handle different checkpoint formats

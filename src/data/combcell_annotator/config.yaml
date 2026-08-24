@@ -1,14 +1,19 @@
-data_path: ../data
+data_path: ../../../data
 
 subfolders:
-  - name: wdd_videos_2024_berlin
-    rotation: 90        # degrees clockwise (0, 90, 180, 270)
-  - name: wdd_videos_2025_nieh
-  - name: wdd_videos_2025_sharoni
+  - name: videos
 
-n_videos: 1       # number of videos to randomly sample per subfolder
-n_frames: 1       # number of evenly spaced frames to extract per video
+# Videos are grouped by source recording automatically (same duration/fps/frame
+# count under different resolution tags = same footage, just re-encoded). Only
+# the highest-resolution copy of each sampled source gets annotated; the
+# measured diameter is then projected exactly to every sibling resolution.
+n_videos: 1       # camera position/distance is fixed per lab, so one source
+                  # recording's measurement should hold for the whole lab --
+                  # extra recordings would just re-measure the same constant.
+n_frames: 1       # camera is stationary -- extra frames from the same recording
+                  # just re-measure the same cells at the same distance, so 1 is
+                  # enough. Annotate several cells within that frame instead.
 
 shape: circle     # circle or hexagon
 
-save_csv: false    # save annotations to a CSV file when done
+save_csv: true    # save annotations to a CSV file when done

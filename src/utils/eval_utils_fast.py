@@ -333,7 +333,7 @@ def calculate_detection_metrics_parallel(
         raise ValueError(f"Unknown matching: '{match_pairs}'. Use 'greedy' or 'hungarian'.")
 
     iou_thresholds = [round(t, 2) for t in
-                      np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.05, 0.05)]
+                      np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.1, 0.1)]
 
     total_gts = sum(len(g) for g in gts)
 

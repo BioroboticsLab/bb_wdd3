@@ -12,6 +12,34 @@ from collections import defaultdict
 from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
 
+# Bee length as a fraction of frame width, per lab -- from the comb-cell
+# annotator (src/data/combcell_annotator/, output/projected_summary.csv),
+# using each lab's measured comb-cell diameter and the width~1x/length~2x
+# body-ratio approximation (see combcell_annotator/docs.txt for caveats).
+# Constant across resolution tiers within a lab by construction (multi-res
+# tiers are the same footage re-encoded, not a different field of view) --
+# so this only needs a per-lab entry, not per-resolution.
+BEE_LENGTH_FRACTION = {
+    "berlin": 0.0224,
+    "nieh": 0.0775,
+    "sharoni": 0.0330,
+}
+
+
+def lab_source(video_name: str) -> str:
+    """Identify which lab a video is from, based on filename prefix.
+    Mirrors get_video_category() in src/utils/video_utils.py (numeric -> "0",
+    'T' -> "T", 'C' -> "C") but reimplemented here with human-readable names
+    so this module doesn't need to import video_utils (pulls in torch/cv2)."""
+    if video_name.startswith('0'):
+        return "berlin"
+    elif video_name.startswith('T'):
+        return "nieh"
+    elif video_name.startswith('C'):
+        return "sharoni"
+    else:
+        return "other"
+
 
 # ─── Crop origin computation ─────────────────────────────────────────────────
 
@@ -304,21 +332,25 @@ def cross_window_cluster_predictions(
     min_samples=1,
     mode='mean',
     direction_threshold_deg=30.0,
+    bee_size_multiplier=None,
 ):
     """
     Map per-window crop-space predictions to frame-space, pool per video,
     and cluster to produce consolidated waggle run predictions.
-    
+
     Uses normalized [0,1] coordinates for resolution-invariant spatial
     clustering, and seconds for fps-invariant temporal clustering.
-    
+
     Args:
         per_window_preds: list of lists, per-window predictions in crop space
         crop_origins: list of (x_min, y_min) per window
         video_names: list/array of video names per window
         video_resolutions: list of (H, W) per window
         video_fps: dict {video_name: fps} or None (defaults to 15fps)
-        spatial_threshold: DBSCAN eps in pixels (at reference 1000px width)
+        spatial_threshold: DBSCAN eps in pixels (at reference 1000px width).
+            Used as-is when bee_size_multiplier is None (default, unchanged
+            behavior). Ignored (except as the fallback for unrecognized labs)
+            when bee_size_multiplier is set -- see below.
         temporal_threshold_sec: temporal proximity in seconds for clustering
         confidence_threshold: minimum confidence to include
         min_samples: DBSCAN min_samples
@@ -326,7 +358,17 @@ def cross_window_cluster_predictions(
         direction_threshold_deg: angular separation (degrees) beyond which
             detections are unlikely to cluster. Uses unit-vector chord distance.
             0 = direction dimension disabled. Default 30°.
-    
+        bee_size_multiplier: if set, the spatial (and derived temporal) eps
+            is computed per-video as `bee_size_multiplier * BEE_LENGTH_FRACTION[lab]`
+            instead of the fixed `spatial_threshold / 1000.0` -- i.e. "N
+            bee-lengths apart still counts as the same dance", calibrated per
+            lab instead of one global fraction-of-frame-width for everyone.
+            Videos from a lab not in BEE_LENGTH_FRACTION fall back to the
+            plain spatial_threshold behavior (with a warning), so an
+            unmeasured/new source degrades to today's behavior rather than
+            using a wrong or guessed value. None (default) preserves the
+            exact existing behavior for every video, unconditionally.
+
     Returns:
         dict: {video_name: [predicted_run_dict, ...]}
         where predicted_run_dict has keys:
@@ -396,9 +438,21 @@ def cross_window_cluster_predictions(
             features.append(row)
         features = np.array(features)
         
-        # Spatial eps in normalized space
+        # Spatial eps in normalized space. Default (bee_size_multiplier=None):
+        # one fixed fraction of frame width for every video, unchanged from
+        # before. Opt-in: N bee-lengths for this video's lab, falling back to
+        # the default for a lab we haven't measured.
         ref_size = 1000.0
-        norm_spatial_eps = spatial_threshold / ref_size
+        if bee_size_multiplier is not None:
+            lab = lab_source(vname)
+            if lab in BEE_LENGTH_FRACTION:
+                norm_spatial_eps = bee_size_multiplier * BEE_LENGTH_FRACTION[lab]
+            else:
+                print(f"  [warn] {vname}: unrecognized lab, no bee-size "
+                      f"calibration available -- using default spatial_threshold")
+                norm_spatial_eps = spatial_threshold / ref_size
+        else:
+            norm_spatial_eps = spatial_threshold / ref_size
         
         # Scale temporal (seconds) so that temporal_threshold_sec ≈ norm_spatial_eps
         temporal_scale = norm_spatial_eps / temporal_threshold_sec if temporal_threshold_sec > 0 else 1.0
@@ -523,7 +577,7 @@ def compute_dance_level_metrics(
         angular_thresholds = [15, 20, 30]
     
     iou_thresholds = [round(t, 2) for t in
-                      np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.05, 0.05)]
+                      np.arange(iou_threshold_range[0], iou_threshold_range[1] + 0.1, 0.1)]
     
     # Normalize GT positions from frame-pixel space to [0,1]
     gt_norm = {}

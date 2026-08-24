@@ -1,0 +1,15 @@
+{
+  "_description": "Tim's original post_process values from configs/config.yaml, saved before running the Optuna dance-level search (viewer/server.py /api/eval/optimize) so they aren't lost if the search's best-found params get persisted over them via /api/config/update_post_process.",
+  "_source": "configs/config.yaml as of the clean_split_v1 checkpoint (matches ckpt/clean_split_v1/config.yaml.tim), captured 2026-08-20",
+  "_note": "These were hyperparameter-tuned by Tim (decimal precision suggests Optuna/similar search), not hand-picked -- treat as a real baseline to compare against, not an arbitrary default.",
+  "post_process": {
+    "spatial_threshold": 163.2,
+    "temporal_threshold_ms": 288.8,
+    "confidence_threshold": 0.2451,
+    "min_samples": 2,
+    "direction_threshold_deg": 0,
+    "mode": "mean",
+    "temporal_threshold": 8,
+    "strategy": "cluster_consolidate"
+  }
+}

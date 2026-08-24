@@ -268,6 +268,14 @@ def main(args):
     monitor_metric = config['eval']['metric']
     best_score = float('inf') if monitor_metric == 'loss' else 0.0
 
+    if monitor_metric != 'loss' and not config['eval']['window_level'].get('enabled', True):
+        raise ValueError(
+            "eval.window_level.enabled is False, but eval.metric is "
+            f"'{monitor_metric}' -- checkpoint selection needs window-level "
+            "mAP to pick the best model. Set eval.metric back to 'loss', or "
+            "re-enable window_level."
+        )
+
     if args.resume and os.path.exists(args.resume):
         print(f"Resuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
@@ -304,7 +312,7 @@ def main(args):
 
     # init wandb for logging
     wandb.init(
-    project="waggle-detection",  # Project name
+    project=config['logging']['wandb_project'],
     config={
         **config,  # Log entire config
         "seed": SEED,
@@ -350,35 +358,44 @@ def main(args):
                                                            config['data']['height']),
                                                            max_dets=config['eval']['max_dets'])
 
-            # Post Process all predictions
-            post_test_preds = batch_postprocess_predictions(test_preds,
-                                                            spatial_threshold=config['post_process']['spatial_threshold'],
-                                                            temporal_threshold=config['post_process']['temporal_threshold'],
-                                                            confidence_threshold=config['post_process']['confidence_threshold'],
-                                                            strategy=config['post_process']['strategy'],
-                                                            mode=config['post_process']['mode'],
-                                                            remove_outliers=False,
-                                                            min_samples=config['post_process'].get('min_samples', 1))
+            wl_cfg = config['eval']['window_level']
+            if wl_cfg.get('enabled', True):
+                # Post Process all predictions -- only needed for window-level
+                # metrics below, so skip the work entirely when disabled.
+                post_test_preds = batch_postprocess_predictions(test_preds,
+                                                                spatial_threshold=config['post_process']['spatial_threshold'],
+                                                                temporal_threshold=config['post_process']['temporal_threshold'],
+                                                                confidence_threshold=config['post_process']['confidence_threshold'],
+                                                                strategy=config['post_process']['strategy'],
+                                                                mode=config['post_process']['mode'],
+                                                                remove_outliers=False,
+                                                                min_samples=config['post_process'].get('min_samples', 1))
 
-            test_metrics = get_eval_metrics(test_preds, test_gts,
-                                            pos_thresholds=config['eval']['pos_thresholds'],
-                                            iou_threshold_range=config['eval']['iou_thresholds'],
-                                            angular_thresholds=config['eval']['angular_thresholds'],
-                                            match_pairs=config['eval']['match_pairs'])
+                test_metrics = get_eval_metrics(test_preds, test_gts,
+                                                pos_thresholds=wl_cfg['pos_thresholds'],
+                                                iou_threshold_range=wl_cfg['iou_thresholds'],
+                                                angular_thresholds=wl_cfg['angular_thresholds'],
+                                                match_pairs=wl_cfg['match_pairs'])
 
-            post_test_metrics = get_eval_metrics(post_test_preds, test_gts,
-                                            pos_thresholds=config['eval']['pos_thresholds'],
-                                            iou_threshold_range=config['eval']['iou_thresholds'],
-                                            angular_thresholds=config['eval']['angular_thresholds'],
-                                            match_pairs=config['eval']['match_pairs'])
+                post_test_metrics = get_eval_metrics(post_test_preds, test_gts,
+                                                pos_thresholds=wl_cfg['pos_thresholds'],
+                                                iou_threshold_range=wl_cfg['iou_thresholds'],
+                                                angular_thresholds=wl_cfg['angular_thresholds'],
+                                                match_pairs=wl_cfg['match_pairs'])
 
-            print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-mAP pre: {test_metrics['comprehensive']['map']:.4f} | post: {post_test_metrics['comprehensive']['map']:.4f}")
+                print(f"Epoch {epoch+1}/{config['train']['epochs']} | STD-mAP pre: {test_metrics['comprehensive']['map']:.4f} | post: {post_test_metrics['comprehensive']['map']:.4f}")
 
-            wandb.log({
-                **train_log,
-                **val_log,
-                **get_wandb_log_dict(epoch, test_metrics, post_test_metrics)
-                })
+                wandb.log({
+                    **train_log,
+                    **val_log,
+                    **get_wandb_log_dict(epoch, test_metrics, post_test_metrics)
+                    })
+            else:
+                print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (window-level metrics disabled via config)")
+                wandb.log({
+                    **train_log,
+                    **val_log,
+                    })
         else:
             print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (mAP skipped, next at epoch {((epoch // map_freq) + 1) * map_freq + 1})")
             wandb.log({

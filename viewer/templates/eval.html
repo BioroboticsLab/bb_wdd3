@@ -462,6 +462,13 @@ header h1 span { font-size: 20px; margin-right: 4px; }
             <input type="range" id="rc-dirthresh" min="0" max="90" step="5" value="30">
           </div>
           <div class="recluster-group">
+            <label title="Use a per-lab bee-length-relative spatial threshold (N x measured bee size) instead of the fixed Spatial Threshold above">
+              <input type="checkbox" id="rc-bee-aware"> Bee-size aware
+              <span class="rc-val" id="rc-bee-n-val" style="margin-left:6px;">0.5</span>
+            </label>
+            <input type="range" id="rc-bee-n" min="0.1" max="20" step="0.1" value="0.5" disabled>
+          </div>
+          <div class="recluster-group">
             <label>Clustering Method</label>
             <select id="rc-method">
               <option value="dbscan" selected>DBSCAN</option>
@@ -490,7 +497,11 @@ header h1 span { font-size: 20px; margin-right: 4px; }
               </select>
             </label>
             <label>Trials
-              <input type="number" id="optim-trials" value="60" min="10" max="200" step="10">
+              <input type="number" id="optim-trials" value="200" min="10" max="200" step="10">
+            </label>
+            <label title="Search a per-lab bee-length-relative spatial threshold (N x measured bee size) instead of one fixed value for every video">
+              <input type="checkbox" id="optim-bee-size">
+              Bee-size aware
             </label>
             <div class="optim-progress" id="optim-progress" style="display:none;">
               <div class="optim-progress-fill" id="optim-progress-fill"></div>
@@ -1011,10 +1022,13 @@ function buildConfigPanel(data) {
     <div class="config-group">
       <h4>Post-Processing</h4>
       <div class="config-item"><span class="config-key">Spatial Threshold</span><span class="config-val">${pc.spatial_threshold}</span></div>
-      <div class="config-item"><span class="config-key">Temporal Threshold</span><span class="config-val">${pc.temporal_threshold}</span></div>
+      <div class="config-item"><span class="config-key">Temporal Threshold</span><span class="config-val">${pc.temporal_threshold_ms != null ? pc.temporal_threshold_ms + ' ms' : pc.temporal_threshold}</span></div>
       <div class="config-item"><span class="config-key">Confidence Threshold</span><span class="config-val">${pc.confidence_threshold}</span></div>
+      <div class="config-item"><span class="config-key">Min Samples</span><span class="config-val">${pc.min_samples}</span></div>
+      <div class="config-item"><span class="config-key">Direction Threshold</span><span class="config-val">${pc.direction_threshold_deg}°</span></div>
       <div class="config-item"><span class="config-key">Strategy</span><span class="config-val">${pc.strategy}</span></div>
       <div class="config-item"><span class="config-key">Mode</span><span class="config-val">${pc.mode}</span></div>
+      <div class="config-item"><span class="config-key">Bee-Size Multiplier</span><span class="config-val">${pc.bee_size_multiplier != null ? pc.bee_size_multiplier : 'off'}</span></div>
     </div>
   `;
 }
@@ -1062,6 +1076,12 @@ function showResults(data) {
   }
   if (pc.clustering_method) document.getElementById('rc-method').value = pc.clustering_method;
   if (pc.mode) document.getElementById('rc-mode').value = pc.mode;
+  if (pc.bee_size_multiplier != null) {
+    document.getElementById('rc-bee-aware').checked = true;
+    document.getElementById('rc-bee-n').disabled = false;
+    document.getElementById('rc-bee-n').value = pc.bee_size_multiplier;
+    document.getElementById('rc-bee-n-val').textContent = pc.bee_size_multiplier;
+  }
 
   let tsText = `Evaluated at ${data.timestamp || '?'} • Checkpoint: ${data.checkpoint?.filename || '?'} (epoch ${data.checkpoint?.epoch ?? '?'})`;
   if (data.recluster_time != null) tsText += ` • Re-clustered in ${data.recluster_time}s`;
@@ -1195,6 +1215,12 @@ document.getElementById('rc-minsamp').addEventListener('input', e => {
 document.getElementById('rc-dirthresh').addEventListener('input', e => {
   document.getElementById('rc-dirthresh-val').textContent = e.target.value;
 });
+document.getElementById('rc-bee-n').addEventListener('input', e => {
+  document.getElementById('rc-bee-n-val').textContent = e.target.value;
+});
+document.getElementById('rc-bee-aware').addEventListener('change', e => {
+  document.getElementById('rc-bee-n').disabled = !e.target.checked;
+});
 
 async function doRecluster() {
   const btn = document.getElementById('btn-recluster');
@@ -1213,6 +1239,8 @@ async function doRecluster() {
     clustering_method: document.getElementById('rc-method').value,
     mode: document.getElementById('rc-mode').value,
     strategy: 'cluster_consolidate',
+    bee_size_multiplier: document.getElementById('rc-bee-aware').checked
+      ? parseFloat(document.getElementById('rc-bee-n').value) : null,
   };
 
   try {
@@ -1250,6 +1278,7 @@ async function doOptimize() {
   const resultEl = document.getElementById('optim-result');
   const metric = document.getElementById('optim-metric').value;
   const nTrials = parseInt(document.getElementById('optim-trials').value) || 60;
+  const beeSizeAware = document.getElementById('optim-bee-size').checked;
 
   btn.disabled = true;
   btn.classList.add('running');
@@ -1265,7 +1294,7 @@ async function doOptimize() {
     const resp = await fetch('/api/eval/optimize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ n_trials: nTrials, metric }),
+      body: JSON.stringify({ n_trials: nTrials, metric, bee_size_aware: beeSizeAware }),
     });
     const startData = await resp.json();
     if (startData.error) {
@@ -1322,6 +1351,12 @@ async function doOptimize() {
           if (bp.direction_threshold_deg != null) {
             document.getElementById('rc-dirthresh').value = bp.direction_threshold_deg;
             document.getElementById('rc-dirthresh-val').textContent = Math.round(bp.direction_threshold_deg);
+          }
+          if (bp.bee_size_multiplier != null) {
+            document.getElementById('rc-bee-aware').checked = true;
+            document.getElementById('rc-bee-n').disabled = false;
+            document.getElementById('rc-bee-n').value = bp.bee_size_multiplier;
+            document.getElementById('rc-bee-n-val').textContent = bp.bee_size_multiplier.toFixed(1);
           }
 
           // Update dashboard with results
@@ -1382,6 +1417,8 @@ async function applyToConfig() {
         confidence_threshold: params.confidence_threshold,
         min_samples: params.min_samples,
         direction_threshold_deg: params.direction_threshold_deg,
+        mode: params.mode,
+        ...(params.bee_size_multiplier != null ? { bee_size_multiplier: params.bee_size_multiplier } : {}),
       }),
     });
     const data = await resp.json();

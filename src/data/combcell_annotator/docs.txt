@@ -1,0 +1,53 @@
+lab sources notes - how annotator.py figures out which lab a video is from
+
+annotator.py sorts videos into berlin/nieh/sharoni by looking at the filename
+prefix in data/videos/:
+
+  starts with "0"  -> berlin   (e.g. 001_2304_1760.mp4)
+  starts with "T"  -> nieh     (e.g. T3-D1-B15-V5-C_960_540.mp4)
+  starts with "C"  -> sharoni  (e.g. C1_..._1224_1024.mp4)
+
+same idea as get_video_category() in src/utils/video_utils.py, just copied
+into annotator.py instead of importing it, because that file drags in
+torch/torchvision/cv2 and we don't want that for a little GUI script.
+
+how sure are we about this
+
+nieh and sharoni were easy, raw footage on /mnt/aglandgraf/wdd/ has the exact
+same filenames (T1-D1-B1-V1-C_... / C1_..._my_video_...) just with a
+resolution tag stuck on the end in data/videos/. so those two are basically
+just confirmed by looking at them.
+
+berlin was more annoying. raw files there are named "cam-<number>_<a huge
+timestamp>.mp4", nothing like "001", "002" etc, so no direct filename match.
+couldn't check by content either (duration/frame count like we did for the
+others) because reading the actual berlin mp4s off that mount gave
+"Permission denied".
+
+what convinced us anyway: from the data overview notes, berlin's native res
+is listed as 3520x4608 (raw footage is rotated 90deg, so unrotated that's
+4608x3520). and 4608/2304 = 2.0, 3520/1760 = 2.0 - exactly matches the
+2304x1760 tier as a clean 2x downsample. did the same check for the other two
+labs and it lines up there too:
+
+  nieh:    3840x2160 native -> 1920x1080 (2x), 960x540 (4x), 480x270 (8x)
+  sharoni: 2448x2048 native -> 1224x1024 (2x), 612x512 (4x), 306x256 (8x)
+
+all clean integer ratios, no weird almost-matches. combined with elimination
+(T and C already pinned down, so "0" has to be whatever's left = berlin since
+those are the only 3 labs we have) that's good enough to go with, just not a
+100% direct proof the way nieh/sharoni are. worth keeping in mind if this
+ever actually matters for something more serious than picking a grid size.
+
+other thing to remember: files with the same base name but different
+resolution (and sometimes a _dsXXfps tag) are literally the same recording,
+just re-encoded, not different videos. checked this with ffprobe for the
+001_*.mp4 family - same duration/fps/frame count across all three
+resolutions. that's why group_by_source() in annotator.py just picks the
+highest-res copy per source and projects the measurement down to the other
+tiers by ratio, instead of annotating every resolution separately.
+
+also nieh has some recordings with both an "_original" and a "_downsample"
+raw file that can end up tagged with the same resolution in data/videos/ -
+group_by_source() dedupes on (width, height) as a set so this doesn't cause
+double-counting.
