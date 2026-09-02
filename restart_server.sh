@@ -1,14 +1,32 @@
 #!/bin/bash
-# Restart the Waggle Dance Annotation Viewer server on port 5050.
-# Kills any dangling instances first.
+# Restart the Waggle Dance Viewer. Kills any dangling instance first.
+#
+# Usage:
+#   ./restart_server.sh                        # defaults below
+#   ./restart_server.sh ckpt/other_run/best.pth
+#
+# Environment overrides:
+#   PORT             port to serve on            (default 5050)
+#   CHECKPOINT       model .pth to load          (default ckpt/clean_split_v1/best.pth)
+#   DEVICE           cuda:0 | cpu | unset=auto
+#   EXTERNAL_VIDEOS  directory of unannotated video, skipped if it does not exist
 
-PORT=5050
+PORT="${PORT:-5050}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV="$SCRIPT_DIR/.venv/bin/python"
 SERVER="$SCRIPT_DIR/viewer/server.py"
-CHECKPOINT="$SCRIPT_DIR/ckpt/noobj_rebalance_v2/best.pth"
 
-# Kill any existing server processes on this port or matching server.py
+CHECKPOINT="${1:-${CHECKPOINT:-$SCRIPT_DIR/ckpt/clean_split_v1/best.pth}}"
+EXTERNAL="${EXTERNAL_VIDEOS:-/mnt/horus/bee_dance_videos_tim}"
+
+# The venv usually sits in the repo, but on some machines it is one level up
+# (shared between checkouts), so fall back before giving up.
+if   [ -x "$SCRIPT_DIR/.venv/bin/python" ];    then VENV="$SCRIPT_DIR/.venv/bin/python"
+elif [ -x "$SCRIPT_DIR/../.venv/bin/python" ]; then VENV="$SCRIPT_DIR/../.venv/bin/python"
+else
+    echo "ERROR: no virtualenv found at $SCRIPT_DIR/.venv or $SCRIPT_DIR/../.venv" >&2
+    exit 1
+fi
+
 echo "Checking for dangling server instances..."
 
 # 1. Kill anything listening on the port
@@ -30,7 +48,24 @@ if [ -n "$PIDS_SERVER" ]; then
     kill -9 $PIDS_SERVER 2>/dev/null
 fi
 
-EXTERNAL="/mnt/horus/bee_dance_videos_tim"
+ARGS=(--host 0.0.0.0 --port "$PORT")
+
+if [ -f "$CHECKPOINT" ]; then
+    ARGS+=(--checkpoint "$CHECKPOINT")
+    echo "Checkpoint: $CHECKPOINT"
+else
+    # Not fatal -- the viewer still serves ground truth, just no predictions.
+    echo "WARNING: checkpoint not found at $CHECKPOINT"
+    echo "         starting without it: predictions and evaluation disabled."
+fi
+
+[ -n "${DEVICE:-}" ] && ARGS+=(--device "$DEVICE")
+
+if [ -d "$EXTERNAL" ]; then
+    ARGS+=(--external-videos "$EXTERNAL")
+else
+    echo "Note: external video dir not present ($EXTERNAL), skipping."
+fi
 
 echo "Starting server on port $PORT..."
-exec "$VENV" "$SERVER" --host 0.0.0.0 --port $PORT --checkpoint "$CHECKPOINT" --external-videos "$EXTERNAL"
+exec "$VENV" "$SERVER" "${ARGS[@]}"

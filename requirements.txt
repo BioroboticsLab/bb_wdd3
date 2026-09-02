@@ -37,6 +37,7 @@ pillow
 pip
 protobuf
 pyparsing
+pytest
 python-dateutil
 pytz
 scikit-image
