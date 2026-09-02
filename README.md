@@ -199,10 +199,7 @@ length comes from measuring comb cells — a physical constant of roughly known 
 
 ## Tests
 
-`pytest` is not in `requirements.txt` — install it first:
-
 ```bash
-.venv/bin/pip install pytest
 .venv/bin/python -m pytest tests/ src/tests/
 ```
 
