@@ -7,10 +7,12 @@ computes dance-level metrics (AP, P/R/F1, position error, temporal IoU,
 angular error).
 """
 
+import itertools
 import numpy as np
 from collections import defaultdict
 from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
+from tqdm import tqdm
 
 # Bee length as a fraction of frame width, per lab -- from the comb-cell
 # annotator (src/data/combcell_annotator/, output/projected_summary.csv),
@@ -151,7 +153,7 @@ def deduplicate_gt_dances(test_df):
 
 def average_overlapping_predictions(per_window_preds, crop_origins, video_names,
                                      window_ranges=None, video_fps=None,
-                                     max_temporal_gap_sec=1.0):
+                                     max_temporal_gap_sec=1.0, temporal_boundary='union'):
     """
     Average predictions across overlapping temporal windows that share the
     same spatial crop.
@@ -183,7 +185,15 @@ def average_overlapping_predictions(per_window_preds, crop_origins, video_names,
         max_temporal_gap_sec: maximum temporal gap in seconds between
             consecutive detections at the same grid cell before they are
             split into separate sub-groups. Default 1.0s.
-    
+        temporal_boundary: 'union' (default) = min(start)/max(end) across
+            sub-group members, same as cross_window_cluster_predictions
+            used to do everywhere. 'mean' = mean start/mean end instead.
+            note: stacking 'mean' here on top of 'mean' at the clustering
+            stage cancelled out the clustering-stage win in cache-based
+            testing (IoU 0.604 -> 0.511, back near the 0.510 baseline) --
+            that was only checked via a single-combo proxy though, not
+            the full mAP sweep, so re-verify before trusting it.
+
     Returns:
         list of lists of averaged prediction dicts (same outer length as input,
         but predictions are reassigned to the first window of each group;
@@ -268,9 +278,13 @@ def average_overlapping_predictions(per_window_preds, crop_origins, video_names,
             for sub_preds in sub_groups:
                 n_detections = len(sub_preds)
                 
-                # Detection's temporal extent (union within this sub-group)
-                det_t_start = min(p['temporal_offsets'][0] for p in sub_preds)
-                det_t_end = max(p['temporal_offsets'][1] for p in sub_preds)
+                # Detection's temporal extent within this sub-group
+                if temporal_boundary == 'mean':
+                    det_t_start = sum(p['temporal_offsets'][0] for p in sub_preds) / n_detections
+                    det_t_end = sum(p['temporal_offsets'][1] for p in sub_preds) / n_detections
+                else:
+                    det_t_start = min(p['temporal_offsets'][0] for p in sub_preds)
+                    det_t_end = max(p['temporal_offsets'][1] for p in sub_preds)
                 
                 # Count windows in this group whose temporal range overlaps
                 # the detection's temporal extent
@@ -333,6 +347,7 @@ def cross_window_cluster_predictions(
     mode='mean',
     direction_threshold_deg=30.0,
     bee_size_multiplier=None,
+    temporal_boundary='union',
 ):
     """
     Map per-window crop-space predictions to frame-space, pool per video,
@@ -368,6 +383,13 @@ def cross_window_cluster_predictions(
             unmeasured/new source degrades to today's behavior rather than
             using a wrong or guessed value. None (default) preserves the
             exact existing behavior for every video, unconditionally.
+        temporal_boundary: 'union' (default, tim's original) takes min(start)/
+            max(end) across cluster members -- tested and found to bias
+            predicted runs wider than the true dance (matched-pair mean IoU
+            0.510). 'mean' takes the mean start/mean end instead, same idea
+            as how position already gets aggregated -- tested at IoU 0.604 on
+            the same clusters. default is 'union' so nothing changes unless
+            you opt in.
 
     Returns:
         dict: {video_name: [predicted_run_dict, ...]}
@@ -505,12 +527,15 @@ def cross_window_cluster_predictions(
             d_norm = np.sqrt(dir_mean[0]**2 + dir_mean[1]**2) + 1e-8
             dir_mean = [dir_mean[0] / d_norm, dir_mean[1] / d_norm]
             
-            # Temporal: use min/max (union) — the cluster's temporal extent
-            # is the full span across all member detections, not their average.
-            # This is consistent with average_overlapping_predictions (L244-245)
-            # and deduplicate_gt_dances (L109-110).
-            t_start = float(np.min(temporals[:, 0]))
-            t_end = float(np.max(temporals[:, 1]))
+            # Temporal boundary: 'union' (tim's original) = min/max across
+            # members. 'mean' = mean start/mean end -- tested better (see
+            # temporal_boundary docstring above), opt-in so union stays default.
+            if temporal_boundary == 'mean':
+                t_start = float(np.mean(temporals[:, 0]))
+                t_end = float(np.mean(temporals[:, 1]))
+            else:
+                t_start = float(np.min(temporals[:, 0]))
+                t_end = float(np.max(temporals[:, 1]))
             
             # Confidence: max
             conf = float(np.max(confidences))
@@ -550,14 +575,29 @@ def compute_dance_level_metrics(
     pos_thresholds=None,
     iou_threshold_range=None,
     angular_thresholds=None,
+    max_dets=None,
+    show_progress=False,
 ):
     """
     Match predicted waggle runs against GT dances per video, using STD
     thresholds.
-    
+
+    show_progress: print a tqdm bar over the pos x iou x angular threshold
+        sweep. off by default since this gets called a ton during optuna
+        search / dashboard reclustering and a bar every call would be noisy
+        -- turn on for a one-off script run where you want to see it's not
+        actually stuck.
+
     Predictions use normalized [0,1] positions.
     GTs use origin-space positions → also normalize to [0,1] using resolution.
-    
+
+    max_dets: like pycocotools' COCOeval.params.maxDets -- keep only the
+        top-`max_dets` highest-confidence predicted runs per video before
+        computing AP, instead of every run (including DBSCAN noise-point
+        fragments) unconditionally. None (default) preserves the exact
+        existing unbounded behavior, so results with/without a cap can be
+        compared directly by only passing this on one of the two calls.
+
     Args:
         predicted_runs: dict {video_name: [pred_dict, ...]}
         gt_dances: dict {video_name: [gt_dict, ...]} from deduplicate_gt_dances()
@@ -594,20 +634,25 @@ def compute_dance_level_metrics(
             })
     
     # Collect all predictions and GTs as flat lists for AP computation
-    all_preds_flat = []  # (confidence, video_name, pred_dict)
+    all_preds_flat = []  # (confidence, video_name, tiebreak_idx, pred_dict)
     total_gt = 0
-    
-    all_videos = set(list(predicted_runs.keys()) + list(gt_norm.keys()))
-    
+
+    # sorted() -- set() order is hash-randomized per process, which broke
+    # confidence-tie resolution below run to run.
+    all_videos = sorted(set(list(predicted_runs.keys()) + list(gt_norm.keys())))
+
     for vname in all_videos:
         vpreds = predicted_runs.get(vname, [])
+        if max_dets is not None and len(vpreds) > max_dets:
+            vpreds = sorted(vpreds, key=lambda p: p['confidence'], reverse=True)[:max_dets]
         vgts = gt_norm.get(vname, [])
         total_gt += len(vgts)
-        
-        for pred in vpreds:
-            all_preds_flat.append((pred['confidence'], vname, pred))
-    
-    all_preds_flat.sort(key=lambda x: x[0], reverse=True)
+
+        for idx, pred in enumerate(vpreds):
+            all_preds_flat.append((pred['confidence'], vname, idx, pred))
+
+    # deterministic tiebreak for equal-confidence predictions
+    all_preds_flat.sort(key=lambda x: (-x[0], x[1], x[2]))
     
     if total_gt == 0 or not all_preds_flat:
         return _empty_dance_metrics()
@@ -619,95 +664,96 @@ def compute_dance_level_metrics(
     f1_scores = []
     all_matched_pairs = []
     
-    for pos_threshold in pos_thresholds:
-        for iou_threshold in iou_thresholds:
-            for angular_threshold in angular_thresholds:
-                # Greedy confidence sweep
-                matched_gts = {vname: set() for vname in all_videos}
-                tp_flags = []
-                matched_pairs = []
-                
-                for conf, vname, pred in all_preds_flat:
-                    vgts = gt_norm.get(vname, [])
-                    
-                    best_cost = float('inf')
-                    best_gt_idx = None
-                    best_gt = None
-                    
-                    for gt_idx, gt in enumerate(vgts):
-                        if gt_idx in matched_gts[vname]:
-                            continue
-                        
-                        # Position distance: both in normalized [0,1] space
-                        gt_x_norm = gt['position'][0]
-                        gt_y_norm = gt['position'][1]
-                        pos_dist = np.sqrt(
-                            (pred['position'][0] - gt_x_norm)**2 +
-                            (pred['position'][1] - gt_y_norm)**2
-                        )
-                        
-                        # Temporal IoU
-                        gt_s, gt_e = gt['temporal_offsets']
-                        pr_s, pr_e = pred['temporal_offsets']
-                        inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
-                        union = max(gt_e, pr_e) - min(gt_s, pr_s)
-                        tiou = inter / union if union > 0 else 0
-                        
-                        # Angular error
-                        gt_d = np.array(gt['direction'])
-                        pr_d = np.array(pred['direction'])
-                        gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
-                        pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
-                        ang_err = np.degrees(np.arccos(
-                            np.clip(np.dot(gt_d, pr_d), -1.0, 1.0)
-                        ))
-                        
-                        if (pos_dist <= pos_threshold and
-                                tiou >= iou_threshold and
-                                ang_err <= angular_threshold):
-                            cost = (pos_dist / pos_threshold +
-                                    (1 - tiou) +
-                                    ang_err / angular_threshold)
-                            if cost < best_cost:
-                                best_cost = cost
-                                best_gt_idx = gt_idx
-                                best_gt = gt
-                    
-                    if best_gt_idx is not None:
-                        matched_gts[vname].add(best_gt_idx)
-                        tp_flags.append(1)
-                        matched_pairs.append((best_gt, pred))
-                    else:
-                        tp_flags.append(0)
-                
-                if not tp_flags:
-                    ap_scores.append(0.0)
-                    precision_scores.append(0.0)
-                    recall_scores.append(0.0)
-                    f1_scores.append(0.0)
-                    all_matched_pairs.append([])
+    combos = list(itertools.product(pos_thresholds, iou_thresholds, angular_thresholds))
+    combo_iter = tqdm(combos, desc='Dance-level threshold sweep', leave=False) if show_progress else combos
+
+    for pos_threshold, iou_threshold, angular_threshold in combo_iter:
+        # Greedy confidence sweep
+        matched_gts = {vname: set() for vname in all_videos}
+        tp_flags = []
+        matched_pairs = []
+        
+        for conf, vname, _idx, pred in all_preds_flat:
+            vgts = gt_norm.get(vname, [])
+            
+            best_cost = float('inf')
+            best_gt_idx = None
+            best_gt = None
+            
+            for gt_idx, gt in enumerate(vgts):
+                if gt_idx in matched_gts[vname]:
                     continue
                 
-                tp_cumsum = np.cumsum(tp_flags)
-                n_preds = np.arange(1, len(tp_flags) + 1)
-                precisions = tp_cumsum / n_preds
-                recalls = tp_cumsum / total_gt
+                # Position distance: both in normalized [0,1] space
+                gt_x_norm = gt['position'][0]
+                gt_y_norm = gt['position'][1]
+                pos_dist = np.sqrt(
+                    (pred['position'][0] - gt_x_norm)**2 +
+                    (pred['position'][1] - gt_y_norm)**2
+                )
                 
-                precisions = np.maximum.accumulate(precisions[::-1])[::-1]
+                # Temporal IoU
+                gt_s, gt_e = gt['temporal_offsets']
+                pr_s, pr_e = pred['temporal_offsets']
+                inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
+                union = max(gt_e, pr_e) - min(gt_s, pr_s)
+                tiou = inter / union if union > 0 else 0
                 
-                f1s = 2 * precisions * recalls / (precisions + recalls + 1e-8)
-                best_idx = np.argmax(f1s)
+                # Angular error
+                gt_d = np.array(gt['direction'])
+                pr_d = np.array(pred['direction'])
+                gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
+                pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
+                ang_err = np.degrees(np.arccos(
+                    np.clip(np.dot(gt_d, pr_d), -1.0, 1.0)
+                ))
                 
-                precision_scores.append(float(precisions[best_idx]))
-                recall_scores.append(float(recalls[best_idx]))
-                f1_scores.append(float(f1s[best_idx]))
-                
-                precisions_curve = np.concatenate([[1.0], precisions])
-                recalls_curve = np.concatenate([[0.0], recalls])
-                ap = float(np.trapezoid(precisions_curve, recalls_curve))
-                ap_scores.append(ap)
-                
-                all_matched_pairs.append(matched_pairs)
+                if (pos_dist <= pos_threshold and
+                        tiou >= iou_threshold and
+                        ang_err <= angular_threshold):
+                    cost = (pos_dist / pos_threshold +
+                            (1 - tiou) +
+                            ang_err / angular_threshold)
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_gt_idx = gt_idx
+                        best_gt = gt
+            
+            if best_gt_idx is not None:
+                matched_gts[vname].add(best_gt_idx)
+                tp_flags.append(1)
+                matched_pairs.append((best_gt, pred))
+            else:
+                tp_flags.append(0)
+        
+        if not tp_flags:
+            ap_scores.append(0.0)
+            precision_scores.append(0.0)
+            recall_scores.append(0.0)
+            f1_scores.append(0.0)
+            all_matched_pairs.append([])
+            continue
+        
+        tp_cumsum = np.cumsum(tp_flags)
+        n_preds = np.arange(1, len(tp_flags) + 1)
+        precisions = tp_cumsum / n_preds
+        recalls = tp_cumsum / total_gt
+        
+        precisions = np.maximum.accumulate(precisions[::-1])[::-1]
+        
+        f1s = 2 * precisions * recalls / (precisions + recalls + 1e-8)
+        best_idx = np.argmax(f1s)
+        
+        precision_scores.append(float(precisions[best_idx]))
+        recall_scores.append(float(recalls[best_idx]))
+        f1_scores.append(float(f1s[best_idx]))
+        
+        precisions_curve = np.concatenate([[1.0], precisions])
+        recalls_curve = np.concatenate([[0.0], recalls])
+        ap = float(np.trapezoid(precisions_curve, recalls_curve))
+        ap_scores.append(ap)
+        
+        all_matched_pairs.append(matched_pairs)
     
     # Use mid-threshold matched pairs for detailed metrics
     mid_idx = len(all_matched_pairs) // 2
@@ -718,7 +764,12 @@ def compute_dance_level_metrics(
         pos_errors = []
         temporal_ious = []
         angular_errors = []
-        
+        start_errors = []
+        end_errors = []
+        start_errors_signed = []
+        end_errors_signed = []
+        duration_accuracies = []
+
         for gt, pred in mid_pairs:
             # Position error in normalized space
             pos_err = np.sqrt(
@@ -726,15 +777,28 @@ def compute_dance_level_metrics(
                 (pred['position'][1] - gt['position'][1])**2
             )
             pos_errors.append(pos_err)
-            
+
             # Temporal IoU
             gt_s, gt_e = gt['temporal_offsets']
             pr_s, pr_e = pred['temporal_offsets']
             inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
             union = max(gt_e, pr_e) - min(gt_s, pr_s)
             temporal_ious.append(inter / union if union > 0 else 0)
-            
-            # Angular error  
+
+            # Start/end boundary errors (frame units, same convention as
+            # window-level: signed negative = predicted too early)
+            start_errors.append(abs(gt_s - pr_s))
+            end_errors.append(abs(gt_e - pr_e))
+            start_errors_signed.append(pr_s - gt_s)
+            end_errors_signed.append(pr_e - gt_e)
+
+            pred_dur = pr_e - pr_s
+            gt_dur = gt_e - gt_s
+            dur_acc = (1 - abs(pred_dur - gt_dur) / max(pred_dur, gt_dur)
+                       if max(pred_dur, gt_dur) > 0 else 1.0)
+            duration_accuracies.append(dur_acc)
+
+            # Angular error
             gt_d = np.array(gt['direction'])
             pr_d = np.array(pred['direction'])
             gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
@@ -742,14 +806,23 @@ def compute_dance_level_metrics(
             angular_errors.append(
                 np.degrees(np.arccos(np.clip(np.dot(gt_d, pr_d), -1, 1)))
             )
-        
+
         spatial = {
             'mean_error': float(np.mean(pos_errors)),
             'median_error': float(np.median(pos_errors)),
         }
+        start_errors_signed = np.array(start_errors_signed)
+        end_errors_signed = np.array(end_errors_signed)
         temporal = {
             'mean_iou': float(np.mean(temporal_ious)),
             'median_iou': float(np.median(temporal_ious)),
+            'mean_start_error': float(np.mean(start_errors)),
+            'mean_end_error': float(np.mean(end_errors)),
+            'me_start': float(np.mean(start_errors_signed)),  # bias: <0 too early, >0 too late
+            'me_end': float(np.mean(end_errors_signed)),
+            'mse_start': float(np.mean(start_errors_signed ** 2)),
+            'mse_end': float(np.mean(end_errors_signed ** 2)),
+            'duration_accuracy': float(np.mean(duration_accuracies)),  # 1.0 perfect, 0.0 worst
         }
         directional = {
             'mean_error': float(np.mean(angular_errors)),
@@ -757,11 +830,16 @@ def compute_dance_level_metrics(
         }
     else:
         spatial = {'mean_error': 0, 'median_error': 0}
-        temporal = {'mean_iou': 0, 'median_iou': 0}
+        temporal = {
+            'mean_iou': 0, 'median_iou': 0,
+            'mean_start_error': 0, 'mean_end_error': 0,
+            'me_start': 0, 'me_end': 0, 'mse_start': 0, 'mse_end': 0,
+            'duration_accuracy': 0,
+        }
         directional = {'mean_error': 0, 'median_error': 0}
     
-    # Coverage
-    total_preds = sum(len(v) for v in predicted_runs.values())
+    # Coverage (based on all_preds_flat, which reflects any max_dets truncation)
+    total_preds = len(all_preds_flat)
     n_detected = len(mid_pairs)
     
     return {
@@ -797,7 +875,12 @@ def _empty_dance_metrics():
         'level': 'waggle_run',
         'comprehensive': {'map': 0, 'mean_precision': 0, 'mean_recall': 0, 'mean_f1': 0},
         'spatial': {'mean_error': 0, 'median_error': 0},
-        'temporal': {'mean_iou': 0, 'median_iou': 0},
+        'temporal': {
+            'mean_iou': 0, 'median_iou': 0,
+            'mean_start_error': 0, 'mean_end_error': 0,
+            'me_start': 0, 'me_end': 0, 'mse_start': 0, 'mse_end': 0,
+            'duration_accuracy': 0,
+        },
         'directional': {'mean_error': 0, 'median_error': 0},
         'coverage': {
             'total_gt_dances': 0, 'total_predicted_runs': 0,

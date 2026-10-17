@@ -212,6 +212,160 @@ def yolo_to_img_space_gt(
     
     return all_detections
 
+def _sample_indices_for_window(num_raw_frames, target_length):
+    """Which raw-frame index each of the `target_length` model-input slots
+    came from -- same linspace/repeat-pad logic as
+    VideoYoloDatasetTemporalCls._sample_frame_indices in dataset_temporal_cls.py.
+    Needed here too so a predicted "frame t" decodes back to the same real
+    frame number that was used to build the training label. `num_raw_frames`
+    is approximated as window_end - window_start since that's the only
+    duration info available at decode time (same approximation dataset.py
+    already used elsewhere for the old start_norm/end_norm)."""
+    if num_raw_frames >= target_length:
+        return np.linspace(0, num_raw_frames - 1, target_length, dtype=int).tolist()
+    else:
+        reps = list(range(num_raw_frames)) * (target_length // num_raw_frames + 1)
+        return reps[:target_length]
+
+
+def _frame_probs_to_start_end(frame_probs, window_start, window_end, window_size, threshold=0.5):
+    """Map the sampled-frame slots crossing `threshold` to absolute frame
+    numbers, then take min/max over those *frame numbers* -- not over the
+    slot indices. Matters because when duration < window_size the dataset
+    repeat-pads (cycles back to frame 0 partway through), so the slot
+    sequence isn't monotonic in frame number; taking "first/last slot" in
+    that case silently picks the wrong end of the interval. Falls back to
+    the single highest-probability frame (start==end) if nothing crosses --
+    happens early in training before the head has learned anything useful."""
+    num_raw_frames = max(1, window_end - window_start)
+    sample_idxs = _sample_indices_for_window(num_raw_frames, window_size)
+
+    positive_t = (frame_probs >= threshold).nonzero(as_tuple=True)[0].tolist()
+    if not positive_t:
+        best_t = int(torch.argmax(frame_probs).item())
+        f = window_start + sample_idxs[best_t]
+        return f, f
+
+    real_frames = [window_start + sample_idxs[t] for t in positive_t]
+    return min(real_frames), max(real_frames)
+
+
+def yolo_to_img_space_cls(
+    model_output: torch.Tensor,
+    all_starts: List[int],
+    all_ends: List[int],
+    window_size: int = 16,
+    confidence_threshold: float = 0.001,
+    original_size: tuple = (960, 540),
+    max_dets: int = 10,
+    frame_threshold: float = 0.5,
+) -> List[List[Dict]]:
+    """Decode counterpart of yolo_to_img_space for the per-frame-classification
+    temporal head (model_temporal_cls.py) -- detection[5:5+window_size] is one
+    logit per sampled frame instead of 2 offset scalars. Sigmoid + threshold
+    those, take first/last frame crossing the bar as start/end. Output dict
+    shape is identical to yolo_to_img_space's, so postprocess/dance_eval don't
+    need to know anything changed."""
+    all_detections = []
+    batch_size, grid_size, _, _, _ = model_output.shape
+
+    for b in range(batch_size):
+        sample_detections = []
+        window_start = all_starts[b]
+        window_end = all_ends[b]
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                for k in range(model_output.shape[3]):
+                    detection = model_output[b, i, j, k].detach().cpu()
+                    confidence = torch.sigmoid(detection[0]).item()
+
+                    if confidence > confidence_threshold:
+                        norm_x = detection[1].item()
+                        norm_y = detection[2].item()
+                        dir_x = detection[3].item()
+                        dir_y = detection[4].item()
+                        frame_probs = torch.sigmoid(detection[5:5 + window_size])
+
+                        start_frame, end_frame = _frame_probs_to_start_end(
+                            frame_probs, window_start, window_end, window_size, frame_threshold
+                        )
+                        start_frame = max(window_start, min(start_frame, window_end))
+                        end_frame = max(start_frame, min(end_frame, window_end))
+
+                        pos_x, pos_y = transform_yolo_to_image_coords(
+                            norm_x, norm_y, j, i, grid_size, original_size
+                        )
+
+                        sample_detections.append({
+                            "confidence": float(confidence),
+                            "position": [pos_x, pos_y],
+                            "direction": [float(dir_x), float(dir_y)],
+                            "grid_cell": [i, j, k],
+                            "temporal_offsets": [start_frame, end_frame]
+                        })
+
+        sample_detections.sort(key=lambda x: x['confidence'], reverse=True)
+        sample_detections = sample_detections[:max_dets]
+        all_detections.append(sample_detections)
+
+    return all_detections
+
+
+def yolo_to_img_space_gt_cls(
+    model_output: torch.Tensor,
+    all_starts: List[int],
+    all_ends: List[int],
+    window_size: int = 16,
+    original_size: tuple = (960, 540)
+) -> List[List[Dict]]:
+    """GT counterpart of yolo_to_img_space_cls -- labels are already 0/1, no
+    sigmoid needed before thresholding."""
+    all_detections = []
+    batch_size, grid_size, _, _, _ = model_output.shape
+    for b in range(batch_size):
+        sample_detections = []
+        window_start = all_starts[b]
+        window_end = all_ends[b]
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                for k in range(model_output.shape[3]):
+                    detection = model_output[b, i, j, k].detach().cpu()
+                    confidence = detection[0].item()  # gt confidence is 0 or 1
+
+                    if confidence > 0:
+                        norm_x = detection[1].item()
+                        norm_y = detection[2].item()
+                        dir_x = detection[3].item()
+                        dir_y = detection[4].item()
+                        frame_labels = detection[5:5 + window_size]
+
+                        start_frame, end_frame = _frame_probs_to_start_end(
+                            frame_labels, window_start, window_end, window_size, threshold=0.5
+                        )
+                        start_frame = max(window_start, min(start_frame, window_end))
+                        end_frame = max(start_frame, min(end_frame, window_end))
+
+                        pos_x, pos_y = transform_yolo_to_image_coords(
+                            norm_x, norm_y, j, i, grid_size, original_size
+                        )
+
+                        sample_detections.append({
+                            "confidence": float(confidence),  # is 1.0 for GT
+                            "position": [pos_x, pos_y],
+                            "direction": [float(dir_x), float(dir_y)],
+                            "grid_cell": [i, j, k],
+                            "temporal_offsets": [start_frame, end_frame],
+                            "is_ground_truth": True,
+                            "window_idx": b,
+                        })
+
+        all_detections.append(sample_detections)
+
+    return all_detections
+
+
 def calculate_position_metrics_comprehensive(matched_pairs_per_combo, total_predictions, total_gts):
     """
     Calculate spatial position metrics conditioned on joint matched pairs.

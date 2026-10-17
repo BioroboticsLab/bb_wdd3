@@ -924,6 +924,21 @@ function buildDanceSection(data) {
           <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(t.median_iou)}</td>
         </tr>
         <tr>
+          <td class="metric-name">Duration Accuracy</td>
+          <td class="metric-value">${fmt(t.duration_accuracy)}</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">1.0 = perfect predicted-vs-true duration match</td>
+        </tr>
+        <tr>
+          <td class="metric-name">Start Error (bias)</td>
+          <td class="metric-value">${fmt(t.me_start, 2)}f</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">mean abs: ${fmt(t.mean_start_error, 2)}f · &lt;0 too early, &gt;0 too late</td>
+        </tr>
+        <tr>
+          <td class="metric-name">End Error (bias)</td>
+          <td class="metric-value">${fmt(t.me_end, 2)}f</td>
+          <td class="metric-value" style="font-size:11px;color:var(--text-muted);">mean abs: ${fmt(t.mean_end_error, 2)}f · &lt;0 too early, &gt;0 too late</td>
+        </tr>
+        <tr>
           <td class="metric-name">Mean Angular Error</td>
           <td class="metric-value">${fmt(d.mean_error, 1)}°</td>
           <td class="metric-value" style="font-size:11px;color:var(--text-muted);">Median: ${fmt(d.median_error, 1)}°</td>

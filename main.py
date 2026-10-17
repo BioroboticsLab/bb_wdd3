@@ -22,6 +22,14 @@ import datetime
 import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results, get_wandb_log_dict
 from src.utils.postprocess import batch_postprocess_predictions
+from src.utils.dance_eval import (
+    compute_crop_origins,
+    deduplicate_gt_dances,
+    average_overlapping_predictions,
+    cross_window_cluster_predictions,
+    compute_dance_level_metrics,
+)
+import cv2
 from src.utils.vis_utils import reverse_transform_batch, save_frames
 import argparse
 from src.utils.model_utils import load_pretrained_model, EMA
@@ -268,12 +276,19 @@ def main(args):
     monitor_metric = config['eval']['metric']
     best_score = float('inf') if monitor_metric == 'loss' else 0.0
 
-    if monitor_metric != 'loss' and not config['eval']['window_level'].get('enabled', True):
+    if monitor_metric == 'map' and not config['eval']['window_level'].get('enabled', True):
         raise ValueError(
             "eval.window_level.enabled is False, but eval.metric is "
             f"'{monitor_metric}' -- checkpoint selection needs window-level "
-            "mAP to pick the best model. Set eval.metric back to 'loss', or "
-            "re-enable window_level."
+            "mAP to pick the best model. Set eval.metric to 'loss' or "
+            "'dance_map', or re-enable window_level."
+        )
+    if monitor_metric == 'dance_map' and not config['eval']['dance_level'].get('enabled', True):
+        raise ValueError(
+            "eval.dance_level.enabled is False, but eval.metric is "
+            f"'{monitor_metric}' -- checkpoint selection needs dance-level "
+            "mAP to pick the best model. Set eval.metric to 'loss' or "
+            "'map', or re-enable dance_level."
         )
 
     if args.resume and os.path.exists(args.resume):
@@ -285,7 +300,9 @@ def main(args):
             model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
+        # checkpoint['epoch'] is now 1-indexed (count of completed epochs),
+        # which already equals the 0-indexed index of the next epoch to run
+        start_epoch = checkpoint['epoch']
         best_score = checkpoint['best_score']
 
         if args.reset_scheduler:
@@ -306,9 +323,14 @@ def main(args):
             ema.load_state_dict(checkpoint['ema_state_dict'])
             print(f"Loaded EMA state (updates: {ema.updates})")
 
-        print(f"Resumed at epoch {start_epoch}, best_score so far: {best_score:.4f}")
+        print(f"Resumed at epoch {start_epoch+1}, best_score so far: {best_score:.4f}")
     elif args.resume:
         print(f"Warning: checkpoint path '{args.resume}' not found, starting from scratch.")
+
+    # crop_origins/gt_dances/video_fps don't change across epochs (same test
+    # set every time) -- computed once on first use and cached, instead of
+    # redoing the cv2.VideoCapture file-opening for every eval epoch.
+    dance_level_cache = {}
 
     # init wandb for logging
     wandb.init(
@@ -336,10 +358,11 @@ def main(args):
 
         test_metrics = None
         post_test_metrics = None
+        dance_metrics = None
 
         if compute_map:
             # fetch gt and preds
-            test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, _ , _, _ = get_preds_gt(model, test_loader, device)
+            test_preds_raw, test_gt_raw, test_all_starts, test_all_ends, test_all_video_names, _, test_all_original_res = get_preds_gt(model, test_loader, device)
 
             # Transform yolo coordinates onto image domain for both gt and predicted values
             test_gts = yolo_to_img_space_gt(test_gt_raw,
@@ -357,6 +380,74 @@ def main(args):
                                             original_size=(config['data']['width'],
                                                            config['data']['height']),
                                                            max_dets=config['eval']['max_dets'])
+
+            # Dance-level metrics: cluster detections across windows into full
+            # dance runs and compare against real dances, same pipeline as
+            # ckpt_eval.py. crop_origins/gt_dances/video_fps are cached after
+            # first computation since they don't change across epochs.
+            dl_cfg = config['eval']['dance_level']
+            dance_wandb_dict = {}
+            if dl_cfg.get('enabled', True):
+                if 'crop_origins' not in dance_level_cache:
+                    dance_level_cache['crop_origins'] = compute_crop_origins(
+                        test_df,
+                        crop_w=config['data']['width'],
+                        crop_h=config['data']['height'],
+                        all_original_res=test_all_original_res,
+                    )
+                    dance_level_cache['gt_dances'] = deduplicate_gt_dances(test_df)
+                    video_res = {}
+                    video_fps = {}
+                    for vn, res in zip(test_all_video_names, test_all_original_res):
+                        video_res[vn] = res
+                        if vn not in video_fps:
+                            vpath = os.path.join(config['data']['data_dir'], vn)
+                            cap = cv2.VideoCapture(vpath)
+                            video_fps[vn] = float(cap.get(cv2.CAP_PROP_FPS)) or 15.0
+                            cap.release()
+                    dance_level_cache['video_res'] = video_res
+                    dance_level_cache['video_fps'] = video_fps
+
+                crop_origins = dance_level_cache['crop_origins']
+                gt_dances = dance_level_cache['gt_dances']
+                video_res = dance_level_cache['video_res']
+                video_fps = dance_level_cache['video_fps']
+
+                averaged_preds = average_overlapping_predictions(
+                    test_preds, crop_origins, test_all_video_names,
+                    window_ranges=list(zip(test_all_starts, test_all_ends)),
+                    video_fps=video_fps,
+                )
+                predicted_runs = cross_window_cluster_predictions(
+                    averaged_preds, crop_origins, test_all_video_names, test_all_original_res,
+                    video_fps=video_fps,
+                    spatial_threshold=config['post_process']['spatial_threshold'],
+                    temporal_threshold_sec=config['post_process'].get('temporal_threshold_ms', 300) / 1000.0,
+                    confidence_threshold=config['post_process']['confidence_threshold'],
+                    min_samples=config['post_process'].get('min_samples', 1),
+                    mode=config['post_process'].get('mode', 'mean'),
+                    direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
+                    bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),
+                    temporal_boundary=config['post_process'].get('temporal_boundary', 'mean'),
+                )
+                dance_metrics = compute_dance_level_metrics(
+                    predicted_runs, gt_dances, video_res,
+                    pos_thresholds=dl_cfg['pos_thresholds'],
+                    iou_threshold_range=tuple(dl_cfg['iou_thresholds']),
+                    angular_thresholds=dl_cfg['angular_thresholds'],
+                )
+                print(f"Epoch {epoch+1}/{config['train']['epochs']} | Dance mAP: {dance_metrics['comprehensive']['map']:.4f} "
+                      f"| Recall: {dance_metrics['coverage']['recall']:.4f} | Precision: {dance_metrics['coverage']['precision']:.4f}")
+                dance_wandb_dict = {
+                    'dance/map': dance_metrics['comprehensive']['map'],
+                    'dance/mean_precision': dance_metrics['comprehensive']['mean_precision'],
+                    'dance/mean_recall': dance_metrics['comprehensive']['mean_recall'],
+                    'dance/mean_f1': dance_metrics['comprehensive']['mean_f1'],
+                    'dance/coverage_recall': dance_metrics['coverage']['recall'],
+                    'dance/coverage_precision': dance_metrics['coverage']['precision'],
+                    'dance/temporal_iou': dance_metrics['temporal']['mean_iou'],
+                    'dance/duration_accuracy': dance_metrics['temporal']['duration_accuracy'],
+                }
 
             wl_cfg = config['eval']['window_level']
             if wl_cfg.get('enabled', True):
@@ -388,13 +479,15 @@ def main(args):
                 wandb.log({
                     **train_log,
                     **val_log,
-                    **get_wandb_log_dict(epoch, test_metrics, post_test_metrics)
+                    **get_wandb_log_dict(epoch, test_metrics, post_test_metrics),
+                    **dance_wandb_dict,
                     })
             else:
                 print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (window-level metrics disabled via config)")
                 wandb.log({
                     **train_log,
                     **val_log,
+                    **dance_wandb_dict,
                     })
         else:
             print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (mAP skipped, next at epoch {((epoch // map_freq) + 1) * map_freq + 1})")
@@ -409,7 +502,11 @@ def main(args):
             current_score = val_loss
             is_best = current_score < best_score
             score_str = f"val_loss: {current_score:.4f}"
-        # else is std map
+        elif monitor_metric == 'dance_map' and compute_map:
+            # use dance-level mAP as the primary score. The higher is better
+            current_score = dance_metrics['comprehensive']['map']
+            is_best = current_score > best_score
+            score_str = f"Dance mAP: {current_score:.4f}"
         elif compute_map:
             # use post-processed comprehensive mAP as the primary score. The higher is better
             current_score = post_test_metrics['comprehensive']['map']
@@ -422,13 +519,14 @@ def main(args):
             score_str = "(mAP not computed)"
 
         std_map_val = post_test_metrics['comprehensive']['map'] if post_test_metrics else 0.0
+        dance_map_val = dance_metrics['comprehensive']['map'] if dance_metrics else 0.0
 
         if epoch % config['train']['val_freq'] == 0 or epoch == config['train']['epochs'] - 1:
             if is_best:
                 best_score = current_score
                 if config['train'].get('save_model', True):
                     torch.save({
-                        'epoch': epoch,
+                        'epoch': epoch + 1,  # 1-indexed, matches training's live display
                         'model_state_dict': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
                         'scheduler_state_dict': scheduler.state_dict(),
@@ -437,6 +535,7 @@ def main(args):
                         'best_score': best_score,
                         'val_loss': val_loss,
                         'std_map': std_map_val,
+                        'dance_map': dance_map_val,
                     }, os.path.join(ckpt_dir, 'best.pth'))
                     print(f"New best model saved -> {score_str}")
                 else:
@@ -444,7 +543,7 @@ def main(args):
 
             if config['train'].get('save_model', True):
                 torch.save({
-                    'epoch': epoch,
+                    'epoch': epoch + 1,  # 1-indexed, matches training's live display
                     'model_state_dict': model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
@@ -453,10 +552,11 @@ def main(args):
                     'best_score': best_score,
                     'val_loss': val_loss,
                     'std_map': std_map_val,
+                    'dance_map': dance_map_val,
                 }, os.path.join(ckpt_dir, 'latest.pth'))
-                print(f"Saved latest checkpoint at epoch {epoch}/{config['train']['epochs']}")
+                print(f"Saved latest checkpoint at epoch {epoch+1}/{config['train']['epochs']}")
             else:
-                print(f"Evaluated model at epoch {epoch}/{config['train']['epochs']} (model saving disabled)")
+                print(f"Evaluated model at epoch {epoch+1}/{config['train']['epochs']} (model saving disabled)")
 
     print('Training complete.')
     wandb.finish()
