@@ -1,7 +1,8 @@
-import numpy as np 
-import torch 
+import numpy as np
+import torch
 import matplotlib.pyplot as plt
-import os 
+import os
+from tqdm import tqdm
 
 def compute_pass_rates(test_preds, test_gts, 
                        pos_threshold=20, 
@@ -50,7 +51,8 @@ def compute_pass_rates(test_preds, test_gts,
 def compute_dance_pass_rates(predicted_runs, gt_dances, video_res,
                              pos_threshold=0.06,
                              iou_threshold=0.3,
-                             angular_threshold=15):
+                             angular_threshold=15,
+                             show_progress=False):
     """
     Dance-level equivalent of compute_pass_rates(). Unlike the window-level
     version (which just checks the top prediction against the first GT per
@@ -81,7 +83,8 @@ def compute_dance_pass_rates(predicted_runs, gt_dances, video_res,
     n_pairs_considered = 0
     matched_gts = {vname: set() for vname in gt_norm}
 
-    for conf, vname, pred in all_preds_flat:
+    pred_iter = tqdm(all_preds_flat, desc='Dance-level pass-rate matching', leave=False) if show_progress else all_preds_flat
+    for conf, vname, pred in pred_iter:
         vgts = gt_norm.get(vname, [])
         best_cost, best_idx = float('inf'), None
         for gidx, gt in enumerate(vgts):

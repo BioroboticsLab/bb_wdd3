@@ -509,6 +509,12 @@ async function selectVideo(videoName, isExternal = false) {
     state.videoFps = info.fps || 15;
     state.annotations = annotations;
 
+    // Native (highest) resolution for this recording, so marker sizes can
+    // be scaled consistently across resolution tiers (see getSizeScale).
+    const rec = !isExternal && state.recordings.find(r => r.base_id === state.currentBaseId);
+    const widths = rec ? rec.variants.map(v => v.width).filter(Boolean) : [];
+    state.nativeWidth = widths.length ? Math.max(...widths) : state.videoWidth;
+
     // Size canvas to fill container at correct aspect ratio
     resizeCanvas();
 
@@ -734,9 +740,26 @@ function renderFrameOnCanvas(img, frameIdx) {
   }
 }
 
+function getResScale() {
+  // Annotation x/y/dir are in the CURRENT video's own pixel space, but the
+  // marker sizes below are fixed pixel constants. Without this, a lower-
+  // resolution variant (fewer total pixels) ends up with a dot/arrow that
+  // covers a much larger fraction of the frame than it does at native
+  // resolution. Scaling by (current / native) width keeps the marker the
+  // same size relative to the frame at every resolution tier.
+  return (state.nativeWidth && state.videoWidth)
+    ? state.videoWidth / state.nativeWidth
+    : 1;
+}
+
+function getSizeScale(zoomLevel) {
+  return getResScale() / zoomLevel;
+}
+
 function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
   const pad = Math.round(state.videoFps);
-  const s = 1 / zoomLevel;
+  const resScale = getResScale();
+  const s = getSizeScale(zoomLevel);
   const isBg = style === 'background';
 
   for (let i = 0; i < state.annotations.length; i++) {
@@ -759,8 +782,8 @@ function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
     const dotScale = isBg ? 1.4 : 1.0;
     const lineScale = isBg ? 1.6 : 1.0;
     const dotR = isActive
-      ? Math.max(8 * s * dotScale, 3)
-      : Math.max(6 * s * dotScale, 2);
+      ? Math.max(8 * s * dotScale, 3 * resScale)
+      : Math.max(6 * s * dotScale, 2 * resScale);
 
     // Position dot
     ctx.globalAlpha = alpha;
@@ -770,13 +793,13 @@ function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
     ctx.fill();
     if (isActive) {
       ctx.strokeStyle = '#fff';
-      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.5);
+      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.5 * resScale);
       ctx.stroke();
     }
 
     // Direction arrow
     if (isActive) {
-      const arrowLen = Math.max(45 * s, 12);
+      const arrowLen = Math.max(45 * s, 12 * resScale);
       const endX = x + dir_x * arrowLen;
       const endY = y + dir_y * arrowLen;
 
@@ -784,11 +807,11 @@ function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
       ctx.moveTo(x, y);
       ctx.lineTo(endX, endY);
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(3.5 * s * lineScale, 1);
+      ctx.lineWidth = Math.max(3.5 * s * lineScale, 1 * resScale);
       ctx.stroke();
 
       // Arrowhead
-      const headLen = Math.max(10 * s, 4);
+      const headLen = Math.max(10 * s, 4 * resScale);
       const angle = Math.atan2(dir_y, dir_x);
       ctx.beginPath();
       ctx.moveTo(endX, endY);
@@ -796,13 +819,13 @@ function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
       ctx.moveTo(endX, endY);
       ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.8);
+      ctx.lineWidth = Math.max(2.5 * s * lineScale, 0.8 * resScale);
       ctx.stroke();
     }
 
     // Label — only in normal mode or when predictions off
     if (isActive && !isBg) {
-      const fontSize = Math.max(13 * s, 5);
+      const fontSize = Math.max(13 * s, 5 * resScale);
       const label = `R${run_id}`;
       ctx.font = `bold ${fontSize}px Inter`;
       ctx.textAlign = 'left';
@@ -819,7 +842,7 @@ function drawAnnotations(ctx, frameIdx, zoomLevel, style = 'normal') {
 
     // Label "GT" marker in background mode
     if (isActive && isBg) {
-      const fontSize = Math.max(10 * s, 4);
+      const fontSize = Math.max(10 * s, 4 * resScale);
       ctx.font = `${fontSize}px Inter`;
       ctx.textAlign = 'left';
       const lx = x + 14 * s;
@@ -837,7 +860,8 @@ function drawPredictions(ctx, frameIdx, zoomLevel) {
     return drawClusteredPredictions(ctx, frameIdx, zoomLevel);
   }
   if (!state.predictions) return;
-  const s = 1 / zoomLevel;
+  const resScale = getResScale();
+  const s = getSizeScale(zoomLevel);
 
   const preds = state.predictionMode === 'raw'
     ? state.predictions.raw
@@ -874,7 +898,7 @@ function drawPredictions(ctx, frameIdx, zoomLevel) {
     }
     const color = RUN_COLORS[colorIdx % RUN_COLORS.length];
 
-    const dotR = isActive ? Math.max(6 * s, 2) : Math.max(4 * s, 1.5);
+    const dotR = isActive ? Math.max(6 * s, 2 * resScale) : Math.max(4 * s, 1.5 * resScale);
 
     // Position dot — thin, solid
     ctx.globalAlpha = alpha;
@@ -883,12 +907,12 @@ function drawPredictions(ctx, frameIdx, zoomLevel) {
     ctx.fillStyle = color;
     ctx.fill();
     ctx.strokeStyle = '#000';
-    ctx.lineWidth = Math.max(1.5 * s, 0.5);
+    ctx.lineWidth = Math.max(1.5 * s, 0.5 * resScale);
     ctx.stroke();
 
     // Direction arrow — thin
     if (isActive) {
-      const arrowLen = Math.max(35 * s, 10);
+      const arrowLen = Math.max(35 * s, 10 * resScale);
       const endX = px + dx * arrowLen;
       const endY = py + dy * arrowLen;
 
@@ -896,11 +920,11 @@ function drawPredictions(ctx, frameIdx, zoomLevel) {
       ctx.moveTo(px, py);
       ctx.lineTo(endX, endY);
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2 * s, 0.8);
+      ctx.lineWidth = Math.max(2 * s, 0.8 * resScale);
       ctx.stroke();
 
       // Arrowhead
-      const headLen = Math.max(8 * s, 3);
+      const headLen = Math.max(8 * s, 3 * resScale);
       const angle = Math.atan2(dy, dx);
       ctx.beginPath();
       ctx.moveTo(endX, endY);
@@ -908,11 +932,11 @@ function drawPredictions(ctx, frameIdx, zoomLevel) {
       ctx.moveTo(endX, endY);
       ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(1.5 * s, 0.5);
+      ctx.lineWidth = Math.max(1.5 * s, 0.5 * resScale);
       ctx.stroke();
 
       // Confidence label
-      const fontSize = Math.max(11 * s, 4);
+      const fontSize = Math.max(11 * s, 4 * resScale);
       const confLabel = `${(conf * 100).toFixed(0)}%`;
       ctx.font = `bold ${fontSize}px Inter`;
       ctx.textAlign = 'left';
@@ -1815,17 +1839,18 @@ function renderModelViewAug(data) {
 
 function drawCropBox(ctx, crop, zoomLevel) {
   if (!crop) return;
-  const s = 1 / zoomLevel;
+  const resScale = getResScale();
+  const s = getSizeScale(zoomLevel);
 
   ctx.save();
   ctx.strokeStyle = '#f59e0b';
-  ctx.lineWidth = Math.max(2 * s, 0.5);
-  ctx.setLineDash([Math.max(8 * s, 2), Math.max(4 * s, 1)]);
+  ctx.lineWidth = Math.max(2 * s, 0.5 * resScale);
+  ctx.setLineDash([Math.max(8 * s, 2 * resScale), Math.max(4 * s, 1 * resScale)]);
   ctx.strokeRect(crop.x_min, crop.y_min, crop.x_max - crop.x_min, crop.y_max - crop.y_min);
   ctx.setLineDash([]);
 
   // Label
-  const fontSize = Math.max(11 * s, 4);
+  const fontSize = Math.max(11 * s, 4 * resScale);
   ctx.font = `bold ${fontSize}px Inter`;
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
   const labelText = '224×224 crop';
@@ -2679,7 +2704,8 @@ function buildClusterLegend() {
 function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
   const d = state.clusterData;
   if (!d || !d.consolidated) return;
-  const s = 1 / zoomLevel;
+  const resScale = getResScale();
+  const s = getSizeScale(zoomLevel);
   const pad = Math.round(state.videoFps);
 
   // Pass 1: draw raw detection dots (all as grey since we no longer have per-detection cluster labels)
@@ -2695,7 +2721,7 @@ function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
 
     const [px, py] = pred.position;
     const alpha = isActive ? 0.5 : 0.15;
-    const dotR = Math.max(3 * s, 1);
+    const dotR = Math.max(3 * s, 1 * resScale);
     ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.arc(px, py, dotR, 0, Math.PI * 2);
@@ -2715,7 +2741,7 @@ function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
     const [dx, dy] = c.direction;
     const color = CLUSTER_COLORS[ci % CLUSTER_COLORS.length];
     const alpha = isActive ? 1.0 : 0.3;
-    const diamondR = Math.max(7 * s, 2.5);
+    const diamondR = Math.max(7 * s, 2.5 * resScale);
 
     // Diamond shape
     ctx.globalAlpha = alpha;
@@ -2728,12 +2754,12 @@ function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
     ctx.fillStyle = color;
     ctx.fill();
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = Math.max(1.5 * s, 0.6);
+    ctx.lineWidth = Math.max(1.5 * s, 0.6 * resScale);
     ctx.stroke();
 
     // Direction arrow from centroid
     if (isActive) {
-      const arrowLen = Math.max(35 * s, 10);
+      const arrowLen = Math.max(35 * s, 10 * resScale);
       const endX = cx + dx * arrowLen;
       const endY = cy + dy * arrowLen;
 
@@ -2741,11 +2767,11 @@ function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
       ctx.moveTo(cx, cy);
       ctx.lineTo(endX, endY);
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2.5 * s, 1);
+      ctx.lineWidth = Math.max(2.5 * s, 1 * resScale);
       ctx.stroke();
 
       // Arrowhead
-      const headLen = Math.max(8 * s, 3);
+      const headLen = Math.max(8 * s, 3 * resScale);
       const angle = Math.atan2(dy, dx);
       ctx.beginPath();
       ctx.moveTo(endX, endY);
@@ -2753,11 +2779,11 @@ function drawClusteredPredictions(ctx, frameIdx, zoomLevel) {
       ctx.moveTo(endX, endY);
       ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2 * s, 0.7);
+      ctx.lineWidth = Math.max(2 * s, 0.7 * resScale);
       ctx.stroke();
 
       // Label: cluster index + member count
-      const fontSize = Math.max(10 * s, 4);
+      const fontSize = Math.max(10 * s, 4 * resScale);
       const label = `C${ci} (${c.n_detections || 1})`;
       ctx.font = `bold ${fontSize}px Inter`;
       ctx.textAlign = 'left';

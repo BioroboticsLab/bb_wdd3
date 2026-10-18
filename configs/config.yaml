@@ -6,7 +6,7 @@ data:
   width: 224
   height: 224
   window_size: 16
-  data_fraction_divisor: 4
+  data_fraction_divisor: 1
 augmentations:
   width: 224
   height: 224
@@ -71,12 +71,12 @@ model:
   n_classes: 1
 train:
   batch_size: 32
-  epochs: 100
+  epochs: 300
   lr: 0.0001
   weight_decay: 0.0005
   val_freq: 1
   use_amp: true
-  warmup_ratio: 0.03
+  warmup_ratio: 0.01
   num_workers: 4
   save_model: true
   betas:
@@ -115,10 +115,10 @@ logging:
   checkpoint_dir: ./checkpoints
   wandb_project: wagglenet
 eval:
-  batch_size: 64
+  batch_size: 32
   confidence_threshold: 0.001
   max_dets: 10
-  metric: loss
+  metric: dance_map
   map_freq: 5
   window_level:
     enabled: false
@@ -129,25 +129,28 @@ eval:
     - 25
     - 30
     iou_thresholds:
-    - 0.1
-    - 0.5
+    - 0.3
+    - 0.7
     angular_thresholds:
-    - 15
+    - 10
     - 20
     - 30
     match_pairs: hungarian
   dance_level:
     enabled: true
-    pos_thresholds:
-    - 0.02
-    - 0.04
-    - 0.06
-    - 0.08
-    - 0.1
+    pos_thresholds: # avg bee size across all video sources 0.0443
+    #- 0.03
+    #- 0.04
+    #- 0.06
+    #- 0.08
+    #- 0.1
+    - 0.045 # within one bee size away
+    - 0.090 # within two bee sizes away
+    - 0.135 # within three bee sizes away
     iou_thresholds:
-    - 0.1
-    - 0.5
+    - 0.3
+    - 0.7
     angular_thresholds:
-    - 15
+    - 10
     - 20
     - 30

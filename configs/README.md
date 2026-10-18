@@ -63,10 +63,12 @@ Both take `iou_thresholds` as a `[min, max]` range (temporal IoU, stepped intern
 `angular_thresholds` as a list of degrees. A prediction matches a ground-truth dance only if it
 passes position, temporal IoU **and** angle simultaneously.
 
-> Dance-level `pos_thresholds` are a fraction of frame width, while the clustering radius can be
-> expressed in bee lengths. The two are not on the same scale, and because bee size relative to
-> frame width differs per lab, a fixed fraction is a stricter test for some labs than others. Worth
-> keeping in mind when comparing per-lab numbers.
+> Dance-level `pos_thresholds` are still a fraction of frame width, but are now *chosen* in bee
+> lengths: `0.045` and `0.090` are one and two bee lengths at the average bee size across all
+> sources (0.0443). That puts them on roughly the same scale as a bee-length clustering radius.
+> It is one global average rather than a per-lab figure, so a lab whose bees are larger or smaller
+> relative to the frame than average still gets a slightly stricter or looser test — deliberate,
+> and the same reasoning as the global `bee_size_multiplier`.
 
 ## `model`
 

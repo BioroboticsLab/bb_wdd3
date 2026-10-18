@@ -35,6 +35,7 @@ from src.utils.dance_eval import (
     average_overlapping_predictions,
     cross_window_cluster_predictions,
     compute_dance_level_metrics,
+    lab_source,
 )
 import cv2
 import wandb
@@ -76,6 +77,13 @@ def main(args):
     )
     
     test_df  = data[~data['video_name'].isin(train_videos)].reset_index(drop=True)
+
+    if args.exclude_sharoni:
+        n_before = test_df['video_name'].nunique()
+        test_df = test_df[test_df['video_name'].apply(lab_source) != 'sharoni'].reset_index(drop=True)
+        n_after = test_df['video_name'].nunique()
+        print(f"  --exclude_sharoni: dropped {n_before - n_after} sharoni videos from val "
+              f"({n_after} videos remain)", flush=True)
 
     test_transform = T.Compose([
         T.ToPILImage(),
@@ -176,12 +184,12 @@ def main(args):
         # test preds and gts used for count stats in legends
         # will print deteciton diagnostic like mean confidence of raw vs postprocessed preds
         # and some data stats   
-        plot_confidence_histogram(test_preds_raw=test_preds_raw,
-                                  test_preds=test_preds,
-                                  test_gts=test_gts,
-                                  config=config,
-                                  save_path='./outputs/diagnostics/confidence_histogram.png'  
-                                  )
+        #plot_confidence_histogram(test_preds_raw=test_preds_raw,
+        #                          test_preds=test_preds,
+        #                          test_gts=test_gts,
+        #                          config=config,
+        #                          save_path='./outputs/diagnostics/confidence_histogram.png'  
+        #                          )
 
 
         wl_cfg = config['eval']['window_level']
@@ -304,6 +312,7 @@ def main(args):
                 test_preds, crop_origins, test_all_video_names,
                 window_ranges=list(zip(test_all_starts, test_all_ends)),
                 video_fps=video_fps,
+                temporal_boundary=args.avg_temporal_boundary,
             )
 
             predicted_runs = cross_window_cluster_predictions(
@@ -316,6 +325,7 @@ def main(args):
                 mode=config['post_process'].get('mode', 'mean'),
                 direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
                 bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),  # None = unchanged default behavior
+                temporal_boundary=args.temporal_boundary,
             )
 
             dance_metrics = compute_dance_level_metrics(
@@ -323,8 +333,13 @@ def main(args):
                 pos_thresholds=dl_cfg['pos_thresholds'],
                 iou_threshold_range=tuple(dl_cfg['iou_thresholds']),
                 angular_thresholds=dl_cfg['angular_thresholds'],
+                max_dets=args.dance_max_dets,
+                show_progress=True,
             )
 
+            if args.dance_max_dets is not None:
+                print(f"\n(dance-level AP capped to top {args.dance_max_dets} preds/video, "
+                      f"COCOeval-style)")
             print("\n=== Dance-level metrics ===")
             print(f"  Dance mAP:        {dance_metrics['comprehensive']['map']:.4f}")
             print(f"  Mean Precision:   {dance_metrics['comprehensive']['mean_precision']:.4f}")
@@ -334,6 +349,9 @@ def main(args):
                   f"(recall={dance_metrics['coverage']['recall']:.4f}, precision={dance_metrics['coverage']['precision']:.4f})")
             print(f"  Spatial error:    mean={dance_metrics['spatial']['mean_error']:.4f}  median={dance_metrics['spatial']['median_error']:.4f}")
             print(f"  Temporal IoU:     mean={dance_metrics['temporal']['mean_iou']:.4f}  median={dance_metrics['temporal']['median_iou']:.4f}")
+            print(f"  Start/End error:  start={dance_metrics['temporal']['mean_start_error']:.1f}f  end={dance_metrics['temporal']['mean_end_error']:.1f}f "
+                  f"(bias: start={dance_metrics['temporal']['me_start']:+.1f}f  end={dance_metrics['temporal']['me_end']:+.1f}f, <0=too early >0=too late)")
+            print(f"  Duration accuracy: {dance_metrics['temporal']['duration_accuracy']:.4f}  (1.0=perfect)")
             print(f"  Directional err:  mean={dance_metrics['directional']['mean_error']:.2f} deg  median={dance_metrics['directional']['median_error']:.2f} deg")
 
             compute_dance_pass_rates(
@@ -341,6 +359,7 @@ def main(args):
                 pos_threshold=dl_cfg['pos_thresholds'][0],
                 iou_threshold=dl_cfg['iou_thresholds'][0],
                 angular_threshold=dl_cfg['angular_thresholds'][0],
+                show_progress=True,
             )
         else:
             print("\n(dance-level metrics disabled via config)")
@@ -356,6 +375,24 @@ def get_args():
 
     parser.add_argument("--config_path", type=str, default='./configs/config.yaml', help="Path to the config file.")
     parser.add_argument("--ckpt_path", type=str, default='./ckpt/best_model.pth', help="Path to the ckpt file.")
+    parser.add_argument("--dance_max_dets", type=int, default=None,
+                         help="Like COCOeval's maxDets: cap dance-level AP to the top-N "
+                              "highest-confidence predicted runs per video. Omit for the "
+                              "existing unbounded behavior (default).")
+    parser.add_argument("--temporal_boundary", type=str, default="union", choices=["union", "mean"],
+                         help="'union' (default, tim's original) = min/max cluster boundary at "
+                              "the DBSCAN clustering stage. 'mean' = mean start/end instead, "
+                              "tested to give better temporal IoU.")
+    parser.add_argument("--avg_temporal_boundary", type=str, default="union", choices=["union", "mean"],
+                         help="same idea as --temporal_boundary, but for the EARLIER "
+                              "average_overlapping_predictions consolidation stage instead of "
+                              "the DBSCAN stage. independent flag so all 4 combos can be tested.")
+    parser.add_argument("--exclude_sharoni", action="store_true",
+                         help="drop sharoni-lab videos from the val split before eval. sharoni "
+                              "only has 2 actual recording sessions in the whole dataset (train "
+                              "gets one, val gets the other), so its numbers are basically a "
+                              "one-shot generalization test dragging down the aggregate -- use "
+                              "this to see how much.")
 
     return parser.parse_args()
 
