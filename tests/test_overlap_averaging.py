@@ -19,6 +19,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.utils.dance_eval import average_overlapping_predictions
 
+# These tests were written against the implicit 15 fps default. State it
+# explicitly so they exercise the normal path rather than the warning.
+FPS_15 = {'vid_A': 15.0, 'vid_B': 15.0}
+
 
 def _pred(conf, pos, direction=(1.0, 0.0), temporal=(10, 20),
           grid_cell=(0, 0, 0), window_start=0):
@@ -52,7 +56,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A', 'vid_A', 'vid_A']
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         # Should produce exactly 1 averaged prediction
@@ -84,6 +89,7 @@ class TestAverageOverlapping:
         result = average_overlapping_predictions(
             per_window_preds, crop_origins, video_names,
             window_ranges=window_ranges,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -106,7 +112,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A', 'vid_A', 'vid_A']
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -127,7 +134,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A', 'vid_A']
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -147,7 +155,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A', 'vid_B']  # different videos
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -177,7 +186,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A', 'vid_A']
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -207,7 +217,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A', 'vid_A']
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -234,7 +245,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A', 'vid_A', 'vid_A']
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -260,6 +272,7 @@ class TestAverageOverlapping:
         result = average_overlapping_predictions(
             per_window_preds, crop_origins, video_names,
             window_ranges=window_ranges,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -269,7 +282,7 @@ class TestAverageOverlapping:
 
     def test_empty_input(self):
         """No windows → no output."""
-        result = average_overlapping_predictions([], [], [])
+        result = average_overlapping_predictions([], [], [], video_fps=FPS_15)
         assert result == []
 
     def test_single_window_passthrough(self):
@@ -281,7 +294,8 @@ class TestAverageOverlapping:
         video_names = ['vid_A']
 
         result = average_overlapping_predictions(
-            per_window_preds, crop_origins, video_names
+            per_window_preds, crop_origins, video_names,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -312,6 +326,7 @@ class TestAverageOverlapping:
         result = average_overlapping_predictions(
             per_window_preds, crop_origins, video_names,
             window_ranges=window_ranges,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -345,6 +360,7 @@ class TestAverageOverlapping:
         result = average_overlapping_predictions(
             per_window_preds, crop_origins, video_names,
             window_ranges=window_ranges,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
@@ -373,6 +389,7 @@ class TestAverageOverlapping:
         result = average_overlapping_predictions(
             per_window_preds, crop_origins, video_names,
             window_ranges=window_ranges,
+            video_fps=FPS_15,
         )
 
         all_preds = [p for preds in result for p in preds]
