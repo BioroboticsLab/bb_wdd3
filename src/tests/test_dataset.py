@@ -8,8 +8,7 @@ import torchvision.transforms as T
 import pandas as pd
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-# from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
-from src.data.dataset_tempaug import VideoYoloDataset, TemporalWaggleCollator
+from src.data.dataset import VideoYoloDataset, TemporalWaggleCollator
 from src.data.augmentation import WaggleAugmentations
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn  as nn
