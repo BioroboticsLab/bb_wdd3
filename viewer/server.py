@@ -797,6 +797,7 @@ class SlidingWindowInference:
         per_window_preds = average_overlapping_predictions(
             per_window_preds, crop_origins, v_names,
             window_ranges=window_ranges,
+            video_fps={video_name: vid_fps},
         )
         n_after = sum(len(w) for w in per_window_preds)
         if n_before != n_after:
@@ -1031,6 +1032,7 @@ class EvaluationEngine:
                         gt_dances = deduplicate_gt_dances(test_df)
                         averaged = average_overlapping_predictions(
                             self._cached_preds, self._cached_crop_origins, video_names,
+                            video_fps=video_fps,
                         )
                         pp = config.get('post_process', {})
                         predicted_runs = cross_window_cluster_predictions(
@@ -1419,7 +1421,8 @@ class EvaluationEngine:
 
             # Average overlapping windows BEFORE clustering
             averaged_preds = average_overlapping_predictions(
-                test_preds, crop_origins, all_video_names
+                test_preds, crop_origins, all_video_names,
+                video_fps=video_fps,
             )
             n_before = sum(len(w) for w in test_preds)
             n_after = sum(len(w) for w in averaged_preds)
@@ -1604,7 +1607,8 @@ class EvaluationEngine:
                 annotations_df[~annotations_df['video_name'].isin(train_videos)].reset_index(drop=True)
             )
             averaged_preds = average_overlapping_predictions(
-                test_preds, crop_origins, all_video_names
+                test_preds, crop_origins, all_video_names,
+                video_fps=self._cached_video_fps,
             )
             self._rc_cache = {
                 'video_res': video_res,
@@ -2568,7 +2572,9 @@ def api_eval_video(video_name):
 
     if v_origins and v_res:
         v_names = [video_name] * len(indices)
-        averaged = average_overlapping_predictions(v_preds, v_origins, v_names)
+        averaged = average_overlapping_predictions(
+            v_preds, v_origins, v_names, video_fps={video_name: fps},
+        )
         predicted_runs_dict = cross_window_cluster_predictions(
             averaged, v_origins, v_names, v_res,
             video_fps={video_name: fps},

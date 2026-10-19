@@ -9,6 +9,7 @@ angular error).
 
 import itertools
 import numpy as np
+import warnings
 from collections import defaultdict
 from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
@@ -42,6 +43,29 @@ def lab_source(video_name: str) -> str:
     else:
         return "other"
 
+
+
+DEFAULT_FPS = 15.0
+
+
+def _fps_for(video_fps, video_name):
+    """Frame rate for a video, warning when we have to guess.
+
+    Temporal thresholds here are durations, so an unknown frame rate is not
+    a harmless default: assuming 15 fps on 60 fps footage shrinks every gap
+    by 4x and fragments single waggle runs. Six call sites omitted the map
+    without anyone noticing, so say so out loud.
+    """
+    if video_fps and video_name in video_fps:
+        return video_fps[video_name]
+    warnings.warn(
+        f"No fps given for {video_name!r}; assuming {DEFAULT_FPS}. Temporal "
+        f"thresholds are in seconds, so this is wrong for any other frame "
+        f"rate -- pass video_fps.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return DEFAULT_FPS
 
 # ─── Crop origin computation ─────────────────────────────────────────────────
 
@@ -255,7 +279,7 @@ def average_overlapping_predictions(per_window_preds, crop_origins, video_names,
         # 403) at the same cell get merged into one detection spanning
         # frames 158–419, crushing confidence and creating a bogus extent.
         vname = key[0]
-        fps = (video_fps or {}).get(vname, 15.0)
+        fps = _fps_for(video_fps, vname)
         max_gap_frames = max_temporal_gap_sec * fps
         
         averaged = []
@@ -411,10 +435,7 @@ def cross_window_cluster_predictions(
     ):
         # Determine fps for this video
         if vname not in _video_fps:
-            if video_fps and vname in video_fps:
-                _video_fps[vname] = video_fps[vname]
-            else:
-                _video_fps[vname] = 15.0  # fallback
+            _video_fps[vname] = _fps_for(video_fps, vname)
         fps = _video_fps[vname]
         
         for pred in window_preds:
