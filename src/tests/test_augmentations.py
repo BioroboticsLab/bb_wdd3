@@ -1,5 +1,7 @@
 import os
 import numpy as np
+import pytest
+import yaml
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
@@ -56,10 +58,23 @@ def test_window_augmentations(augmentation_config=None, test_name="test"):
     print(f"Current directory: {os.getcwd()}")
     print(f"Saving to: {output_dir}")
     
-    # Use your actual data paths
-    data_dir = '/home/prajna/complete_data/videos/'
-    annotations_path = '/home/prajna/complete_data/annotations/fps_multires_full_data.csv'
-    
+    # Data paths come from the project config, not a hardcoded home directory.
+    repo_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
+    with open(os.path.join(repo_root, 'configs', 'config.yaml')) as f:
+        data_cfg = yaml.safe_load(f)['data']
+    data_dir = os.path.join(repo_root, data_cfg['data_dir'])
+    annotations_path = os.path.join(repo_root, data_cfg['annotations'])
+
+    # The dataset is not in the repository, and the annotation CSV is stored in
+    # Git LFS -- a checkout without `git lfs pull` leaves a ~130 byte pointer
+    # where the data should be. Either way there is nothing to visualise.
+    if not os.path.exists(annotations_path):
+        pytest.skip(f"dataset not available: {annotations_path} is missing")
+    if os.path.getsize(annotations_path) < 1024:
+        pytest.skip(f"dataset not available: {annotations_path} is an LFS pointer")
+    if not os.path.isdir(data_dir):
+        pytest.skip(f"dataset not available: {data_dir} is missing")
+
     # Load annotations
     df = pd.read_csv(annotations_path)
     

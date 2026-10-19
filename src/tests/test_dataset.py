@@ -376,9 +376,9 @@ def main(args):
 def get_args():
     parser = argparse.ArgumentParser(description="Waggle detection training")
 
-    parser.add_argument("--data_dir", type=str, default='/home/prajna/complete_data/videos/', help="Root directory containing video files")
+    parser.add_argument("--data_dir", type=str, default='./data/videos/', help="Root directory containing video files")
 
-    parser.add_argument("--csv_path", type=str, default="/home/prajna/complete_data/annotations/fps_multires_full_data.csv", help="Path to annotations csv")
+    parser.add_argument("--csv_path", type=str, default="./data/annotations/fps_multires_clean.csv", help="Path to annotations csv")
 
     parser.add_argument("--batch_size", type=int, default=4)
 
