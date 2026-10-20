@@ -15,27 +15,31 @@ change here as an experiment, not a tweak.
 
 | Key | Current | Meaning |
 |---|---|---|
-| `spatial_threshold` | 49.4 | DBSCAN radius in pixels, expressed at a reference width of 1000 px and rescaled per video. **Ignored when `bee_size_multiplier` is set**, except as the fallback for videos from an uncalibrated lab |
+| `spatial_threshold` | 49.4 | DBSCAN radius in pixels at a reference width of 1000 px. **Ignored when `cluster_radius_mm` is set**, except as the fallback for a lab with no mm calibration |
 | `temporal_threshold_ms` | 130.3 | How far apart in time two detections can be and still belong to the same run. In milliseconds, so frame rate does not matter |
 | `confidence_threshold` | 0.2175 | Detections below this are dropped before clustering |
 | `min_samples` | 2 | DBSCAN `min_samples` |
 | `direction_threshold_deg` | 45 | Angular separation beyond which detections will not cluster together. **`0` disables the direction dimension entirely** |
-| `bee_size_multiplier` | 0.5 | Clustering radius expressed in bee lengths instead of pixels — see below. `null` restores the plain `spatial_threshold` behaviour |
+| `cluster_radius_mm` | 5.0 | Clustering radius as a physical distance — see below. `null` restores the plain `spatial_threshold` behaviour |
 | `mode` | `mean` | How a cluster is summarised into one prediction: `mean` or `median` |
 | `strategy` | `cluster_consolidate` | Window-level strategy. Also accepts `nms`, `max`, `weighted`, `cluster_max`, `line_nms`; only `cluster_consolidate` is used in practice |
 | `temporal_threshold` | 8 | Legacy frame-based threshold, used only by the window-level path. `temporal_threshold_ms` is the one that matters |
 
-### `bee_size_multiplier`
+### `cluster_radius_mm`
 
-A single globally tuned number, multiplied by a per-lab measured constant
-(`BEE_LENGTH_FRACTION` in `src/utils/dance_eval.py`), giving "N bee lengths apart still counts as
-the same dance". The effective radius therefore differs per lab while the tuned number stays
-shared — which is deliberate: the model is meant to work across setups without per-lab
-hyperparameter fitting, and calibration the user has to perform is a cost to keep as low as
-possible.
+"Detections within this many millimetres are the same dance." Converted per video through
+`FRAME_WIDTH_MM` in `src/utils/dance_eval.py`, so one configured number means the same physical
+distance whatever the camera distance — which is the point: the model is meant to work across
+setups without per-lab hyperparameter fitting.
 
-The per-lab constant is measured, not tuned. It comes from the comb-cell annotator in
-`src/data/combcell_annotator/`.
+`FRAME_WIDTH_MM` is measured, not tuned. The comb-cell annotator in
+`src/data/combcell_annotator/` gives a mean cell diameter in pixels; a worker comb cell is ~5 mm,
+so `frame_width_mm = frame_width_px / (cell_px / 5)`. Currently berlin 446.5, nieh 129.0,
+sharoni 303.3 — field-of-view widths you can sanity-check against the real hives.
+
+The default 5.0 is exactly one comb cell, and reproduces the previous `bee_size_multiplier: 0.5`
+operating point bit for bit (that parameterisation was `radius_mm = 10 x N`, so the rename is a
+pure reparameterisation).
 
 ### Restoring the baseline
 
@@ -55,20 +59,19 @@ worse.
 | `metric` | Which validation metric selects `best.pth` |
 | `map_freq` | Compute mAP every N epochs during training. The full sweep is expensive, so this is not 1 |
 
-`window_level` scores individual 16-frame windows; `pos_thresholds` are in pixels. `dance_level`
-scores complete waggle runs after clustering; its `pos_thresholds` are fractions of frame width.
+`window_level` scores individual 16-frame windows; its `pos_thresholds` are in pixels.
+`dance_level` scores complete waggle runs after clustering; its `pos_thresholds_mm` are millimetres.
 Each block has an `enabled` flag — window-level is currently off, dance-level on.
 
 Both take `iou_thresholds` as a `[min, max]` range (temporal IoU, stepped internally) and
 `angular_thresholds` as a list of degrees. A prediction matches a ground-truth dance only if it
 passes position, temporal IoU **and** angle simultaneously.
 
-> Dance-level `pos_thresholds` are still a fraction of frame width, but are now *chosen* in bee
-> lengths: `0.045` and `0.090` are one and two bee lengths at the average bee size across all
-> sources (0.0443). That puts them on roughly the same scale as a bee-length clustering radius.
-> It is one global average rather than a per-lab figure, so a lab whose bees are larger or smaller
-> relative to the frame than average still gets a slightly stricter or looser test — deliberate,
-> and the same reasoning as the global `bee_size_multiplier`.
+> Dance-level `pos_thresholds_mm` are millimetres, converted per video the same way as the
+> clustering radius. Previously they were fractions of frame width, which meant one configured
+> threshold was ~20 mm for berlin but ~6 mm for nieh — a 3.4x difference in strictness coming
+> purely from camera distance. Per-lab comparisons made before that change are reading that
+> artefact as well as model quality.
 
 ## `model`
 

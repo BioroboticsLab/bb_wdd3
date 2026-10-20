@@ -1,7 +1,7 @@
 """
 prototyping: bee-length-relative pos_thresholds instead of one fixed
-normalized fraction for every video. same idea as bee_size_multiplier --
-one shared N, applied on top of each lab's own measured BEE_LENGTH_FRACTION,
+normalized fraction for every video. same idea as cluster_radius_mm --
+one shared distance, converted per video through FRAME_WIDTH_MM,
 so the threshold means "N bee-lengths away" consistently across labs
 instead of a fixed distance that's tight for one lab and loose for another.
 
@@ -16,7 +16,7 @@ import numpy as np
 from src.utils.video_utils import train_val_split_videos
 from src.utils.dance_eval import (
     deduplicate_gt_dances, average_overlapping_predictions,
-    cross_window_cluster_predictions, BEE_LENGTH_FRACTION, lab_source,
+    cross_window_cluster_predictions, norm_distance_for_mm, lab_source,
 )
 
 CACHE_PATH = "viewer/.eval_cache.pkl"
@@ -25,11 +25,17 @@ FALLBACK_FRACTION = 0.046  # rough weighted-avg bee length across labs, used whe
 
 
 # step 1: the core threshold-per-pair helper
-def bee_relative_pos_threshold(n, vname, fallback=FALLBACK_FRACTION):
-    lab = lab_source(vname)
-    if lab in BEE_LENGTH_FRACTION:
-        return n * BEE_LENGTH_FRACTION[lab]
-    return n * fallback
+def bee_relative_pos_threshold(mm, vname, fallback=FALLBACK_FRACTION):
+    """Position threshold as a fraction of frame width, for this video.
+
+    Was "n bee-lengths x the lab's measured bee length"; the same quantity is
+    now a physical distance converted through FRAME_WIDTH_MM, so `mm` is
+    millimetres rather than bee-lengths (1 bee-length was ~10 mm).
+    """
+    norm = norm_distance_for_mm(mm, vname)
+    if norm is not None:
+        return norm
+    return (mm / 10.0) * fallback   # uncalibrated lab: old bee-length fallback
 
 
 def test_step_1():
@@ -77,7 +83,7 @@ def step_2_real_data():
         confidence_threshold=pp["confidence_threshold"],
         min_samples=pp.get("min_samples", 1), mode=pp.get("mode", "mean"),
         direction_threshold_deg=pp.get("direction_threshold_deg", 30.0),
-        bee_size_multiplier=pp.get("bee_size_multiplier"),
+        cluster_radius_mm=pp.get("cluster_radius_mm"),
         temporal_boundary="mean",
     )
 

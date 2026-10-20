@@ -9,23 +9,32 @@ angular error).
 
 import itertools
 import numpy as np
-import warnings
 from collections import defaultdict
 from sklearn.cluster import DBSCAN
 from scipy.optimize import linear_sum_assignment
 from tqdm import tqdm
 
-# Bee length as a fraction of frame width, per lab -- from the comb-cell
-# annotator (src/data/combcell_annotator/, output/projected_summary.csv),
-# using each lab's measured comb-cell diameter and the width~1x/length~2x
-# body-ratio approximation (see combcell_annotator/docs.txt for caveats).
-# Constant across resolution tiers within a lab by construction (multi-res
-# tiers are the same footage re-encoded, not a different field of view) --
-# so this only needs a per-lab entry, not per-resolution.
-BEE_LENGTH_FRACTION = {
-    "berlin": 0.0224,
-    "nieh": 0.0775,
-    "sharoni": 0.0330,
+# How wide the field of view is, in millimetres, per recording setup.
+#
+# Measured, not tuned: the comb-cell annotator (src/data/combcell_annotator/,
+# output/projected_summary.csv) gives a mean cell diameter in pixels, and a
+# worker comb cell is ~5 mm. So frame_width_mm = frame_width_px / (cell_px / 5):
+#
+#   berlin   2304 px wide, cell 25.80 px  ->  446.5 mm
+#   nieh      960 px wide, cell 37.20 px  ->  129.0 mm
+#   sharoni  1224 px wide, cell 20.18 px  ->  303.3 mm
+#
+# Resolution-free by construction: every tier of one recording is the same
+# footage re-encoded, so the field of view -- and therefore this number -- is
+# identical across tiers. Normalised coordinates then come out resolution
+# invariant for free.
+#
+# Caveat worth knowing: each entry rests on cells clicked in a single frame of
+# a single video (n_source_videos: 1 in projected_summary.csv).
+FRAME_WIDTH_MM = {
+    "berlin": 446.5,
+    "nieh": 129.0,
+    "sharoni": 303.3,
 }
 
 
@@ -45,27 +54,38 @@ def lab_source(video_name: str) -> str:
 
 
 
-DEFAULT_FPS = 15.0
+def frame_width_mm(video_name):
+    """Field-of-view width in mm for this video, or None if its lab is
+    uncalibrated. Keyed by filename prefix via lab_source()."""
+    return FRAME_WIDTH_MM.get(lab_source(video_name))
+
+
+def norm_distance_for_mm(mm, video_name):
+    """A physical distance as a fraction of frame width, for this video.
+
+    None when the lab has no calibration -- callers decide what to do rather
+    than silently receiving a number derived from a guess.
+    """
+    width = frame_width_mm(video_name)
+    return None if width is None else mm / width
+
 
 
 def _fps_for(video_fps, video_name):
-    """Frame rate for a video, warning when we have to guess.
+    """Frame rate for a video. Raises when unknown.
 
-    Temporal thresholds here are durations, so an unknown frame rate is not
-    a harmless default: assuming 15 fps on 60 fps footage shrinks every gap
-    by 4x and fragments single waggle runs. Six call sites omitted the map
-    without anyone noticing, so say so out loud.
+    Temporal thresholds in this module are durations, so an unknown frame rate
+    is not a harmless default -- assuming 15 fps on 60 fps footage shrinks
+    every gap by 4x and fragments single waggle runs. Six call sites omitted
+    the map without anyone noticing (#5), which is why this is an error rather
+    than a fallback. Every caller already has the fps to hand.
     """
     if video_fps and video_name in video_fps:
         return video_fps[video_name]
-    warnings.warn(
-        f"No fps given for {video_name!r}; assuming {DEFAULT_FPS}. Temporal "
-        f"thresholds are in seconds, so this is wrong for any other frame "
-        f"rate -- pass video_fps.",
-        UserWarning,
-        stacklevel=3,
+    raise ValueError(
+        f"No frame rate for {video_name!r}. Temporal thresholds here are in "
+        f"seconds, so this cannot be defaulted -- pass video_fps."
     )
-    return DEFAULT_FPS
 
 # ─── Crop origin computation ─────────────────────────────────────────────────
 
@@ -370,7 +390,7 @@ def cross_window_cluster_predictions(
     min_samples=1,
     mode='mean',
     direction_threshold_deg=30.0,
-    bee_size_multiplier=None,
+    cluster_radius_mm=None,
     temporal_boundary='union',
 ):
     """
@@ -387,9 +407,8 @@ def cross_window_cluster_predictions(
         video_resolutions: list of (H, W) per window
         video_fps: dict {video_name: fps} or None (defaults to 15fps)
         spatial_threshold: DBSCAN eps in pixels (at reference 1000px width).
-            Used as-is when bee_size_multiplier is None (default, unchanged
-            behavior). Ignored (except as the fallback for unrecognized labs)
-            when bee_size_multiplier is set -- see below.
+            Used as-is when cluster_radius_mm is None. Ignored (except as the
+            fallback for an uncalibrated lab) when cluster_radius_mm is set.
         temporal_threshold_sec: temporal proximity in seconds for clustering
         confidence_threshold: minimum confidence to include
         min_samples: DBSCAN min_samples
@@ -397,23 +416,13 @@ def cross_window_cluster_predictions(
         direction_threshold_deg: angular separation (degrees) beyond which
             detections are unlikely to cluster. Uses unit-vector chord distance.
             0 = direction dimension disabled. Default 30°.
-        bee_size_multiplier: if set, the spatial (and derived temporal) eps
-            is computed per-video as `bee_size_multiplier * BEE_LENGTH_FRACTION[lab]`
-            instead of the fixed `spatial_threshold / 1000.0` -- i.e. "N
-            bee-lengths apart still counts as the same dance", calibrated per
-            lab instead of one global fraction-of-frame-width for everyone.
-            Videos from a lab not in BEE_LENGTH_FRACTION fall back to the
-            plain spatial_threshold behavior (with a warning), so an
-            unmeasured/new source degrades to today's behavior rather than
-            using a wrong or guessed value. None (default) preserves the
-            exact existing behavior for every video, unconditionally.
-        temporal_boundary: 'union' (default, tim's original) takes min(start)/
-            max(end) across cluster members -- tested and found to bias
-            predicted runs wider than the true dance (matched-pair mean IoU
-            0.510). 'mean' takes the mean start/mean end instead, same idea
-            as how position already gets aggregated -- tested at IoU 0.604 on
-            the same clusters. default is 'union' so nothing changes unless
-            you opt in.
+        cluster_radius_mm: if set, the spatial (and derived temporal) eps is a
+            physical distance -- "detections within this many millimetres are
+            the same dance" -- converted per video through FRAME_WIDTH_MM, so
+            one configured number means the same thing at every camera
+            distance. `spatial_threshold` is then unused except as the
+            fallback for a lab with no calibration. None (default) keeps the
+            plain `spatial_threshold` behaviour for every video.
 
     Returns:
         dict: {video_name: [predicted_run_dict, ...]}
@@ -481,22 +490,20 @@ def cross_window_cluster_predictions(
             features.append(row)
         features = np.array(features)
         
-        # Spatial eps in normalized space. Default (bee_size_multiplier=None):
-        # one fixed fraction of frame width for every video, unchanged from
-        # before. Opt-in: N bee-lengths for this video's lab, falling back to
-        # the default for a lab we haven't measured.
+        # Spatial eps in normalised space. Default (cluster_radius_mm=None):
+        # one fixed fraction of frame width for every video. Preferred: a
+        # physical radius in mm, converted per video, so the same number means
+        # the same distance whatever the camera distance.
         ref_size = 1000.0
-        if bee_size_multiplier is not None:
-            lab = lab_source(vname)
-            if lab in BEE_LENGTH_FRACTION:
-                norm_spatial_eps = bee_size_multiplier * BEE_LENGTH_FRACTION[lab]
-            else:
-                print(f"  [warn] {vname}: unrecognized lab, no bee-size "
-                      f"calibration available -- using default spatial_threshold")
+        if cluster_radius_mm is not None:
+            norm_spatial_eps = norm_distance_for_mm(cluster_radius_mm, vname)
+            if norm_spatial_eps is None:
+                print(f"  [warn] {vname}: no mm calibration for this lab -- "
+                      f"falling back to spatial_threshold")
                 norm_spatial_eps = spatial_threshold / ref_size
         else:
             norm_spatial_eps = spatial_threshold / ref_size
-        
+
         # Scale temporal (seconds) so that temporal_threshold_sec ≈ norm_spatial_eps
         temporal_scale = norm_spatial_eps / temporal_threshold_sec if temporal_threshold_sec > 0 else 1.0
         
@@ -593,7 +600,7 @@ def compute_dance_level_metrics(
     predicted_runs,
     gt_dances,
     gt_video_resolutions,
-    pos_thresholds=None,
+    pos_thresholds_mm=None,
     iou_threshold_range=None,
     angular_thresholds=None,
     max_dets=None,
@@ -623,15 +630,18 @@ def compute_dance_level_metrics(
         predicted_runs: dict {video_name: [pred_dict, ...]}
         gt_dances: dict {video_name: [gt_dict, ...]} from deduplicate_gt_dances()
         gt_video_resolutions: dict {video_name: (H, W)} for normalizing GT positions
-        pos_thresholds: list of position thresholds (in normalized [0,1] space)
+        pos_thresholds_mm: list of position thresholds in millimetres. Converted
+            per video through FRAME_WIDTH_MM, so one threshold is one physical
+            distance at every camera distance rather than a frame fraction that
+            silently means 20 mm for berlin and 6 mm for nieh.
         iou_threshold_range: (min, max) for temporal IoU
         angular_thresholds: list of angular thresholds in degrees
     
     Returns:
         dict with keys: map, precision, recall, f1, coverage, spatial, temporal, directional
     """
-    if pos_thresholds is None:
-        pos_thresholds = [0.02, 0.04, 0.06, 0.08, 0.10]  # ~20-100px at 1000px width
+    if pos_thresholds_mm is None:
+        pos_thresholds_mm = [10.0, 20.0]  # ~one and two bee lengths
     if iou_threshold_range is None:
         iou_threshold_range = (0.1, 0.5)  # more lenient for dance-level
     if angular_thresholds is None:
@@ -685,10 +695,10 @@ def compute_dance_level_metrics(
     f1_scores = []
     all_matched_pairs = []
     
-    combos = list(itertools.product(pos_thresholds, iou_thresholds, angular_thresholds))
+    combos = list(itertools.product(pos_thresholds_mm, iou_thresholds, angular_thresholds))
     combo_iter = tqdm(combos, desc='Dance-level threshold sweep', leave=False) if show_progress else combos
 
-    for pos_threshold, iou_threshold, angular_threshold in combo_iter:
+    for pos_threshold_mm, iou_threshold, angular_threshold in combo_iter:
         # Greedy confidence sweep
         matched_gts = {vname: set() for vname in all_videos}
         tp_flags = []
@@ -696,6 +706,12 @@ def compute_dance_level_metrics(
         
         for conf, vname, _idx, pred in all_preds_flat:
             vgts = gt_norm.get(vname, [])
+
+            # mm -> fraction of frame width, for this video's setup
+            pos_threshold = norm_distance_for_mm(pos_threshold_mm, vname)
+            if pos_threshold is None:
+                # uncalibrated lab: fall back to the old frame-fraction scale
+                pos_threshold = pos_threshold_mm / 1000.0
             
             best_cost = float('inf')
             best_gt_idx = None

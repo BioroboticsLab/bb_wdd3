@@ -116,7 +116,7 @@ cached to disk, so reopening the page does not recompute them; the cache is inva
 checkpoint's epoch changes.
 
 **Re-clustering** is the reason the dashboard exists. Post-processing parameters — spatial
-threshold, temporal threshold, confidence, `min_samples`, direction threshold, bee-size multiplier —
+threshold, temporal threshold, confidence, `min_samples`, direction threshold, clustering radius in mm —
 have sliders, and changing one re-scores the cached predictions without re-running inference. This
 turns a parameter sweep from an overnight job into a few seconds.
 

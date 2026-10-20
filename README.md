@@ -145,7 +145,7 @@ from, and every file in them follows the naming convention below.
 **Lab prefix.** The pipeline (and training code -- `lab_source()` /
 `get_video_category()` in `src/utils/dance_eval.py` /
 `src/utils/video_utils.py`) identifies which lab a video came from, and
-therefore which bee-size calibration (`BEE_LENGTH_FRACTION`) to use, purely
+therefore which mm calibration (`FRAME_WIDTH_MM`) to use, purely
 from its filename prefix: `0` = Berlin, `T` = Nieh/San Diego, `C` =
 Sharoni/Jerusalem. `scripts/convert_raw_annotations.py`'s `DEST_PREFIX`
 constant prepends this to every video/annotation name it produces --
@@ -287,7 +287,7 @@ and mean spatial, temporal and directional error. Which levels run is controlled
 `eval.window_level.enabled` and `eval.dance_level.enabled`.
 
 The post-processing parameters that dance-level results depend on — clustering radius, temporal
-threshold, confidence cut, direction threshold, bee-size multiplier — all live under `post_process`
+threshold, confidence cut, direction threshold, clustering radius in mm — all live under `post_process`
 in the config. They are tuned, not arbitrary; see [configs/README.md](configs/README.md) before
 changing them.
 
@@ -304,13 +304,17 @@ post-processing. This is the fastest way to see what a checkpoint is actually do
 Full documentation, including remote access and keyboard shortcuts, in
 [viewer/README.md](viewer/README.md).
 
-## Bee-size calibration
+## Physical calibration
 
-Dance-level clustering can express its radius in bee lengths rather than pixels, which makes one
-tuned value transfer across recording setups with different camera distances. The per-lab bee
-length comes from measuring comb cells — a physical constant of roughly known size — in
-[`src/data/combcell_annotator/`](src/data/combcell_annotator/). Its output feeds
-`BEE_LENGTH_FRACTION` in `src/utils/dance_eval.py`.
+Dance-level clustering expresses its radius as a physical distance (`post_process.cluster_radius_mm`)
+rather than a fraction of frame width, so one tuned number transfers across recording setups at
+different camera distances. The same applies to the dance-level position thresholds
+(`eval.dance_level.pos_thresholds_mm`).
+
+The conversion comes from measuring comb cells — a physical constant of roughly 5 mm — in
+[`src/data/combcell_annotator/`](src/data/combcell_annotator/). That yields a field-of-view width
+in millimetres per recording setup, stored as `FRAME_WIDTH_MM` in `src/utils/dance_eval.py`.
+Because it is a width ratio, it is identical across resolution tiers.
 
 ## Tests
 

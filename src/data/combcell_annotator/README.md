@@ -4,14 +4,15 @@ Measures how large a comb cell is in pixels, for each recording setup, by having
 cells. A comb cell is close to a physical constant, so once its pixel size is known for a video, the
 size of anything else in that video — a bee — can be estimated from it.
 
-This is what lets clustering express its radius in bee lengths instead of pixels, and therefore
+This is what lets clustering express its radius in millimetres instead of pixels, and therefore
 transfer across cameras at different distances from the comb.
 
 ## Where the output goes
 
-The measurement ends up in **`BEE_LENGTH_FRACTION`** in `src/utils/dance_eval.py`, as bee length
-divided by frame width, per lab. `post_process.bee_size_multiplier` in the main config multiplies
-it. See [configs/README.md](../../../configs/README.md).
+The measurement ends up in **`FRAME_WIDTH_MM`** in `src/utils/dance_eval.py`: field-of-view width
+in millimetres, per lab, computed as `frame_width_px / (cell_diameter_px / 5)` since a worker comb
+cell is ~5 mm. `post_process.cluster_radius_mm` in the main config is then a physical distance
+converted through it. See [configs/README.md](../../../configs/README.md).
 
 Copying the numbers across is manual — nothing reads `output/` at runtime.
 

@@ -208,12 +208,12 @@
                 <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">0 = disabled · angular separation for clustering</span>
               </div>
               <div class="cluster-slider-group">
-                <label class="cluster-slider-label" title="Use a per-lab bee-length-relative spatial threshold (N x measured bee size) instead of the fixed Spatial ε above">
-                  <input type="checkbox" id="cl-bee-aware"> Bee-size aware
+                <label class="cluster-slider-label" title="Cluster by physical distance: detections within this many millimetres are the same dance, converted per video. Replaces the fixed Spatial ε above.">
+                  <input type="checkbox" id="cl-radius-aware"> Radius in mm
                 </label>
-                <input type="range" class="cluster-slider" id="cl-bee-n"
-                       min="0.1" max="20" step="0.1" value="0.5" disabled>
-                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;">N = <span class="cluster-slider-val" id="cl-bee-n-val">0.5</span> bee-lengths apart still counts as the same dance</span>
+                <input type="range" class="cluster-slider" id="cl-radius-mm"
+                       min="2" max="200" step="1" value="5" disabled>
+                <span style="font-size:9px;color:var(--text-muted);margin-top:1px;"><span class="cluster-slider-val" id="cl-radius-mm-val">5</span> mm apart still counts as the same dance</span>
               </div>
               <div class="cluster-action-row">
                 <button class="cluster-apply-btn" id="cl-apply" title="Re-run clustering with current parameters">🔄 Apply</button>
@@ -284,7 +284,7 @@ const state = {
   predictions: null,      // { raw: [...], averaged: [...] }
   predictionsLoading: false,
   clusterData: null,      // { raw, consolidated, n_clusters, n_noise, params }
-  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median', bee_size_multiplier: null },
+  clusterParams: { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median', cluster_radius_mm: null },
   checkpointInfo: null,
   showModelView: false,
   showPipeline: false,
@@ -2681,7 +2681,7 @@ function updateClusterStats() {
   statsEl.innerHTML = `
     <span class="stat-highlight">${totalRaw}</span> raw detections →
     <span class="stat-highlight">${d.n_clusters}</span> clusters${d.n_noise > 0 ? ` · <span style="color:#ef4444;">${d.n_noise} noise</span>` : ''}
-    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold} ref-px · t=${d.params.temporal_threshold_ms}ms · min_samples=${d.params.min_samples || 1}${d.params.bee_size_multiplier != null ? ` · bee-size N=${d.params.bee_size_multiplier}` : ''}</span>` : ''}
+    ${d.params ? `<br><span class="stat-muted">ε=${d.params.spatial_threshold} ref-px · t=${d.params.temporal_threshold_ms}ms · min_samples=${d.params.min_samples || 1}${d.params.cluster_radius_mm != null ? ` · radius=${d.params.cluster_radius_mm}mm` : ''}</span>` : ''}
   `;
   statsEl.style.display = 'block';
 }
@@ -2835,11 +2835,11 @@ $('#cl-minsamp').addEventListener('input', (e) => {
 $('#cl-dirthresh').addEventListener('input', (e) => {
   $('#cl-dirthresh-val').textContent = e.target.value;
 });
-$('#cl-bee-n').addEventListener('input', (e) => {
-  $('#cl-bee-n-val').textContent = e.target.value;
+$('#cl-radius-mm').addEventListener('input', (e) => {
+  $('#cl-radius-mm-val').textContent = e.target.value;
 });
-$('#cl-bee-aware').addEventListener('change', (e) => {
-  $('#cl-bee-n').disabled = !e.target.checked;
+$('#cl-radius-aware').addEventListener('change', (e) => {
+  $('#cl-radius-mm').disabled = !e.target.checked;
 });
 
 // Apply button — re-cluster with current slider values
@@ -2855,7 +2855,7 @@ $('#cl-apply').addEventListener('click', async () => {
     min_samples: parseInt($('#cl-minsamp').value),
     direction_threshold_deg: parseFloat($('#cl-dirthresh').value),
     mode: 'median',
-    bee_size_multiplier: $('#cl-bee-aware').checked ? parseFloat($('#cl-bee-n').value) : null,
+    cluster_radius_mm: $('#cl-radius-aware').checked ? parseFloat($('#cl-radius-mm').value) : null,
   };
 
   await fetchClusterData(state.clusterParams);
@@ -2883,9 +2883,9 @@ $('#cl-reset').addEventListener('click', () => {
   $('#cl-conf').value = 0; $('#cl-conf-val').textContent = '0.00';
   $('#cl-minsamp').value = 1; $('#cl-minsamp-val').textContent = '1';
   $('#cl-dirthresh').value = 30; $('#cl-dirthresh-val').textContent = '30';
-  $('#cl-bee-aware').checked = false;
-  $('#cl-bee-n').value = 0.5; $('#cl-bee-n-val').textContent = '0.5'; $('#cl-bee-n').disabled = true;
-  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median', bee_size_multiplier: null };
+  $('#cl-radius-aware').checked = false;
+  $('#cl-radius-mm').value = 0.5; $('#cl-radius-mm-val').textContent = '0.5'; $('#cl-radius-mm').disabled = true;
+  state.clusterParams = { spatial_threshold: 30, temporal_threshold_ms: 300, confidence_threshold: 0.0, min_samples: 1, direction_threshold_deg: 30, mode: 'median', cluster_radius_mm: null };
 });
 
 
@@ -2946,11 +2946,11 @@ $('#cl-reset').addEventListener('click', () => {
       $('#cl-dirthresh').value = pc.direction_threshold_deg;
       $('#cl-dirthresh-val').textContent = pc.direction_threshold_deg;
     }
-    if (pc.bee_size_multiplier != null) {
-      $('#cl-bee-aware').checked = true;
-      $('#cl-bee-n').disabled = false;
-      $('#cl-bee-n').value = pc.bee_size_multiplier;
-      $('#cl-bee-n-val').textContent = pc.bee_size_multiplier;
+    if (pc.cluster_radius_mm != null) {
+      $('#cl-radius-aware').checked = true;
+      $('#cl-radius-mm').disabled = false;
+      $('#cl-radius-mm').value = pc.cluster_radius_mm;
+      $('#cl-radius-mm-val').textContent = pc.cluster_radius_mm;
     }
     state.clusterParams = {
       spatial_threshold: parseFloat($('#cl-spatial').value),
@@ -2959,7 +2959,7 @@ $('#cl-reset').addEventListener('click', () => {
       min_samples: parseInt($('#cl-minsamp').value),
       direction_threshold_deg: parseFloat($('#cl-dirthresh').value),
       mode: 'median',
-      bee_size_multiplier: $('#cl-bee-aware').checked ? parseFloat($('#cl-bee-n').value) : null,
+      cluster_radius_mm: $('#cl-radius-aware').checked ? parseFloat($('#cl-radius-mm').value) : null,
     };
   } catch (e) {
     console.log('No post_process config available, using built-in defaults');
