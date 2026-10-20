@@ -462,11 +462,11 @@ header h1 span { font-size: 20px; margin-right: 4px; }
             <input type="range" id="rc-dirthresh" min="0" max="90" step="5" value="30">
           </div>
           <div class="recluster-group">
-            <label title="Use a per-lab bee-length-relative spatial threshold (N x measured bee size) instead of the fixed Spatial Threshold above">
-              <input type="checkbox" id="rc-bee-aware"> Bee-size aware
-              <span class="rc-val" id="rc-bee-n-val" style="margin-left:6px;">0.5</span>
+            <label title="Cluster by physical distance: detections within this many millimetres are the same dance, converted per video. Replaces the fixed Spatial Threshold above.">
+              <input type="checkbox" id="rc-radius-aware"> Radius in mm
+              <span class="rc-val" id="rc-radius-mm-val" style="margin-left:6px;">0.5</span>
             </label>
-            <input type="range" id="rc-bee-n" min="0.1" max="20" step="0.1" value="0.5" disabled>
+            <input type="range" id="rc-radius-mm" min="2" max="200" step="1" value="5" disabled>
           </div>
           <div class="recluster-group">
             <label>Clustering Method</label>
@@ -499,9 +499,9 @@ header h1 span { font-size: 20px; margin-right: 4px; }
             <label>Trials
               <input type="number" id="optim-trials" value="200" min="10" max="200" step="10">
             </label>
-            <label title="Search a per-lab bee-length-relative spatial threshold (N x measured bee size) instead of one fixed value for every video">
-              <input type="checkbox" id="optim-bee-size">
-              Bee-size aware
+            <label title="Search a physical clustering radius in millimetres instead of one fixed frame-fraction for every video">
+              <input type="checkbox" id="optim-radius-mm">
+              Radius in mm
             </label>
             <div class="optim-progress" id="optim-progress" style="display:none;">
               <div class="optim-progress-fill" id="optim-progress-fill"></div>
@@ -1043,7 +1043,7 @@ function buildConfigPanel(data) {
       <div class="config-item"><span class="config-key">Direction Threshold</span><span class="config-val">${pc.direction_threshold_deg}°</span></div>
       <div class="config-item"><span class="config-key">Strategy</span><span class="config-val">${pc.strategy}</span></div>
       <div class="config-item"><span class="config-key">Mode</span><span class="config-val">${pc.mode}</span></div>
-      <div class="config-item"><span class="config-key">Bee-Size Multiplier</span><span class="config-val">${pc.bee_size_multiplier != null ? pc.bee_size_multiplier : 'off'}</span></div>
+      <div class="config-item"><span class="config-key">Cluster radius (mm)</span><span class="config-val">${pc.cluster_radius_mm != null ? pc.cluster_radius_mm : 'off'}</span></div>
     </div>
   `;
 }
@@ -1091,11 +1091,11 @@ function showResults(data) {
   }
   if (pc.clustering_method) document.getElementById('rc-method').value = pc.clustering_method;
   if (pc.mode) document.getElementById('rc-mode').value = pc.mode;
-  if (pc.bee_size_multiplier != null) {
-    document.getElementById('rc-bee-aware').checked = true;
-    document.getElementById('rc-bee-n').disabled = false;
-    document.getElementById('rc-bee-n').value = pc.bee_size_multiplier;
-    document.getElementById('rc-bee-n-val').textContent = pc.bee_size_multiplier;
+  if (pc.cluster_radius_mm != null) {
+    document.getElementById('rc-radius-aware').checked = true;
+    document.getElementById('rc-radius-mm').disabled = false;
+    document.getElementById('rc-radius-mm').value = pc.cluster_radius_mm;
+    document.getElementById('rc-radius-mm-val').textContent = pc.cluster_radius_mm;
   }
 
   let tsText = `Evaluated at ${data.timestamp || '?'} • Checkpoint: ${data.checkpoint?.filename || '?'} (epoch ${data.checkpoint?.epoch ?? '?'})`;
@@ -1230,11 +1230,11 @@ document.getElementById('rc-minsamp').addEventListener('input', e => {
 document.getElementById('rc-dirthresh').addEventListener('input', e => {
   document.getElementById('rc-dirthresh-val').textContent = e.target.value;
 });
-document.getElementById('rc-bee-n').addEventListener('input', e => {
-  document.getElementById('rc-bee-n-val').textContent = e.target.value;
+document.getElementById('rc-radius-mm').addEventListener('input', e => {
+  document.getElementById('rc-radius-mm-val').textContent = e.target.value;
 });
-document.getElementById('rc-bee-aware').addEventListener('change', e => {
-  document.getElementById('rc-bee-n').disabled = !e.target.checked;
+document.getElementById('rc-radius-aware').addEventListener('change', e => {
+  document.getElementById('rc-radius-mm').disabled = !e.target.checked;
 });
 
 async function doRecluster() {
@@ -1254,8 +1254,8 @@ async function doRecluster() {
     clustering_method: document.getElementById('rc-method').value,
     mode: document.getElementById('rc-mode').value,
     strategy: 'cluster_consolidate',
-    bee_size_multiplier: document.getElementById('rc-bee-aware').checked
-      ? parseFloat(document.getElementById('rc-bee-n').value) : null,
+    cluster_radius_mm: document.getElementById('rc-radius-aware').checked
+      ? parseFloat(document.getElementById('rc-radius-mm').value) : null,
   };
 
   try {
@@ -1293,7 +1293,7 @@ async function doOptimize() {
   const resultEl = document.getElementById('optim-result');
   const metric = document.getElementById('optim-metric').value;
   const nTrials = parseInt(document.getElementById('optim-trials').value) || 60;
-  const beeSizeAware = document.getElementById('optim-bee-size').checked;
+  const beeSizeAware = document.getElementById('optim-radius-mm').checked;
 
   btn.disabled = true;
   btn.classList.add('running');
@@ -1309,7 +1309,7 @@ async function doOptimize() {
     const resp = await fetch('/api/eval/optimize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ n_trials: nTrials, metric, bee_size_aware: beeSizeAware }),
+      body: JSON.stringify({ n_trials: nTrials, metric, radius_mm_aware: beeSizeAware }),
     });
     const startData = await resp.json();
     if (startData.error) {
@@ -1367,11 +1367,11 @@ async function doOptimize() {
             document.getElementById('rc-dirthresh').value = bp.direction_threshold_deg;
             document.getElementById('rc-dirthresh-val').textContent = Math.round(bp.direction_threshold_deg);
           }
-          if (bp.bee_size_multiplier != null) {
-            document.getElementById('rc-bee-aware').checked = true;
-            document.getElementById('rc-bee-n').disabled = false;
-            document.getElementById('rc-bee-n').value = bp.bee_size_multiplier;
-            document.getElementById('rc-bee-n-val').textContent = bp.bee_size_multiplier.toFixed(1);
+          if (bp.cluster_radius_mm != null) {
+            document.getElementById('rc-radius-aware').checked = true;
+            document.getElementById('rc-radius-mm').disabled = false;
+            document.getElementById('rc-radius-mm').value = bp.cluster_radius_mm;
+            document.getElementById('rc-radius-mm-val').textContent = bp.cluster_radius_mm.toFixed(1);
           }
 
           // Update dashboard with results
@@ -1433,7 +1433,7 @@ async function applyToConfig() {
         min_samples: params.min_samples,
         direction_threshold_deg: params.direction_threshold_deg,
         mode: params.mode,
-        ...(params.bee_size_multiplier != null ? { bee_size_multiplier: params.bee_size_multiplier } : {}),
+        ...(params.cluster_radius_mm != null ? { cluster_radius_mm: params.cluster_radius_mm } : {}),
       }),
     });
     const data = await resp.json();

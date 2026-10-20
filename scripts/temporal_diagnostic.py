@@ -53,7 +53,7 @@ def main():
         min_samples=pp.get("min_samples", 1),
         mode=pp.get("mode", "mean"),
         direction_threshold_deg=pp.get("direction_threshold_deg", 30.0),
-        bee_size_multiplier=pp.get("bee_size_multiplier"),
+        cluster_radius_mm=pp.get("cluster_radius_mm"),
     )
 
     video_res = {}

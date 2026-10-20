@@ -454,13 +454,13 @@ class TestFrameRateHandling:
             "32 frames exceeds a 1 s gap at 15 fps, so these are separate runs"
         )
 
-    def test_omitting_fps_warns_instead_of_assuming_silently(self):
+    def test_omitting_fps_is_an_error_not_a_guess(self):
         preds, origins, names = self._two_detections_32_frames_apart()
 
-        with pytest.warns(UserWarning, match="vid_60fps"):
+        with pytest.raises(ValueError, match="vid_60fps"):
             average_overlapping_predictions(preds, origins, names)
 
-    def test_video_present_in_fps_map_does_not_warn(self):
+    def test_video_present_in_fps_map_is_fine(self):
         preds, origins, names = self._two_detections_32_frames_apart()
 
         with warnings.catch_warnings():

@@ -94,7 +94,7 @@ post_process:
   mode: mean
   temporal_threshold: 8
   strategy: cluster_consolidate
-  bee_size_multiplier: 0.5
+  cluster_radius_mm: 5.0   # detections within 5 mm are the same dance (~one comb cell)
 loss:
   lambda_obj: 12.0
   lambda_coord: 7.5
@@ -138,15 +138,15 @@ eval:
     match_pairs: hungarian
   dance_level:
     enabled: true
-    pos_thresholds: # avg bee size across all video sources 0.0443
-    #- 0.03
-    #- 0.04
-    #- 0.06
-    #- 0.08
-    #- 0.1
-    - 0.045 # within one bee size away
-    - 0.090 # within two bee sizes away
-    - 0.135 # within three bee sizes away
+    # Millimetres. Converted per video through FRAME_WIDTH_MM, so one
+    # threshold is one physical distance at every camera distance. The old
+    # frame-width fractions (0.045/0.090/0.135) meant ~20 mm for berlin but
+    # ~6 mm for nieh -- a 3.4x difference in strictness from camera distance
+    # alone.
+    pos_thresholds_mm:
+    - 10.0
+    - 20.0
+    - 30.0
     iou_thresholds:
     - 0.3
     - 0.7

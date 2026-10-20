@@ -812,7 +812,7 @@ class SlidingWindowInference:
             min_samples=config['post_process'].get('min_samples', 1),
             mode=config['post_process'].get('mode', 'mean'),
             direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
-            bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),
+            cluster_radius_mm=config['post_process'].get('cluster_radius_mm'),
         )
 
         # Convert normalized [0,1] → pixel space for frontend rendering
@@ -1045,7 +1045,7 @@ class EvaluationEngine:
                             min_samples=pp.get('min_samples', 1),
                             mode=pp.get('mode', 'mean'),
                             direction_threshold_deg=pp.get('direction_threshold_deg', 30.0),
-                            bee_size_multiplier=pp.get('bee_size_multiplier'),
+                            cluster_radius_mm=pp.get('cluster_radius_mm'),
                         )
                         dance_metrics = compute_dance_level_metrics(
                             predicted_runs, gt_dances, video_res,
@@ -1440,7 +1440,7 @@ class EvaluationEngine:
                 min_samples=config['post_process'].get('min_samples', 1),
                 mode=config['post_process'].get('mode', 'mean'),
                 direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
-                bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),
+                cluster_radius_mm=config['post_process'].get('cluster_radius_mm'),
             )
 
             dance_metrics = compute_dance_level_metrics(
@@ -1510,7 +1510,7 @@ class EvaluationEngine:
                         'mode': config['post_process']['mode'],
                         'min_samples': config['post_process'].get('min_samples', 1),
                         'direction_threshold_deg': config['post_process'].get('direction_threshold_deg', 30.0),
-                        'bee_size_multiplier': config['post_process'].get('bee_size_multiplier'),
+                        'cluster_radius_mm': config['post_process'].get('cluster_radius_mm'),
                     },
                 },
                 'n_val_windows': int(len(test_df)),
@@ -1585,7 +1585,7 @@ class EvaluationEngine:
             'mode': config['post_process']['mode'],
             'min_samples': config['post_process'].get('min_samples', 1),
             'direction_threshold_deg': config['post_process'].get('direction_threshold_deg', 30.0),
-            'bee_size_multiplier': config['post_process'].get('bee_size_multiplier'),
+            'cluster_radius_mm': config['post_process'].get('cluster_radius_mm'),
         }
         pp.update(post_params)
 
@@ -1630,7 +1630,7 @@ class EvaluationEngine:
             min_samples=pp.get('min_samples', 1),
             mode=pp.get('mode', 'mean'),
             direction_threshold_deg=pp.get('direction_threshold_deg', 30.0),
-            bee_size_multiplier=pp.get('bee_size_multiplier'),  # None = unchanged default behavior
+            cluster_radius_mm=pp.get('cluster_radius_mm'),  # None = unchanged default behavior
         )
 
         # 3. Dance-level metrics
@@ -1922,9 +1922,9 @@ def api_cluster(video_name):
     min_samples = int(params.get('min_samples', 1))
     mode = params.get('mode', 'median')
     # None = unchanged default behavior (matches recluster() / ckpt_eval.py)
-    bee_size_multiplier = params.get('bee_size_multiplier')
-    if bee_size_multiplier is not None:
-        bee_size_multiplier = float(bee_size_multiplier)
+    cluster_radius_mm = params.get('cluster_radius_mm')
+    if cluster_radius_mm is not None:
+        cluster_radius_mm = float(cluster_radius_mm)
 
     # Run clustering using the unified eval pipeline
     import copy
@@ -1942,7 +1942,7 @@ def api_cluster(video_name):
         min_samples=min_samples,
         mode=mode,
         direction_threshold_deg=direction_threshold_deg,
-        bee_size_multiplier=bee_size_multiplier,
+        cluster_radius_mm=cluster_radius_mm,
     )
 
     # Convert normalized [0,1] → pixel space for frontend canvas rendering
@@ -1985,7 +1985,7 @@ def api_cluster(video_name):
             'min_samples': min_samples,
             'mode': mode,
             'direction_threshold_deg': direction_threshold_deg,
-            'bee_size_multiplier': bee_size_multiplier,
+            'cluster_radius_mm': cluster_radius_mm,
         },
     }))
 
@@ -2187,9 +2187,9 @@ def api_eval_recluster():
         pp['min_samples'] = int(params['min_samples'])
     if 'direction_threshold_deg' in params:
         pp['direction_threshold_deg'] = float(params['direction_threshold_deg'])
-    if 'bee_size_multiplier' in params:
-        pp['bee_size_multiplier'] = (
-            float(params['bee_size_multiplier']) if params['bee_size_multiplier'] is not None else None
+    if 'cluster_radius_mm' in params:
+        pp['cluster_radius_mm'] = (
+            float(params['cluster_radius_mm']) if params['cluster_radius_mm'] is not None else None
         )
     if 'remove_outliers' in params:
         pp['remove_outliers'] = bool(params['remove_outliers'])
@@ -2244,10 +2244,10 @@ def api_eval_optimize():
     n_trials = int(params.get('n_trials', 60))
     metric = params.get('metric', 'f1')  # f1, map, recall, precision
     ranges = params.get('ranges', {})
-    # Opt-in: search bee_size_multiplier (N bee-lengths) instead of a fixed
+    # Opt-in: search cluster_radius_mm (a physical radius) instead of a fixed
     # spatial_threshold. Off by default -- omitting this flag reproduces the
     # exact existing search unchanged.
-    bee_size_aware = bool(params.get('bee_size_aware', False))
+    radius_mm_aware = bool(params.get('radius_mm_aware', False))
 
     # Search ranges (defaults match slider ranges)
     sp_lo = float(ranges.get('spatial_min', 5))
@@ -2260,10 +2260,11 @@ def api_eval_optimize():
     ms_hi = int(ranges.get('min_samples_max', 5))
     dr_lo = float(ranges.get('direction_deg_min', 0))
     dr_hi = float(ranges.get('direction_deg_max', 90))
-    # "N bee-lengths" -- how many bee-lengths apart still counts as the same
-    # dance. Only used when bee_size_aware is True.
-    n_lo = float(ranges.get('bee_n_min', 0.5))
-    n_hi = float(ranges.get('bee_n_max', 20.0))
+    # Millimetres. Floor well below the configured 5 mm so the optimum is
+    # not clipped at the boundary the way it was when this searched bee
+    # lengths with a lower bound of 0.5.
+    n_lo = float(ranges.get('radius_mm_min', 2.0))
+    n_hi = float(ranges.get('radius_mm_max', 200.0))
 
     _optim_state.update(
         running=True, trial_current=0, trial_total=n_trials,
@@ -2275,14 +2276,14 @@ def api_eval_optimize():
     def _run_optimization():
         def objective(trial):
             # spatial_threshold stays in the search either way: it's still the
-            # fallback eps for any video whose lab isn't in BEE_LENGTH_FRACTION,
-            # and it's the only spatial parameter at all when bee_size_aware=False.
+            # fallback eps for any video whose lab has no mm calibration,
+            # and it's the only spatial parameter at all when radius_mm_aware=False.
             spatial = trial.suggest_float('spatial_threshold', sp_lo, sp_hi)
             temporal_ms = trial.suggest_float('temporal_threshold_ms', tp_lo, tp_hi, log=True)
             conf = trial.suggest_float('confidence_threshold', cf_lo, cf_hi)
             min_samp = trial.suggest_int('min_samples', ms_lo, ms_hi)
             dir_deg = trial.suggest_float('direction_threshold_deg', dr_lo, dr_hi, step=5)
-            bee_n = trial.suggest_float('bee_size_multiplier', n_lo, n_hi) if bee_size_aware else None
+            radius_mm = trial.suggest_float('cluster_radius_mm', n_lo, n_hi) if radius_mm_aware else None
             mode = trial.suggest_categorical('mode', ['mean', 'median'])
 
             pp = {
@@ -2291,7 +2292,7 @@ def api_eval_optimize():
                 'confidence_threshold': conf,
                 'min_samples': min_samp,
                 'direction_threshold_deg': dir_deg,
-                'bee_size_multiplier': bee_n,
+                'cluster_radius_mm': radius_mm,
                 'mode': mode,
             }
             results = evaluation_engine.recluster(pp, verbose=False)
@@ -2349,8 +2350,8 @@ def api_eval_optimize():
                 'direction_threshold_deg': best['direction_threshold_deg'],
                 'mode': best['mode'],
             }
-            if bee_size_aware:
-                best_pp['bee_size_multiplier'] = best['bee_size_multiplier']
+            if radius_mm_aware:
+                best_pp['cluster_radius_mm'] = best['cluster_radius_mm']
             # Apply the best params as a final recluster so the dashboard updates
             final_results = evaluation_engine.recluster(best_pp)
 
@@ -2441,7 +2442,7 @@ def api_config_update_post_process():
         'confidence_threshold': (int, float),
         'min_samples': (int,),
         'direction_threshold_deg': (int, float),
-        'bee_size_multiplier': (int, float),
+        'cluster_radius_mm': (int, float),
         'mode': (str,),
     }
 

@@ -397,12 +397,12 @@ def main(args):
                     min_samples=config['post_process'].get('min_samples', 1),
                     mode=config['post_process'].get('mode', 'mean'),
                     direction_threshold_deg=config['post_process'].get('direction_threshold_deg', 30.0),
-                    bee_size_multiplier=config['post_process'].get('bee_size_multiplier'),
+                    cluster_radius_mm=config['post_process'].get('cluster_radius_mm'),
                     temporal_boundary=config['post_process'].get('temporal_boundary', 'mean'),
                 )
                 dance_metrics = compute_dance_level_metrics(
                     predicted_runs, gt_dances, video_res,
-                    pos_thresholds=dl_cfg['pos_thresholds'],
+                    pos_thresholds_mm=dl_cfg['pos_thresholds_mm'],
                     iou_threshold_range=tuple(dl_cfg['iou_thresholds']),
                     angular_thresholds=dl_cfg['angular_thresholds'],
                 )
