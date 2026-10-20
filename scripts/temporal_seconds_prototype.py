@@ -18,7 +18,7 @@ from sklearn.cluster import DBSCAN
 from src.utils.video_utils import train_val_split_videos
 from src.utils.dance_eval import (
     deduplicate_gt_dances, average_overlapping_predictions,
-    lab_source, BEE_LENGTH_FRACTION,
+    lab_source, norm_distance_for_mm,
 )
 
 CACHE_PATH = "viewer/.eval_cache.pkl"
@@ -279,7 +279,7 @@ def step_5_real_data():
 def cluster_with_single_best(per_window_preds, crop_origins, video_names, video_resolutions,
                               video_fps, spatial_threshold, temporal_threshold_sec,
                               confidence_threshold, min_samples, mode, direction_threshold_deg,
-                              bee_size_multiplier):
+                              cluster_radius_mm):
     video_preds = defaultdict(list)
     _video_fps = {}
     for window_preds, (x_min, y_min), vname, (orig_h, orig_w) in zip(
@@ -318,10 +318,10 @@ def cluster_with_single_best(per_window_preds, crop_origins, video_names, video_
         features = np.array(features)
 
         ref_size = 1000.0
-        if bee_size_multiplier is not None:
-            lab = lab_source(vname)
-            norm_spatial_eps = (bee_size_multiplier * BEE_LENGTH_FRACTION[lab]
-                                 if lab in BEE_LENGTH_FRACTION else spatial_threshold / ref_size)
+        if cluster_radius_mm is not None:
+            norm_spatial_eps = norm_distance_for_mm(cluster_radius_mm, vname)
+            if norm_spatial_eps is None:
+                norm_spatial_eps = spatial_threshold / ref_size
         else:
             norm_spatial_eps = spatial_threshold / ref_size
 
@@ -414,7 +414,7 @@ def step_6_isolate_cause():
         min_samples=pp.get("min_samples", 1),
         mode=pp.get("mode", "mean"),
         direction_threshold_deg=pp.get("direction_threshold_deg", 30.0),
-        bee_size_multiplier=pp.get("bee_size_multiplier"),
+        cluster_radius_mm=pp.get("cluster_radius_mm"),
     )
 
     video_res = {vn: res for vn, res in zip(video_names, original_res)}
@@ -621,7 +621,7 @@ def step_9_stacked_fix():
         min_samples=pp.get("min_samples", 1),
         mode=pp.get("mode", "mean"),
         direction_threshold_deg=pp.get("direction_threshold_deg", 30.0),
-        bee_size_multiplier=pp.get("bee_size_multiplier"),
+        cluster_radius_mm=pp.get("cluster_radius_mm"),
     )
 
     video_res = {vn: res for vn, res in zip(video_names, original_res)}
