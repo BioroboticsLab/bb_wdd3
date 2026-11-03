@@ -51,3 +51,30 @@ also nieh has some recordings with both an "_original" and a "_downsample"
 raw file that can end up tagged with the same resolution in data/videos/ -
 group_by_source() dedupes on (width, height) as a set so this doesn't cause
 double-counting.
+
+
+---
+
+update 2026-09-01 - the raw footage mount is no longer readable
+
+the checks described above were done while /mnt/aglandgraf/wdd/ was still
+accessible. it isn't any more. from both horus and goober the directory shows
+up in a listing of /mnt/aglandgraf but every read fails:
+
+  ls -ld /mnt/aglandgraf/wdd   ->  drwxrws--- ... nobody nogroup
+  ls /mnt/aglandgraf/wdd       ->  Keine Berechtigung
+
+so it is not just the berlin mp4s now, it's the whole directory, from either
+machine. this is the same NFS id-mapping fault that affects
+beesbook_trajectory_data (open ticket INC-20055710) - identities arrive
+unmapped as nobody, so no group permission can match.
+
+nothing above is invalidated by this. the nieh/sharoni filename match and the
+berlin resolution-ratio argument were already made and the conclusions still
+hold. it just means those checks can't currently be redone, so if the lab
+mapping ever needs re-verifying, the mount has to be fixed first (or the check
+run from a machine where it is readable).
+
+the per-host directories on that share are also ACL-separated: horus sees
+/mnt/aglandgraf/horus and not /mnt/aglandgraf/goober, goober sees the reverse.
+worth knowing before planning anything that moves data between them.

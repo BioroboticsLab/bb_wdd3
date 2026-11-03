@@ -41,7 +41,9 @@ def main():
     test_df = data[~data["video_name"].isin(train_videos)].reset_index(drop=True)
     gt_dances = deduplicate_gt_dances(test_df)
 
-    averaged = average_overlapping_predictions(preds, crop_origins, video_names)
+    averaged = average_overlapping_predictions(
+        preds, crop_origins, video_names, video_fps=video_fps,
+    )
     predicted_runs = cross_window_cluster_predictions(
         averaged, crop_origins, video_names, original_res,
         video_fps=video_fps,
