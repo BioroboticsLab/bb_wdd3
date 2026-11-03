@@ -17,7 +17,7 @@ from src.loss.loss import WaggleDetectionLoss
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 import torch.nn  as nn
-from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv, balance_sample
+from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv, balance_sample, cap_lab_samples
 import datetime
 import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results, get_wandb_log_dict
@@ -80,6 +80,11 @@ def main(args):
     if config['data']['data_fraction_divisor'] > 1:
         train_df = balance_sample(train_df, config['data']['data_fraction_divisor'])
         #test_df  = balance_sample(test_df,  config['data']['data_fraction_divisor'])
+
+    # Cap specific over-represented labs (train only -- val/test stays on the
+    # true, natural distribution so it remains a fair comparison point).
+    if config['data'].get('lab_caps'):
+        train_df = cap_lab_samples(train_df, config['data']['lab_caps'], seed=SEED)
 
     n_unique_videos = data['video_name'].nunique()
     print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")

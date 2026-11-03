@@ -243,5 +243,38 @@ def balance_sample(data, divisor):
     sampled = sampled.reset_index(drop=True)
     if '_category' in sampled.columns:
         sampled = sampled.drop(columns='_category')
-        
+
     return sampled
+
+
+def cap_lab_samples(data, caps, seed=42):
+    """Randomly subsample specific lab categories down to a fixed row cap,
+    leaving every other category untouched. Unlike balance_sample() (equal
+    split across all categories), this lets some labs (e.g. the smaller
+    Berlin/Bristol ones) stay fully intact while only capping the
+    over-represented ones (e.g. Sharoni/Nieh).
+
+    Caller is responsible for applying this to train_df only, AFTER the
+    stem-based train/val split -- capping before the split would shrink the
+    video population feeding train_val_split_videos (risking train/val
+    membership drifting from an uncapped run) and would also shrink
+    validation itself, which should stay on the true, natural distribution.
+
+    Args:
+        data: DataFrame with a 'video_name' column.
+        caps: dict mapping get_video_category() codes ('0', 'T', 'C') to a
+            max row count. Categories not in this dict are kept in full.
+        seed: random seed for reproducibility.
+    """
+    data = data.copy()
+    data['_category'] = data['video_name'].apply(get_video_category)
+
+    parts = []
+    for category, group in data.groupby('_category'):
+        cap = caps.get(category)
+        if cap is not None and len(group) > cap:
+            group = group.sample(n=cap, random_state=seed)
+        parts.append(group)
+
+    out = pd.concat(parts, ignore_index=True)
+    return out.drop(columns='_category')

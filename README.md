@@ -47,46 +47,71 @@ a separate position + frame using the bee's thorax as the marker
 separately for start and end -- there is no averaging step anywhere in
 this pipeline.
 
-**Staging.** Drop new, not-yet-processed material into `data/raw/`,
+**Staging.** Each new data drop gets its own batch subfolder (named by
+source/date, e.g. `jerusalem_2026`, `berlin_2024`) under `data/raw/`,
 mirroring the structure of the final dataset:
 
 ```
 data/raw/
-├── videos/        ← new video segments, native resolution/fps
-└── annotations/   ← matching bb_waggle_annotator CSV exports, one per video
+├── videos/
+│   └── <batch>/   ← new video segments, native resolution/fps
+└── annotations/
+    └── <batch>/   ← matching bb_waggle_annotator CSV exports, one per video
 ```
 
-Don't put raw material directly into `data/videos/`/`data/annotations/` --
-those are the final, already-validated dataset the training pipeline reads
-from, and every file in them follows the naming convention below.
+Keeping each drop in its own named subfolder (instead of dumping
+everything into one flat `data/raw/videos/`/`data/raw/annotations/`)
+means you can always tell where a given raw file came from, and running
+the pipeline for one batch can't accidentally pull in another batch's
+files that happen to need a different lab prefix. Don't put raw material
+directly into `data/videos/`/`data/annotations/` -- those are the final,
+already-validated dataset the training pipeline reads from, and every
+file in them follows the naming convention below.
+
+Note: data merged before this batch-subfolder convention existed
+(everything except the batches listed above) doesn't have its raw-source
+staging preserved -- only the already-integrated result in
+`data/annotations/fps_multires_clean.csv`. Not urgent to reconstruct,
+since that data is already fully integrated and working; worth
+documenting if its original source/provenance ever turns up.
+
+**Batch config.** `scripts/convert_raw_annotations.py` is the single
+source of truth for which batch is currently being processed -- every
+other script in the chain imports `BATCH` (and `RAW_ANNOT_DIR`/
+`RAW_VIDEO_DIR`/`DEST_PREFIX`) from it, so a new batch only ever needs
+changing in one place:
+
+```python
+# scripts/convert_raw_annotations.py
+BATCH = "jerusalem_2026"   # <- change this per batch, before running the chain
+DEST_PREFIX = "C_"         # <- and this (see "Lab prefix" below)
+```
 
 **Lab prefix.** The pipeline (and training code -- `lab_source()` /
 `get_video_category()` in `src/utils/dance_eval.py` /
 `src/utils/video_utils.py`) identifies which lab a video came from, and
 therefore which bee-size calibration (`BEE_LENGTH_FRACTION`) to use, purely
 from its filename prefix: `0` = Berlin, `T` = Nieh/San Diego, `C` =
-Sharoni/Jerusalem. `scripts/convert_raw_annotations.py`'s `DEST_PREFIX`
-constant prepends this to every video/annotation name it produces --
-set it to the prefix matching whichever lab the new data is from before
-running the pipeline (it's currently `"C_"`, used for a Sharoni/Jerusalem
-batch collected via bb_waggle_annotator). Avoid prefixes already used
-with a special meaning elsewhere in the code, e.g. `"C1_"`/`"Capture_"`
+Sharoni/Jerusalem. `DEST_PREFIX` prepends this to every video/annotation
+name the pipeline produces -- set it to the prefix matching whichever lab
+the new batch is from before running the pipeline. Avoid prefixes already
+used with a special meaning elsewhere in the code, e.g. `"C1_"`/`"Capture_"`
 specifically, which `prepare_training_data.py` treats as *old* Jerusalem
 recordings and restricts to a single resolution tier -- a plain `"C_"`
 still reads as Sharoni/Jerusalem for calibration purposes, but isn't
 caught by that older, narrower filter, so all 4 resolution tiers are kept.
 
-**The six-step chain, run in order:**
+**The six-step chain, run in order (after setting `BATCH`/`DEST_PREFIX` above):**
 
 1. **Validate + convert annotations**: `python scripts/convert_raw_annotations.py`
-   Checks every CSV in `data/raw/annotations/` independently. A file is
-   rejected entirely (not partially) if any row has mismatched list
+   Checks every CSV in `data/raw/annotations/<BATCH>/` independently. A file
+   is rejected entirely (not partially) if any row has mismatched list
    lengths, unparseable values, or a run where the end (thorax) frame
    comes before the start frame -- a dance can't end before it begins.
    Rejected files are reported with the exact row/run at fault, for manual
    examination and fixing (re-run once corrected). Clean files are
    expanded into one row per individual waggle run (prefixed per
-   `DEST_PREFIX`) and written to `data/raw/annotations_expanded.csv`.
+   `DEST_PREFIX`) and written to `data/raw/<BATCH>_annotations_expanded.csv`.
 
 2. **Integrate videos**: `python scripts/integrate_raw_videos.py`
    For every video whose matching CSV passed step 1 (a video is *never*
@@ -102,20 +127,20 @@ caught by that older, narrower filter, so all 4 resolution tiers are kept.
    CSV only processes what's actually new.
 
 3. **Expand into training windows**: `python scripts/expand_annotation_windows.py`
-   Takes `annotations_expanded.csv` and, per video, assigns sequential
-   `waggle_run_id`s, linearly interpolates each run's position across its
-   frames (start marker to thorax/end marker), and splits each run into
-   overlapping fixed 16-frame windows (stride 4) -- reproducing
+   Takes `<BATCH>_annotations_expanded.csv` and, per video, assigns
+   sequential `waggle_run_id`s, linearly interpolates each run's position
+   across its frames (start marker to thorax/end marker), and splits each
+   run into overlapping fixed 16-frame windows (stride 4) -- reproducing
    `notebooks/AnnotationsPreprocessing.ipynb`'s cells 7/10/12/15/16.
    Writes native-resolution, native-fps windows to
-   `data/raw/annotations_windowed.csv`.
+   `data/raw/<BATCH>_annotations_windowed.csv`.
 
 4. **Expand across resolution tiers**: `python scripts/expand_annotation_resolutions.py`
    Duplicates each window's rows once per resolution tier generated in
    step 2, scaling position columns (`x1,y1,x2,y2,origin_x,origin_y`) by
    the same width/height ratio as the video resize. Frame numbers and
    direction are untouched (resolution doesn't affect either). Writes to
-   `data/raw/annotations_resolution_expanded.csv`.
+   `data/raw/<BATCH>_annotations_resolution_expanded.csv`.
 
 5. **Expand across fps variants**: `python scripts/expand_annotation_fps.py`
    For each resolution-tier video, adds rows for its `ds30fps`/`ds15fps`
@@ -124,15 +149,22 @@ caught by that older, narrower filter, so all 4 resolution tiers are kept.
    verified against the existing dataset) already used for every other
    fps-downsampled video in `fps_multires_clean.csv`. Requires the fps-variant
    video files from step 2 to already exist (reads their real frame counts
-   to clamp windows to valid bounds). Writes to
-   `data/raw/annotations_fps_expanded.csv`.
+   to clamp windows to valid bounds). De-duplicates rows afterward --
+   downsampling can make several nearby native windows round to the same
+   fps-adjusted window, especially for long runs with many overlapping
+   windows. Writes to `data/raw/<BATCH>_annotations_fps_expanded.csv`.
 
 6. **Merge into the training set**: `python scripts/merge_new_annotations.py`
    Backs up `data/annotations/fps_multires_clean.csv` to `.csv.bak` (once --
-   won't overwrite an existing backup), refuses to merge if any
-   `video_name` already exists in it, then appends the new rows. This is
-   the only step that touches the real training file; everything before
-   it only writes to `data/raw/`.
+   won't overwrite an existing backup). Rows for `video_name`s already
+   present in the clean CSV are skipped (not re-merged, not treated as an
+   error) -- only genuinely new rows get appended. This makes the whole
+   chain safe to re-run after fixing one more bad CSV in a batch that's
+   partially merged already: steps 1-5 reprocess the full batch from
+   scratch (not just the fixed file), so this step's skip-if-already-merged
+   check is what prevents that from duplicating rows for videos merged in
+   an earlier run. This is the only step that touches the real training
+   file; everything before it only writes to `data/raw/`.
 
 </details>
 

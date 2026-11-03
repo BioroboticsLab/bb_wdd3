@@ -2010,6 +2010,24 @@ function piUpdateScrubber() {
   $('#pi-frame-info').textContent = label;
 }
 
+function piDrawArrow(ctx, x, y, dirX, dirY, len, headLen, color, lineWidth) {
+  const endX = x + dirX * len;
+  const endY = y + dirY * len;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(endX, endY);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+  const angle = Math.atan2(dirY, dirX);
+  ctx.beginPath();
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+  ctx.stroke();
+}
+
 function piDrawCurrentFrame() {
   if (piCurrentFrame >= piFrameImages.length) return;
   const img = piFrameImages[piCurrentFrame];
@@ -2017,7 +2035,12 @@ function piDrawCurrentFrame() {
 
   const panelW = piCanvas.parentElement?.offsetWidth || 480;
   const aspect = img.naturalHeight / img.naturalWidth;
-  const drawW = Math.min(panelW, img.naturalWidth);
+  // Canvas is styled width:100% (CSS stretches it to fill the panel
+  // regardless of its pixel buffer size) -- the buffer must always match
+  // panelW exactly, or anything drawn at a fixed canvas-pixel size (like
+  // the crop-stage dot/arrow) gets visually magnified by the CSS stretch
+  // on top of whatever scaling the draw code already accounts for.
+  const drawW = panelW;
   const drawH = Math.round(drawW * aspect);
   piCanvas.width = drawW;
   piCanvas.height = drawH;
@@ -2037,28 +2060,33 @@ function piDrawCurrentFrame() {
     piCtx.lineWidth = 2;
     piCtx.strokeRect(cb.x_min * sx, cb.y_min * sy,
                      (cb.x_max - cb.x_min) * sx, (cb.y_max - cb.y_min) * sy);
+    const s = Math.min(sx, sy);
+    const gx = meta.gt_position[0] * sx;
+    const gy = meta.gt_position[1] * sy;
     piCtx.beginPath();
-    piCtx.arc(meta.gt_position[0] * sx, meta.gt_position[1] * sy, 4, 0, Math.PI * 2);
+    piCtx.arc(gx, gy, 4 * s, 0, Math.PI * 2);
     piCtx.fillStyle = '#ef4444';
     piCtx.fill();
+    if (meta.gt_direction) {
+      piDrawArrow(piCtx, gx, gy, meta.gt_direction[0], meta.gt_direction[1],
+                  15 * s, 4 * s, '#ef4444', 2);
+    }
   }
 
   if (state.pipelineStage === 'crop' && meta.bee_in_crop) {
     const sx = drawW / meta.crop_size[0];
     const sy = drawH / meta.crop_size[1];
+    const s = Math.min(sx, sy);
     const bx = meta.bee_in_crop[0] * sx;
     const by = meta.bee_in_crop[1] * sy;
     piCtx.beginPath();
-    piCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    piCtx.arc(bx, by, 2.5 * s, 0, Math.PI * 2);
     piCtx.fillStyle = 'rgba(239, 68, 68, 0.8)';
     piCtx.fill();
-    const arrowLen = 30;
-    piCtx.beginPath();
-    piCtx.moveTo(bx, by);
-    piCtx.lineTo(bx + meta.gt_direction[0] * arrowLen, by + meta.gt_direction[1] * arrowLen);
-    piCtx.strokeStyle = '#ef4444';
-    piCtx.lineWidth = 2;
-    piCtx.stroke();
+    if (meta.gt_direction) {
+      piDrawArrow(piCtx, bx, by, meta.gt_direction[0], meta.gt_direction[1],
+                  15 * s, 4 * s, '#ef4444', 2);
+    }
   }
 
   // Draw augmented target position/direction on augment frames
@@ -2067,34 +2095,17 @@ function piDrawCurrentFrame() {
     // Transform canvas shows 224x224 frames scaled to drawW x drawH
     const sx = drawW / 224;
     const sy = drawH / 224;
+    const s = Math.min(sx, sy);
     const bx = at.x * sx;
     const by = at.y * sy;
     piCtx.beginPath();
-    piCtx.arc(bx, by, 5, 0, Math.PI * 2);
+    piCtx.arc(bx, by, 2.5 * s, 0, Math.PI * 2);
     piCtx.fillStyle = 'rgba(245, 158, 11, 0.9)';
     piCtx.fill();
     piCtx.strokeStyle = '#fff';
     piCtx.lineWidth = 1.5;
     piCtx.stroke();
-    const arrowLen = 30;
-    piCtx.beginPath();
-    piCtx.moveTo(bx, by);
-    piCtx.lineTo(bx + at.dir_x * arrowLen * sx, by + at.dir_y * arrowLen * sy);
-    piCtx.strokeStyle = '#f59e0b';
-    piCtx.lineWidth = 2;
-    piCtx.stroke();
-    // Arrowhead
-    const endX = bx + at.dir_x * arrowLen * sx;
-    const endY = by + at.dir_y * arrowLen * sy;
-    const angle = Math.atan2(at.dir_y, at.dir_x);
-    piCtx.beginPath();
-    piCtx.moveTo(endX, endY);
-    piCtx.lineTo(endX - 8 * Math.cos(angle - 0.4), endY - 8 * Math.sin(angle - 0.4));
-    piCtx.moveTo(endX, endY);
-    piCtx.lineTo(endX - 8 * Math.cos(angle + 0.4), endY - 8 * Math.sin(angle + 0.4));
-    piCtx.strokeStyle = '#f59e0b';
-    piCtx.lineWidth = 2;
-    piCtx.stroke();
+    piDrawArrow(piCtx, bx, by, at.dir_x, at.dir_y, 15 * s, 4 * s, '#f59e0b', 2);
   }
 }
 

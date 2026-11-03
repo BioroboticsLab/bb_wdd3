@@ -1,9 +1,13 @@
 """
-Expand per-run annotations (data/raw/annotations_expanded.csv) into fixed
-16-frame training windows with interpolated positions and per-video
-waggle_run_id, reproducing notebooks/AnnotationsPreprocessing.ipynb's
-cells 7 (run id), 10 (position interpolation), 12 (sliding windows) and
-15/16 (apply interpolated position per window).
+Expand per-run annotations (data/raw/<BATCH>_annotations_expanded.csv)
+into fixed 16-frame training windows with interpolated positions and
+per-video waggle_run_id, reproducing
+notebooks/AnnotationsPreprocessing.ipynb's cells 7 (run id), 10 (position
+interpolation), 12 (sliding windows) and 15/16 (apply interpolated
+position per window).
+
+BATCH is imported from convert_raw_annotations.py (the single source of
+truth for which batch is currently being processed).
 
 This operates at native resolution/fps only. Resolution tiers and fps
 variants of the resulting rows are a separate, later step (see
@@ -14,11 +18,17 @@ derived from native-fps ones).
 Usage:
     python scripts/expand_annotation_windows.py
 """
+import os
+import sys
+
 import numpy as np
 import pandas as pd
 
-INPUT_PATH = "./data/raw/annotations_expanded.csv"
-OUTPUT_PATH = "./data/raw/annotations_windowed.csv"
+sys.path.insert(0, os.path.dirname(__file__))
+from convert_raw_annotations import BATCH
+
+INPUT_PATH = f"./data/raw/{BATCH}_annotations_expanded.csv"
+OUTPUT_PATH = f"./data/raw/{BATCH}_annotations_windowed.csv"
 
 WINDOW = 16
 STRIDE = 4

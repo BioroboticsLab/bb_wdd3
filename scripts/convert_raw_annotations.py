@@ -1,7 +1,18 @@
 """
-Convert raw local-tool annotation exports (data/raw/annotations/*.csv) into
-the per-run "expanded" format the rest of the pipeline expects, mirroring
+Convert raw local-tool annotation exports
+(data/raw/annotations/<BATCH>/*.csv) into the per-run "expanded" format
+the rest of the pipeline expects, mirroring
 notebooks/AnnotationsPreprocessing.ipynb's cell 2 conversion.
+
+This is the single source of truth for BATCH/DEST_PREFIX and the raw
+staging paths -- every other script in the pipeline imports these from
+here, so a batch only ever needs to be set in one place.
+
+Each new data drop gets its own batch subfolder under data/raw/videos/
+and data/raw/annotations/ (e.g. "jerusalem_2026", "berlin_2024"), so raw
+material from different sources/labs never gets mixed together in one
+conversion run, and each batch's provenance stays traceable by folder
+name instead of being lost once everything lands in data/raw/ flat.
 
 Input schema (one row per annotation session, list-valued columns -- one
 list element per individual waggle run within that session):
@@ -30,20 +41,40 @@ A row/run is invalid if:
 import ast
 import math
 import os
+import subprocess
 import pandas as pd
 
-RAW_ANNOT_DIR = "./data/raw/annotations"
-RAW_VIDEO_DIR = "./data/raw/videos"
-OUTPUT_PATH = "./data/raw/annotations_expanded.csv"
+# The only things that should change between batches -- all five settings
+# below, together, in this one place. (integrate_raw_videos.py imports
+# VIDEO_EXT/ROTATE_DEGREES/RESOLUTION_DIVISORS from here rather than
+# defining its own copies, so a batch switch only ever means editing this
+# one block instead of hunting through two files.)
+#
+# BATCH: subfolder name under data/raw/videos/ and data/raw/annotations/
+#   holding the new drop.
+# DEST_PREFIX: pick a prefix per batch that (a) maps to the right lab in
+#   lab_source()/get_video_category() (src/utils/dance_eval.py,
+#   src/utils/video_utils.py: '0'->berlin, 'T'->nieh, 'C'->sharoni, else
+#   "other") for correct BEE_LENGTH_FRACTION calibration, and (b) doesn't
+#   collide with an existing naming convention. Unlike the existing 001-084
+#   videos (bare sequential numbers, no traceability to source), new
+#   batches keep the lab + batch tag + full original filename --
+#   self-describing from the name alone, and traceable back to the exact
+#   source file on trove. Existing video names are NOT touched -- this
+#   convention only applies to new data going forward.
+# VIDEO_EXT: the raw source video container extension for this batch
+#   (varies -- Berlin/Jerusalem drops were .mp4, Bristol is .mov).
+# ROTATE_DEGREES / RESOLUTION_DIVISORS: see integrate_raw_videos.py's
+#   module docstring for how these are derived per batch.
+BATCH = "ucsd_2026"
+DEST_PREFIX = ""
+VIDEO_EXT = ".MP4"
+ROTATE_DEGREES = 0
+RESOLUTION_DIVISORS = [1, 2]
 
-# This data is from the Sharoni/Jerusalem lab. Prefixing with "C_" (not the
-# existing "C1_"/"Capture_" used by earlier Jerusalem recordings) makes it
-# picked up as "sharoni" by lab_source()/get_video_category() (anything
-# starting with 'C'), while deliberately NOT matching prepare_training_data
-# .py's is_jerusalem_downsampled() check (which only matches "C1_"/"Capture_"
-# exactly) -- so, unlike that older data, all 4 resolution tiers of this
-# batch are kept rather than filtered down to just one.
-DEST_PREFIX = "C_"
+RAW_ANNOT_DIR = f"./data/raw/annotations/{BATCH}"
+RAW_VIDEO_DIR = f"./data/raw/videos/{BATCH}"
+OUTPUT_PATH = f"./data/raw/{BATCH}_annotations_expanded.csv"
 
 REQUIRED_COLS = [
     "video_name", "thorax_positions", "thorax_frames",
@@ -106,9 +137,52 @@ def check_file(fname):
     return is_clean, issues, (rows if is_clean else [])
 
 
-def convert_rows(rows):
-    """Expand a clean file's rows into individual run dicts."""
+def ffprobe_wh(path):
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0",
+           "-show_entries", "stream=width,height", "-of", "csv=p=0", path]
+    out = subprocess.check_output(cmd, text=True).strip()
+    w, h = out.split(",")
+    return int(w), int(h)
+
+
+def rotate_position(x, y, w_orig, h_orig, degrees):
+    """Map a position from the raw (pre-rotation) frame into the
+    post-rotation frame -- must match the ffmpeg transpose
+    integrate_raw_videos.py applies to the actual video pixels, or the
+    annotation ends up pointing at the wrong place in the rotated video."""
+    if degrees == 90:      # clockwise (ffmpeg transpose=1)
+        return h_orig - y, x
+    if degrees == 270:     # counter-clockwise (ffmpeg transpose=2)
+        return y, w_orig - x
+    return x, y
+
+
+def rotate_direction(dx, dy, degrees):
+    """Same rotation applied to a direction vector -- no translation term,
+    just the linear/rotational part."""
+    if degrees == 90:
+        return -dy, dx
+    if degrees == 270:
+        return dy, -dx
+    return dx, dy
+
+
+def convert_rows(rows, raw_video_filename=None):
+    """Expand a clean file's rows into individual run dicts.
+
+    raw_video_filename: the source video's filename under RAW_VIDEO_DIR
+    (as returned by guess_video_filename(), NOT the CSV's own possibly-messy
+    video_name column) -- only needed when ROTATE_DEGREES requires mapping
+    positions/directions from the raw (pre-rotation) frame into the
+    post-rotation frame this batch's videos were actually integrated at.
+    """
     out = []
+
+    w_orig = h_orig = None
+    if ROTATE_DEGREES and raw_video_filename:
+        src_path = os.path.join(RAW_VIDEO_DIR, raw_video_filename)
+        w_orig, h_orig = ffprobe_wh(src_path)
+
     for video_name_raw, parsed in rows:
         video_name = DEST_PREFIX + os.path.basename(video_name_raw)
         for t_pos, t_frame, w_pos, w_frame, w_dir in zip(
@@ -116,24 +190,32 @@ def convert_rows(rows):
             parsed["waggle_start_positions"], parsed["waggle_start_frames"],
             parsed["waggle_directions"],
         ):
+            wx, wy = w_pos[0], w_pos[1]
+            tx, ty = t_pos[0], t_pos[1]
+            dx, dy = w_dir[0], w_dir[1]
+            if ROTATE_DEGREES:
+                wx, wy = rotate_position(wx, wy, w_orig, h_orig, ROTATE_DEGREES)
+                tx, ty = rotate_position(tx, ty, w_orig, h_orig, ROTATE_DEGREES)
+                dx, dy = rotate_direction(dx, dy, ROTATE_DEGREES)
+
             out.append({
                 "video_name": video_name,
                 "start_frame": int(w_frame),
                 "end_frame": int(t_frame),
-                "x1": float(w_pos[0]), "y1": float(w_pos[1]),
-                "x2": float(t_pos[0]), "y2": float(t_pos[1]),
-                "angle": math.atan2(w_dir[0], w_dir[1]),
+                "x1": float(wx), "y1": float(wy),
+                "x2": float(tx), "y2": float(ty),
+                "angle": math.atan2(dx, dy),
                 "waggle": 1,
-                "origin_x": float(w_pos[0]), "origin_y": float(w_pos[1]),
-                "direction_x": float(w_dir[0]), "direction_y": float(w_dir[1]),
+                "origin_x": float(wx), "origin_y": float(wy),
+                "direction_x": float(dx), "direction_y": float(dy),
             })
     return out
 
 
 def guess_video_filename(csv_fname):
-    """CSV is '<base>_waggle_annotations.csv' -> video is '<base>.mp4'."""
+    """CSV is '<base>_waggle_annotations.csv' -> video is '<base>VIDEO_EXT'."""
     base = csv_fname.replace("_waggle_annotations.csv", "")
-    return base + ".mp4"
+    return base + VIDEO_EXT
 
 
 def main():
@@ -149,8 +231,17 @@ def main():
         is_clean, issues, rows = check_file(fname)
         video_name = guess_video_filename(fname)
 
+        # ROTATE_DEGREES != 0 means convert_rows() needs to ffprobe the raw
+        # video's dimensions -- a CSV with no matching video (orphan) can't
+        # be rotation-corrected, so treat it the same as any other skip
+        # rather than letting ffprobe crash the whole run on it.
+        if is_clean and ROTATE_DEGREES and not os.path.exists(os.path.join(RAW_VIDEO_DIR, video_name)):
+            is_clean = False
+            issues = [f"no matching video at {RAW_VIDEO_DIR}/{video_name} -- "
+                      f"can't rotation-correct without probing its dimensions"]
+
         if is_clean:
-            run_dicts = convert_rows(rows)
+            run_dicts = convert_rows(rows, raw_video_filename=video_name)
             expanded_rows.extend(run_dicts)
             integrated_files.append((fname, video_name, len(run_dicts)))
         else:

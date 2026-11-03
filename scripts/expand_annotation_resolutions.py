@@ -1,7 +1,11 @@
 """
-Expand native-resolution annotation windows (data/raw/annotations_windowed.csv)
-into one set of rows per resolution tier, matching the tiers
-integrate_raw_videos.py actually generates for each video.
+Expand native-resolution annotation windows
+(data/raw/<BATCH>_annotations_windowed.csv) into one set of rows per
+resolution tier, matching the tiers integrate_raw_videos.py actually
+generates for each video.
+
+BATCH is imported from convert_raw_annotations.py (the single source of
+truth for which batch is currently being processed).
 
 Only position columns (x1, y1, x2, y2, origin_x, origin_y) are rescaled, by
 the same width/height ratio as the video resize. Frame numbers are
@@ -19,11 +23,11 @@ import sys
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(__file__))
-from integrate_raw_videos import RAW_VIDEO_DIR, RESOLUTION_DIVISORS, ffprobe_wh_fps
-from convert_raw_annotations import DEST_PREFIX
+from integrate_raw_videos import RAW_VIDEO_DIR, RESOLUTION_DIVISORS, ffprobe_wh_fps, TRANSPOSE_FILTER
+from convert_raw_annotations import BATCH, DEST_PREFIX, ROTATE_DEGREES
 
-INPUT_PATH = "./data/raw/annotations_windowed.csv"
-OUTPUT_PATH = "./data/raw/annotations_resolution_expanded.csv"
+INPUT_PATH = f"./data/raw/{BATCH}_annotations_windowed.csv"
+OUTPUT_PATH = f"./data/raw/{BATCH}_annotations_resolution_expanded.csv"
 
 POSITION_COLS = ["x1", "y1", "x2", "y2", "origin_x", "origin_y"]
 
@@ -45,6 +49,13 @@ def expand_resolutions(df):
             continue
 
         w, h, _ = ffprobe_wh_fps(src_path)
+        if ROTATE_DEGREES in TRANSPOSE_FILTER:
+            # Tiers must be computed from the POST-rotation dimensions to
+            # match what integrate_raw_videos.py actually encoded -- using
+            # the raw (pre-rotation) w/h here produces a width/height-swapped
+            # filename that doesn't exist on disk (e.g. "_880_1152" instead
+            # of the real "_1152_880").
+            w, h = h, w
         base_name = os.path.splitext(video_name)[0]
 
         for d in RESOLUTION_DIVISORS:

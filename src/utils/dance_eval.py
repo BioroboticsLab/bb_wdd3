@@ -25,6 +25,7 @@ BEE_LENGTH_FRACTION = {
     "berlin": 0.0224,
     "nieh": 0.0775,
     "sharoni": 0.0330,
+    "bristol": 0.0148,
 }
 
 
@@ -39,6 +40,8 @@ def lab_source(video_name: str) -> str:
         return "nieh"
     elif video_name.startswith('C'):
         return "sharoni"
+    elif video_name.startswith('B_bristol2026_'):
+        return "bristol"
     else:
         return "other"
 

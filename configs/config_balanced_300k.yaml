@@ -1,0 +1,160 @@
+data:
+  data_dir: ./data/videos/
+  annotations: ./data/annotations/fps_multires_clean.csv
+  train_ratio: 0.9
+  subset_size: 1.0
+  width: 224
+  height: 224
+  window_size: 16
+  data_fraction_divisor: 1
+  lab_caps:
+    C: 300000  # sharoni/jerusalem
+    T: 300000  # nieh/ucsd
+    # '0' (berlin) and anything else (e.g. bristol) intentionally absent -- kept in full
+augmentations:
+  width: 224
+  height: 224
+  prob_flip_h: 0.5
+  prob_flip_v: 0.0
+  prob_rotate: 0.3
+  rotate_range:
+  - -40
+  - 40
+  prob_scale: 0.3
+  scale_range:
+  - 0.9
+  - 1.1
+  prob_translate: 0.3
+  translate_range: 0.1
+  prob_hsv: 0.0
+  hsv_hue: 0.1
+  hsv_saturation: 0.9
+  hsv_value: 0.9
+  prob_brightness: 0.3
+  brightness_range: 0.4
+  prob_contrast: 0.3
+  contrast_range: 0.4
+  prob_gamma: 0.0
+  gamma_range:
+  - 0.8
+  - 1.2
+  prob_blur: 0.1
+  blur_range:
+  - 0.5
+  - 2.0
+  prob_clahe: 0.1
+  clahe_clip_limit: 2.0
+  clahe_tile_grid_size:
+  - 8
+  - 8
+  prob_color_shuffle: 0.0
+  prob_posterize: 0.0
+  posterize_bits:
+  - 4
+  - 7
+  prob_greyscale: 0.0
+  normalize: true
+  mean:
+  - 0.1964
+  - 0.1964
+  - 0.1964
+  std:
+  - 0.1898
+  - 0.1898
+  - 0.1898
+  temporal_jitter: false
+model:
+  pretrained: true
+  self_attention: false
+  cross_attention: true
+  transformer_heads: 4
+  transformer_layers: 4
+  dropout: 0.0
+  max_detections_per_cell: 1
+  grid_size: 28
+  n_classes: 1
+train:
+  batch_size: 64
+  epochs: 100
+  lr: 0.0001
+  weight_decay: 0.0005
+  val_freq: 1
+  use_amp: true
+  warmup_ratio: 0.01
+  num_workers: 4
+  save_model: true
+  betas:
+  - 0.937
+  - 0.999
+  ema_decay: 0.9999
+val:
+  batch_size: 32
+post_process:
+  spatial_threshold: 49.4
+  temporal_threshold_ms: 130.3
+  confidence_threshold: 0.2175
+  min_samples: 2
+  direction_threshold_deg: 45
+  mode: mean
+  temporal_threshold: 8
+  strategy: cluster_consolidate
+  bee_size_multiplier: 0.5
+loss:
+  lambda_obj: 12.0
+  lambda_coord: 7.5
+  lambda_noobj: 0.02
+  lambda_direction: 7.5
+  lambda_temporal: 7.5
+  use_varifocal: false
+  varifocal_gamma: 2.0
+  quality_decay: exponential
+  grid_size: 28
+  input_size: 224
+system:
+  seed: 42
+  num_workers: 4
+  device: cuda
+logging:
+  log_dir: ./logs
+  checkpoint_dir: ./checkpoints
+  wandb_project: wagglenet
+eval:
+  batch_size: 32
+  confidence_threshold: 0.001
+  max_dets: 10
+  metric: dance_map
+  map_freq: 5
+  window_level:
+    enabled: false
+    pos_thresholds:
+    - 10
+    - 15
+    - 20
+    - 25
+    - 30
+    iou_thresholds:
+    - 0.3
+    - 0.7
+    angular_thresholds:
+    - 10
+    - 20
+    - 30
+    match_pairs: hungarian
+  dance_level:
+    enabled: true
+    pos_thresholds: # avg bee size across all video sources 0.0443
+    #- 0.03
+    #- 0.04
+    #- 0.06
+    #- 0.08
+    #- 0.1
+    - 0.045 # within one bee size away
+    - 0.090 # within two bee sizes away
+    - 0.135 # within three bee sizes away
+    iou_thresholds:
+    - 0.3
+    - 0.7
+    angular_thresholds:
+    - 10
+    - 20
+    - 30

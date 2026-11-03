@@ -86,6 +86,8 @@ def lab_source(filename: str) -> str:
         return "nieh"
     elif filename.startswith('C'):
         return "sharoni"
+    elif filename.startswith('B_bristol2026_'):
+        return "bristol"
     else:
         return "other"
 
@@ -736,15 +738,46 @@ BEE_WIDTH_RATIO = 1.0
 BEE_LENGTH_RATIO = 2.0
 
 
+PROJECTION_FIELDNAMES = [
+    "lab", "res_w", "res_h", "avg_diameter_px",
+    "bee_width_px", "bee_length_px", "n_source_videos", "measured",
+]
+
+
+def load_existing_projection_rows(path: Path) -> dict:
+    """Read a previously-saved projected_summary.csv (if any), grouped by lab,
+    so a new run can preserve labs it didn't re-measure this time."""
+    if not path.exists():
+        return {}
+    rows_by_lab = defaultdict(list)
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            rows_by_lab[row["lab"]].append(row)
+    return rows_by_lab
+
+
 def save_projection_csv(summary: dict, output_path: Path):
     """Write the per-resolution-tier projected summary (the actual deliverable
-    for deciding model grid scales / postprocessing thresholds) to its own CSV."""
+    for deciding model grid scales / postprocessing thresholds) to its own CSV.
+
+    Merges with the file's existing content rather than overwriting it outright:
+    a lab only gets its rows replaced if this run actually measured it (non-empty
+    diameters). This lets you re-run the tool to add/re-measure just one lab --
+    e.g. a newly added data source -- without wiping out every other lab's
+    already-established numbers just because you skipped/didn't draw circles
+    on their frame this time.
+    """
+    existing = load_existing_projection_rows(output_path)
+    for lab, res_summary in summary.items():
+        if res_summary:
+            existing.pop(lab, None)
+
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "lab", "res_w", "res_h", "avg_diameter_px",
-            "bee_width_px", "bee_length_px", "n_source_videos", "measured",
-        ])
+        writer.writerow(PROJECTION_FIELDNAMES)
+        for rows in existing.values():
+            for row in rows:
+                writer.writerow([row[c] for c in PROJECTION_FIELDNAMES])
         for subfolder, res_summary in summary.items():
             for (w, h), stats in res_summary.items():
                 diam = stats["avg_diameter_px"]
