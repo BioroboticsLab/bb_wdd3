@@ -345,7 +345,8 @@ def main(args):
         "seed": SEED,
     },
     name=run_name,
-    resume="allow" if args.resume else None
+    id=args.wandb_run_id,
+    resume="allow" if args.wandb_run_id else None
 )
     for epoch in range(start_epoch, config['train']['epochs']):
         print(f'\n Epoch {epoch+1}/{config["train"]["epochs"]}')
@@ -486,10 +487,12 @@ def main(args):
                     **val_log,
                     **get_wandb_log_dict(epoch, test_metrics, post_test_metrics),
                     **dance_wandb_dict,
+                    'epoch': epoch + 1,
                     })
             else:
                 print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (window-level metrics disabled via config)")
                 wandb.log({
+                    'epoch': epoch + 1,
                     **train_log,
                     **val_log,
                     **dance_wandb_dict,
@@ -497,6 +500,7 @@ def main(args):
         else:
             print(f"Epoch {epoch+1}/{config['train']['epochs']} | val_loss: {val_loss:.4f} (mAP skipped, next at epoch {((epoch // map_freq) + 1) * map_freq + 1})")
             wandb.log({
+                'epoch': epoch + 1,
                 **train_log,
                 **val_log,
                 })
@@ -541,6 +545,7 @@ def main(args):
                         'val_loss': val_loss,
                         'std_map': std_map_val,
                         'dance_map': dance_map_val,
+                        'wandb_run_id': wandb.run.id,
                     }, os.path.join(ckpt_dir, 'best.pth'))
                     print(f"New best model saved -> {score_str}")
                 else:
@@ -558,6 +563,7 @@ def main(args):
                     'val_loss': val_loss,
                     'std_map': std_map_val,
                     'dance_map': dance_map_val,
+                    'wandb_run_id': wandb.run.id,
                 }, os.path.join(ckpt_dir, 'latest.pth'))
                 print(f"Saved latest checkpoint at epoch {epoch+1}/{config['train']['epochs']}")
             else:
@@ -573,6 +579,7 @@ def get_args():
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from (e.g. ./ckpt/latest.pth).")
     parser.add_argument("--run_name", type=str, default=None, help="Name for this run. Defaults to datetime if not specified.")
     parser.add_argument("--reset_scheduler", action='store_true', help="Reset LR scheduler instead of loading from checkpoint (use when data size or epochs changed).")
+    parser.add_argument("--wandb_run_id", type=str, default=None, help="Continue an existing wandb run instead of starting a new one.")
     return parser.parse_args()
 
 if __name__ == '__main__':
