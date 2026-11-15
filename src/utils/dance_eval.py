@@ -690,14 +690,50 @@ def compute_dance_level_metrics(
     
     if total_gt == 0 or not all_preds_flat:
         return _empty_dance_metrics()
-    
+
+    # pos_dist/tiou/ang_err only depend on the (pred, gt) pair, not on the
+    # threshold combo -- so compute them once here instead of redoing it
+    # inside the combo sweep below for every combo. Same result, way less
+    # redundant work.
+    pair_geometry = {}  # (vname, idx) -> [(gt_idx, pos_dist, tiou, ang_err), ...]
+    for conf, vname, idx, pred in all_preds_flat:
+        vgts = gt_norm.get(vname, [])
+        pairs = []
+        for gt_idx, gt in enumerate(vgts):
+            # Position distance: both in normalized [0,1] space
+            gt_x_norm = gt['position'][0]
+            gt_y_norm = gt['position'][1]
+            pos_dist = np.sqrt(
+                (pred['position'][0] - gt_x_norm)**2 +
+                (pred['position'][1] - gt_y_norm)**2
+            )
+
+            # Temporal IoU
+            gt_s, gt_e = gt['temporal_offsets']
+            pr_s, pr_e = pred['temporal_offsets']
+            inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
+            union = max(gt_e, pr_e) - min(gt_s, pr_s)
+            tiou = inter / union if union > 0 else 0
+
+            # Angular error
+            gt_d = np.array(gt['direction'])
+            pr_d = np.array(pred['direction'])
+            gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
+            pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
+            ang_err = np.degrees(np.arccos(
+                np.clip(np.dot(gt_d, pr_d), -1.0, 1.0)
+            ))
+
+            pairs.append((gt_idx, pos_dist, tiou, ang_err))
+        pair_geometry[(vname, idx)] = pairs
+
     # Sweep through threshold combos
     ap_scores = []
     precision_scores = []
     recall_scores = []
     f1_scores = []
     all_matched_pairs = []
-    
+
     combos = list(itertools.product(pos_thresholds, iou_thresholds, angular_thresholds))
     combo_iter = tqdm(combos, desc='Dance-level threshold sweep', leave=False) if show_progress else combos
 
@@ -706,42 +742,17 @@ def compute_dance_level_metrics(
         matched_gts = {vname: set() for vname in all_videos}
         tp_flags = []
         matched_pairs = []
-        
+
         for conf, vname, _idx, pred in all_preds_flat:
             vgts = gt_norm.get(vname, [])
-            
+
             best_cost = float('inf')
             best_gt_idx = None
-            best_gt = None
-            
-            for gt_idx, gt in enumerate(vgts):
+
+            for gt_idx, pos_dist, tiou, ang_err in pair_geometry[(vname, _idx)]:
                 if gt_idx in matched_gts[vname]:
                     continue
-                
-                # Position distance: both in normalized [0,1] space
-                gt_x_norm = gt['position'][0]
-                gt_y_norm = gt['position'][1]
-                pos_dist = np.sqrt(
-                    (pred['position'][0] - gt_x_norm)**2 +
-                    (pred['position'][1] - gt_y_norm)**2
-                )
-                
-                # Temporal IoU
-                gt_s, gt_e = gt['temporal_offsets']
-                pr_s, pr_e = pred['temporal_offsets']
-                inter = max(0, min(gt_e, pr_e) - max(gt_s, pr_s))
-                union = max(gt_e, pr_e) - min(gt_s, pr_s)
-                tiou = inter / union if union > 0 else 0
-                
-                # Angular error
-                gt_d = np.array(gt['direction'])
-                pr_d = np.array(pred['direction'])
-                gt_d = gt_d / (np.linalg.norm(gt_d) + 1e-8)
-                pr_d = pr_d / (np.linalg.norm(pr_d) + 1e-8)
-                ang_err = np.degrees(np.arccos(
-                    np.clip(np.dot(gt_d, pr_d), -1.0, 1.0)
-                ))
-                
+
                 if (pos_dist <= pos_threshold and
                         tiou >= iou_threshold and
                         ang_err <= angular_threshold):
@@ -751,12 +762,11 @@ def compute_dance_level_metrics(
                     if cost < best_cost:
                         best_cost = cost
                         best_gt_idx = gt_idx
-                        best_gt = gt
-            
+
             if best_gt_idx is not None:
                 matched_gts[vname].add(best_gt_idx)
                 tp_flags.append(1)
-                matched_pairs.append((best_gt, pred))
+                matched_pairs.append((vgts[best_gt_idx], pred))
             else:
                 tp_flags.append(0)
         

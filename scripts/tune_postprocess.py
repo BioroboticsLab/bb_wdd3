@@ -52,6 +52,10 @@ def get_args():
                          help="Search bee_size_multiplier instead of a fixed spatial_threshold.")
     parser.add_argument("--max_videos", type=int, default=None,
                          help="Only use this many val videos, for quickly testing the script works.")
+    parser.add_argument("--profile", action="store_true",
+                         help="Profile a single trial (one score() call) with cProfile and print the "
+                              "top time-consuming functions, instead of running the full Optuna search. "
+                              "Use this to find the real bottleneck before trying to speed things up.")
     return parser.parse_args()
 
 
@@ -201,6 +205,27 @@ def main():
     print(f"\nBaseline (current config values) dance mAP: {baseline_metrics['comprehensive']['map']:.4f}  "
           f"recall={baseline_metrics['coverage']['recall']:.4f}  "
           f"precision={baseline_metrics['coverage']['precision']:.4f}")
+
+    if args.profile:
+        import cProfile
+        import pstats
+
+        print("\n--- profiling a single trial (one score() call) ---")
+        profiler = cProfile.Profile()
+        profiler.enable()
+        score(
+            pp_cfg['spatial_threshold'],
+            pp_cfg.get('temporal_threshold_ms', 300),
+            pp_cfg['confidence_threshold'],
+            pp_cfg.get('min_samples', 1),
+            pp_cfg.get('direction_threshold_deg', 30.0),
+            pp_cfg.get('bee_size_multiplier'),
+            pp_cfg.get('mode', 'mean'),
+        )
+        profiler.disable()
+        stats = pstats.Stats(profiler).sort_stats('cumulative')
+        stats.print_stats(25)
+        return
 
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
