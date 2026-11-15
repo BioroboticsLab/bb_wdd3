@@ -278,3 +278,89 @@ def cap_lab_samples(data, caps, seed=42):
 
     out = pd.concat(parts, ignore_index=True)
     return out.drop(columns='_category')
+
+
+def cap_lab_samples_by_dance(data, caps, n_duration_bins=3, seed=42):
+    """Like cap_lab_samples(), but samples whole dances instead of individual
+    rows, keeping an equal NUMBER OF DANCES across short/medium/long
+    duration buckets (not an equal number of rows).
+
+    cap_lab_samples() samples rows uniformly at random. Two problems with
+    that: (1) longer dances have way more rows than short ones (duration and
+    row count are correlated ~0.87 on this data), so a plain random row
+    sample ends up mostly made of windows from long dances, which can bias
+    what the model learns toward long-dance features; (2) it can keep some
+    windows of one dance while dropping others, so a single dance's
+    start/middle/end don't all stay together.
+
+    An earlier version of this function fixed both of those by capping each
+    duration bucket to an equal ROW budget (cap / n_duration_bins). That
+    backfires: since long dances contain far more rows each, an equal row
+    budget buys noticeably fewer long dances than short ones, so the dance
+    *count* per bucket ends up skewed anyway -- just in the opposite
+    direction. What we actually want is an equal number of dance *instances*
+    per duration bucket. This version:
+      1. groups rows into whole dances (video_name, waggle_run_id)
+      2. splits each lab's dances into n_duration_bins duration buckets
+         (by quantile, so each bucket starts with roughly the same number
+         of dances)
+      3. shuffles dances within each bucket, then takes them one "round" at
+         a time, one dance from every bucket per round, stopping as soon as
+         either the smallest bucket runs out of dances, or the next round
+         would push the total over the row cap -- whichever comes first.
+         This keeps the dance count IDENTICAL across buckets, while still
+         respecting the overall row budget.
+      4. puts the kept dances' rows back together
+
+    Args:
+        data: DataFrame with 'video_name', 'waggle_run_id', 'waggle_start',
+            'waggle_end' columns.
+        caps: dict mapping get_video_category() codes to a max row count,
+            same as cap_lab_samples().
+        n_duration_bins: how many duration groups (e.g. short/medium/long)
+            to split each lab's dances into before sampling.
+        seed: random seed for reproducibility.
+    """
+    data = data.copy()
+    data['_category'] = data['video_name'].apply(get_video_category)
+    data['_duration'] = data['waggle_end'] - data['waggle_start']
+
+    parts = []
+    for category, group in data.groupby('_category'):
+        cap = caps.get(category)
+        if cap is None or len(group) <= cap:
+            parts.append(group.drop(columns=['_duration']))
+            continue
+
+        # one row per dance instance, with its row count and duration
+        dances = group.groupby(['video_name', 'waggle_run_id']).agg(
+            n_rows=('_duration', 'size'),
+            duration=('_duration', 'max'),
+        ).reset_index()
+        dances['_bin'] = pd.qcut(dances['duration'], n_duration_bins,
+                                  duplicates='drop', labels=False)
+
+        # shuffled, per-bucket lists of dances to draw from round-by-round
+        bucket_lists = {
+            _bin: bin_dances.sample(frac=1, random_state=seed).to_dict('records')
+            for _bin, bin_dances in dances.groupby('_bin')
+        }
+
+        kept_keys = []
+        total_rows = 0
+        round_idx = 0
+        while all(round_idx < len(lst) for lst in bucket_lists.values()):
+            round_rows = sum(lst[round_idx]['n_rows'] for lst in bucket_lists.values())
+            if total_rows + round_rows > cap:
+                break
+            for lst in bucket_lists.values():
+                dance_row = lst[round_idx]
+                kept_keys.append((dance_row['video_name'], dance_row['waggle_run_id']))
+            total_rows += round_rows
+            round_idx += 1
+
+        kept_mask = group.set_index(['video_name', 'waggle_run_id']).index.isin(kept_keys)
+        parts.append(group[kept_mask].drop(columns=['_duration']))
+
+    out = pd.concat(parts, ignore_index=True)
+    return out.drop(columns='_category')

@@ -1,11 +1,12 @@
 import cv2
 import torch
 import gc
+import re
 import torchvision.transforms as T
 #from utils.nms import nms_spatiotemporal
 from src.utils.frames_utils import preprocess_frames
-import os 
-import numpy as np 
+import os
+import numpy as np
 from PIL import Image
 cv2.setNumThreads(4)
 
@@ -263,30 +264,53 @@ def frames_to_video(frames_data, output_name, output_dir='./outputs/vids', fps=1
     print(f"Video saved to {output_path}")
     print(f"Total frames: {len(all_frames)}")
 
+_UNRECOGNIZED_VIDEO_NAMES_WARNED = set()
+
+
 def get_video_category(base_video_name: str) -> str:
     """
     Categorize video based on naming convention.
-    
+
+    Matches on the actual confirmed prefixes per lab (verified against
+    data/raw/*_annotations_expanded.csv for every current lab), instead of
+    a bare first-character check -- a first-character check happens to
+    work for these specific names today, but silently merges in any future
+    (or legacy) video whose name coincidentally starts with the same
+    letter/digit, with nothing to catch it.
+
     Categories:
-        - "0": Videos starting with 0
-        - "T1": Videos starting with T1
-        - "T_other": Videos starting with T(other number)
-        - "C": Videos starting with C
-        - "other": Everything else
-    
+        - "0": Berlin/Landgraf. "0_berlin2024_cam-..." (current batch) or
+          "0NN_<res>.mp4" (an older, pre-rename Berlin batch -- verified by
+          resolution tier and zero content overlap with the current batch,
+          so a separate set of recordings, not a duplicate).
+        - "C": Jerusalem/Sharoni. "C_2026-..."/"C1_..." (current batch) or
+          "Capture_<date>_..." (an older 2025 Jerusalem pilot clip, same
+          verification as above).
+        - "T": UCSD/Nieh. "T<1-14>-D...-B...-V...-C.mp4".
+        - "other": Bristol ("B_bristol2026_...") and anything else that
+          doesn't match a known lab -- the latter gets a one-time warning
+          printed, since it means a name we have not seen/verified before.
+
     Args:
         base_video_name: Base video name
-        
+
     Returns:
         Category string
     """
-    if base_video_name.startswith('0'):
+    if base_video_name.startswith('0_berlin') or re.match(r'^0\d\d_', base_video_name):
         return "0"
-    elif base_video_name.startswith('T'):
-        return "T"
-    elif base_video_name.startswith('C'):
+    elif re.match(r'^C_2026', base_video_name) or base_video_name.startswith('C1_') \
+            or base_video_name.startswith('Capture_'):
         return "C"
+    elif re.match(r'^T\d{1,2}-', base_video_name):
+        return "T"
+    elif base_video_name.startswith('B_bristol2026_'):
+        return "other"
     else:
+        if base_video_name not in _UNRECOGNIZED_VIDEO_NAMES_WARNED:
+            _UNRECOGNIZED_VIDEO_NAMES_WARNED.add(base_video_name)
+            print(f"  [warn] get_video_category: video name does not match any known "
+                  f"lab naming pattern, defaulting to 'other': {base_video_name!r}")
         return "other"
 
 

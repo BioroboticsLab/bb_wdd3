@@ -11,6 +11,7 @@ data:
     C: 300000  # sharoni/jerusalem
     T: 300000  # nieh/ucsd
     # '0' (berlin) and anything else (e.g. bristol) intentionally absent -- kept in full
+  n_duration_bins: 3  # short/medium/long split used when capping lab_caps above
 augmentations:
   width: 224
   height: 224

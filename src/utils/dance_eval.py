@@ -8,6 +8,7 @@ angular error).
 """
 
 import itertools
+import re
 import numpy as np
 import warnings
 from collections import defaultdict
@@ -30,20 +31,29 @@ BEE_LENGTH_FRACTION = {
 }
 
 
+_UNRECOGNIZED_LAB_SOURCE_NAMES_WARNED = set()
+
+
 def lab_source(video_name: str) -> str:
     """Identify which lab a video is from, based on filename prefix.
-    Mirrors get_video_category() in src/utils/video_utils.py (numeric -> "0",
-    'T' -> "T", 'C' -> "C") but reimplemented here with human-readable names
-    so this module doesn't need to import video_utils (pulls in torch/cv2)."""
-    if video_name.startswith('0'):
+    Same logic as get_video_category() in src/utils/video_utils.py, just
+    with readable lab names instead of codes. Kept as a separate copy here
+    so this module doesn't have to import video_utils (which pulls in
+    torch/cv2)."""
+    if video_name.startswith('0_berlin') or re.match(r'^0\d\d_', video_name):
         return "berlin"
-    elif video_name.startswith('T'):
-        return "nieh"
-    elif video_name.startswith('C'):
+    elif re.match(r'^C_2026', video_name) or video_name.startswith('C1_') \
+            or video_name.startswith('Capture_'):
         return "sharoni"
+    elif re.match(r'^T\d{1,2}-', video_name):
+        return "nieh"
     elif video_name.startswith('B_bristol2026_'):
         return "bristol"
     else:
+        if video_name not in _UNRECOGNIZED_LAB_SOURCE_NAMES_WARNED:
+            _UNRECOGNIZED_LAB_SOURCE_NAMES_WARNED.add(video_name)
+            print(f"  [warn] lab_source: video name does not match any known "
+                  f"lab naming pattern, defaulting to 'other': {video_name!r}")
         return "other"
 
 

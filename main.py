@@ -17,7 +17,7 @@ from src.loss.loss import WaggleDetectionLoss
 from src.data.augmentation import WaggleAugmentations
 from src.tests.aug_vis import demo_visualization
 import torch.nn  as nn
-from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv, balance_sample, cap_lab_samples
+from src.utils.data_utils import fix_dataframe_with_video_lengths, load_config, save_preds_to_csv, balance_sample, cap_lab_samples_by_dance
 import datetime
 import wandb
 from src.utils.eval_utils import get_preds_gt, yolo_to_img_space, yolo_to_img_space_gt, get_eval_metrics, print_evaluation_results, get_wandb_log_dict
@@ -83,8 +83,15 @@ def main(args):
 
     # Cap specific over-represented labs (train only -- val/test stays on the
     # true, natural distribution so it remains a fair comparison point).
+    # Sampled whole-dance, duration-stratified so short/medium/long waggle
+    # runs stay evenly represented instead of random row sampling skewing
+    # toward long runs (which have far more rows each).
     if config['data'].get('lab_caps'):
-        train_df = cap_lab_samples(train_df, config['data']['lab_caps'], seed=SEED)
+        train_df = cap_lab_samples_by_dance(
+            train_df, config['data']['lab_caps'],
+            n_duration_bins=config['data'].get('n_duration_bins', 3),
+            seed=SEED,
+        )
 
     n_unique_videos = data['video_name'].nunique()
     print(f"Using: {len(train_df)} train / {len(test_df)} test samples (from {full_data_size} total).")
