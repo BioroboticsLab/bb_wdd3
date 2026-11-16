@@ -98,6 +98,12 @@ class VideoYoloDataset(Dataset):
         print("Category counts:")
         for cat, count in sorted(counts.items()):
             print(f"  {cat:10s}: {count}")
+        if counts.get('other', 0) > 0:
+            print(f"  [note] {counts['other']} rows fell into 'other'. Every known lab "
+                  f"(berlin/jerusalem-sharoni/ucsd-nieh/bristol) has its own code now, so "
+                  f"'other' should normally be empty. This usually means either new data "
+                  f"you haven't taught get_video_category() to recognize yet, or a naming "
+                  f"pattern changed -- check the [warn] lines above for the exact names.")
         return counts
 
     def _sample_frames(self, frames, target_length):

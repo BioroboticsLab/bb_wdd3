@@ -287,9 +287,17 @@ def get_video_category(base_video_name: str) -> str:
           "Capture_<date>_..." (an older 2025 Jerusalem pilot clip, same
           verification as above).
         - "T": UCSD/Nieh. "T<1-14>-D...-B...-V...-C.mp4".
-        - "other": Bristol ("B_bristol2026_...") and anything else that
-          doesn't match a known lab -- the latter gets a one-time warning
-          printed, since it means a name we have not seen/verified before.
+        - "B": Bristol. "B_bristol2026_...".
+        - "other": anything that doesn't match a known lab. This should
+          normally be EMPTY -- every lab we actually have data for gets its
+          own code above. If rows show up here, it means either (1) new
+          data was added that this function hasn't been taught to
+          recognize yet, or (2) a naming pattern changed and broke one of
+          the checks above. Either way, don't assume it's fine -- check
+          get_video_category.count_categories() output (or wherever this
+          printed from) and go look at the actual names by hand. Each
+          unrecognized name also gets its own one-time [warn] print above,
+          naming the exact string that fell through.
 
     Args:
         base_video_name: Base video name
@@ -305,7 +313,7 @@ def get_video_category(base_video_name: str) -> str:
     elif re.match(r'^T\d{1,2}-', base_video_name):
         return "T"
     elif base_video_name.startswith('B_bristol2026_'):
-        return "other"
+        return "B"
     else:
         if base_video_name not in _UNRECOGNIZED_VIDEO_NAMES_WARNED:
             _UNRECOGNIZED_VIDEO_NAMES_WARNED.add(base_video_name)
