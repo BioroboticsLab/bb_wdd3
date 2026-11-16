@@ -40,7 +40,7 @@ def lab_source(video_name: str) -> str:
     with readable lab names instead of codes. Kept as a separate copy here
     so this module doesn't have to import video_utils (which pulls in
     torch/cv2)."""
-    if video_name.startswith('0_berlin') or re.match(r'^0\d\d_', video_name):
+    if video_name.startswith('0_berlin') or re.match(r'^0\d\d(_|$)', video_name):
         return "berlin"
     elif re.match(r'^C_2026', video_name) or video_name.startswith('C1_') \
             or video_name.startswith('Capture_'):

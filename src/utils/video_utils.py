@@ -297,7 +297,7 @@ def get_video_category(base_video_name: str) -> str:
     Returns:
         Category string
     """
-    if base_video_name.startswith('0_berlin') or re.match(r'^0\d\d_', base_video_name):
+    if base_video_name.startswith('0_berlin') or re.match(r'^0\d\d(_|$)', base_video_name):
         return "0"
     elif re.match(r'^C_2026', base_video_name) or base_video_name.startswith('C1_') \
             or base_video_name.startswith('Capture_'):
