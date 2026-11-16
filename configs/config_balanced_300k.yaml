@@ -79,13 +79,15 @@ train:
   epochs: 100
   lr: 0.0001
   weight_decay: 0.0005
+  nbs: 64  # nominal batch size weight_decay was tuned for -- actual weight_decay gets scaled by batch_size/nbs
+  grad_clip_norm: 10.0  # clip gradient norm to this value before each optimizer step
   val_freq: 1
   use_amp: true
   warmup_epochs: 3  # fixed number of warmup epochs, regardless of total epochs
   num_workers: 4
   save_model: true
   betas:
-  - 0.937
+  - 0.9  # standard AdamW default -- 0.937 was an SGD-momentum value, never tuned for Adam
   - 0.999
   ema_decay: 0.9999
 val:

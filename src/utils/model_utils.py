@@ -41,6 +41,34 @@ def de_parallel(model):
     """De-parallelize a model"""
     return model.module if hasattr(model, 'module') else model
 
+
+def build_param_groups(model, weight_decay):
+    """Split model params into two AdamW groups: one with weight decay,
+    one without. Biases and norm-layer weights (BatchNorm3d in our R(2+1)D
+    backbone, LayerNorm in the cross-attention heads) don't benefit from
+    weight decay the way conv/linear weight matrices do -- this is standard
+    across the YOLOv5/v9/Ultralytics/Mamba-YOLO lineage, not SGD-specific.
+
+    Returns a list of two param-group dicts, ready to pass straight to an
+    optimizer constructor in place of model.parameters().
+    """
+    norm_classes = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)
+
+    decay, no_decay = [], []
+    for module_name, module in model.named_modules():
+        for param_name, param in module.named_parameters(recurse=False):
+            if "bias" in param_name:
+                no_decay.append(param)
+            elif isinstance(module, norm_classes):
+                no_decay.append(param)
+            else:
+                decay.append(param)
+
+    return [
+        {'params': decay, 'weight_decay': weight_decay},
+        {'params': no_decay, 'weight_decay': 0.0},
+    ]
+
 class EMA:
     """Memory-efficient in-place EMA that doesn't duplicate the model"""
     def __init__(self, model, decay=0.9999, tau=2000, updates=0, device=None):

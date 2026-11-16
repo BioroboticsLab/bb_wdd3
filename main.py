@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 import pandas as pd
-from src.train.train import train
+from src.train.train import train, GradAccumState
 #from src.train.train_grad_diagnostic import train
 from src.eval.eval import eval
 import torch.optim as optim
@@ -32,7 +32,7 @@ from src.utils.dance_eval import (
 import cv2
 from src.utils.vis_utils import reverse_transform_batch, save_frames
 import argparse
-from src.utils.model_utils import load_pretrained_model, EMA
+from src.utils.model_utils import load_pretrained_model, EMA, build_param_groups
 from collections import Counter
 from src.utils.video_utils import get_video_category
 
@@ -255,10 +255,20 @@ def main(args):
         model = nn.DataParallel(model)
         print("Using Distributed Data Parallel (DDP).")
 
-    optimizer = optim.AdamW(model.parameters(),
+    # accumulate N batches before each real optimizer step, so our
+    # effective batch size matches nbs
+    accumulate = max(round(config['train']['nbs'] / config['train']['batch_size']), 1)
+
+    # scale weight_decay for our real effective batch size (batch_size * accumulate)
+    scaled_weight_decay = config['train']['weight_decay'] * (
+        config['train']['batch_size'] * accumulate / config['train']['nbs']
+    )
+    optimizer = optim.AdamW(build_param_groups(model, scaled_weight_decay),
                             lr=config['train']['lr'],
-                            weight_decay=config['train']['weight_decay'],
                             betas=config['train']['betas'])
+
+    # tracks grad accumulation across epochs, not just one
+    accum_state = GradAccumState()
 
     ema = EMA(model, decay=config['train']['ema_decay'], device=device)
 
@@ -370,7 +380,9 @@ def main(args):
         print(f'\n Epoch {epoch+1}/{config["train"]["epochs"]}')
         # Train one epoch
         train_loss, train_log = train(
-            model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler, ema)
+            model, device, optimizer, yolocriteria, scheduler, train_loader, epoch, scaler, ema,
+            grad_clip_norm=config['train'].get('grad_clip_norm', 10.0),
+            accumulate=accumulate, accum_state=accum_state)
 
         # Validate
         ema.apply_shadow()
