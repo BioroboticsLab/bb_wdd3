@@ -210,59 +210,48 @@ def evaluate(model_path, epoch, video_folder="/home/prajna/multiscale_wdd/data/v
     
     return all_results
 
+TQDM_BAR_FORMAT = '{l_bar}{bar:10}| {n_fmt}/{total_fmt} {elapsed}'  # same fixed-width bar as train.py
+VAL_COLS = ('Epoch', 'GPU_mem', 'Loss', 'Obj', 'NoObj', 'Pos', 'Dir', 'Temp', 'Instances', 'Size')
+
+
 def eval(model, device, yolocriterion, val_loader, epoch):
     model.eval()
-    total_loss = 0.0
-    total_obj_loss = 0.0
-    total_no_obj_loss = 0.0
-    total_position_loss = 0.0
-    total_direction_loss = 0.0
-    total_temporal_loss = 0.0
-    num_batches = 0
-    
-    progress_bar = tqdm(val_loader, desc=f'Val Epoch {epoch+1}', leave=True, position=int(epoch))
-    
+
+    running_loss = torch.zeros(6, device=device)  # running MEAN, not raw per-batch loss -- less jumpy
+
+    print(('\n' + '%11s' * len(VAL_COLS)) % VAL_COLS)  # header row, printed once per epoch
+
+    pbar = enumerate(val_loader)
+    pbar = tqdm(pbar, total=len(val_loader), bar_format=TQDM_BAR_FORMAT)
+
     with torch.no_grad():
-        for batch_idx, batch in enumerate(progress_bar):
+        for batch_idx, batch in pbar:
             batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
             inputs = batch["video"].to(device)
             targets = batch['targets'].to(device)
-            
+
             with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 outputs = model(inputs)
-                #print("Raw model output shape:", outputs.shape)
                 total_loss_batch, obj_loss, no_obj_loss, position_loss, direction_loss, temporal_loss = yolocriterion(outputs, targets)
-            
-            total_loss += total_loss_batch.item()
-            total_obj_loss += obj_loss.item()
-            total_no_obj_loss += no_obj_loss.item()
-            total_position_loss += position_loss.item()
-            total_direction_loss += direction_loss.item()
-            total_temporal_loss += temporal_loss.item()
-            num_batches += 1
-            
-            progress_bar.set_postfix({
-                'Loss': f'{total_loss / num_batches:.4f}',
-                'Obj': f'{total_obj_loss / num_batches:.4f}',
-                'NoObj': f'{total_no_obj_loss / num_batches:.4f}',
-                'Pos': f'{total_position_loss / num_batches:.4f}',
-                'Dir': f'{total_direction_loss / num_batches:.4f}',
-                'Temp': f'{total_temporal_loss / num_batches:.4f}',
-            })
-    
-    # Calculate averages
-    avg_val_loss = total_loss / num_batches
-    avg_obj_loss = total_obj_loss / num_batches
-    avg_no_obj_loss = total_no_obj_loss / num_batches
-    avg_position_loss = total_position_loss / num_batches
-    avg_direction_loss = total_direction_loss / num_batches
-    avg_temporal_loss = total_temporal_loss / num_batches
-    
-    return avg_val_loss, {
-    'val/total_loss':     avg_val_loss,
-    'val/object_loss':    avg_obj_loss,
-    'val/no_object_loss': avg_no_obj_loss,
-    'val/position_loss':  avg_position_loss,
-    'val/direction_loss': avg_direction_loss,
-    'val/temporal_loss':  avg_temporal_loss,
+
+            loss_items = torch.stack([
+                total_loss_batch, obj_loss, no_obj_loss,
+                position_loss, direction_loss, temporal_loss,
+            ]).detach()
+            running_loss = (running_loss * batch_idx + loss_items) / (batch_idx + 1)
+
+            mem = f'{torch.cuda.memory_reserved() / 1e9 if torch.cuda.is_available() else 0:.3g}G'
+            n_instances = (targets[..., 0] > 0).sum().item()
+            pbar.set_description(
+                ('%11s' * 2 + '%11.4g' * 8) %
+                (f'{epoch + 1}', mem, *running_loss.tolist(), n_instances, inputs.shape[-1])
+            )
+
+    return running_loss[0].item(), {
+        'val/total_loss':     running_loss[0].item(),
+        'val/object_loss':    running_loss[1].item(),
+        'val/no_object_loss': running_loss[2].item(),
+        'val/position_loss':  running_loss[3].item(),
+        'val/direction_loss': running_loss[4].item(),
+        'val/temporal_loss':  running_loss[5].item(),
     }

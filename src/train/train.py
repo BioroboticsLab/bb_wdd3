@@ -5,85 +5,74 @@ import os
 import wandb
 import torch.nn as nn
 
+TQDM_BAR_FORMAT = '{l_bar}{bar:10}| {n_fmt}/{total_fmt} {elapsed}'  # fixed-width bar, no rate/ETA noise
+TRAIN_COLS = ('Epoch', 'GPU_mem', 'Loss', 'Obj', 'NoObj', 'Pos', 'Dir', 'Temp', 'Instances', 'Size')
+
+
 def train(model, device, optimizer, yolocriterion, scheduler, train_loader, epoch, scaler, ema):
     model.train()
-    #torch.cuda.empty_cache()
-    total_loss = 0.0
-    total_obj_loss = 0.0
-    total_no_obj_loss = 0.0
-    total_position_loss = 0.0
-    total_direction_loss = 0.0
-    total_temporal_loss = 0.0
-    num_batches = 0
-    
-    progress_bar = tqdm(train_loader, desc=f'Train Epoch {epoch+1}', leave=True, position=int(epoch))
-    
-    for batch_idx, batch in enumerate(progress_bar):
+
+    running_loss = torch.zeros(6, device=device)  # running MEAN, not raw per-batch loss -- less jumpy
+
+    print(('\n' + '%11s' * len(TRAIN_COLS)) % TRAIN_COLS)  # header row, printed once per epoch
+
+    pbar = enumerate(train_loader)
+    pbar = tqdm(pbar, total=len(train_loader), bar_format=TQDM_BAR_FORMAT)  # new bar each epoch -- lets the
+                                                                             # previous epoch's bar stay put
+                                                                             # and a new one start below it
+
+    for batch_idx, batch in pbar:
         batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
         inputs = batch["video"].to(device)
         targets = batch['targets'].to(device)
-        
+
         optimizer.zero_grad()
-        
+
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             outputs = model(inputs)
             total_loss_batch, obj_loss, no_obj_loss, position_loss, direction_loss, temporal_loss = yolocriterion(outputs, targets)
-        
+
         scaler.scale(total_loss_batch).backward()
         scaler.step(optimizer)
         ema.update(model)
 
         scaler.update()
-        
+
         # Scheduler step per batch for OneCycleLR
         scheduler.step()
-        
-        total_loss += total_loss_batch.item()
-        total_obj_loss += obj_loss.item()
-        total_no_obj_loss += no_obj_loss.item()
-        total_position_loss += position_loss.item()
-        total_direction_loss += direction_loss.item()
-        total_temporal_loss += temporal_loss.item()
-        num_batches += 1
-        
-        progress_bar.set_postfix({
-            'Loss': f'{total_loss / num_batches:.4f}',
-            'Obj': f'{total_obj_loss / num_batches:.4f}',
-            'NoObj': f'{total_no_obj_loss / num_batches:.4f}',
-            'Pos': f'{total_position_loss / num_batches:.4f}',
-            'Dir': f'{total_direction_loss / num_batches:.4f}',
-            'Temp': f'{total_temporal_loss / num_batches:.4f}',
-        })
-        
-        # Log progress every 100 batches (works in log files unlike tqdm)
+
+        loss_items = torch.stack([
+            total_loss_batch, obj_loss, no_obj_loss,
+            position_loss, direction_loss, temporal_loss,
+        ]).detach()
+        running_loss = (running_loss * batch_idx + loss_items) / (batch_idx + 1)
+
+        mem = f'{torch.cuda.memory_reserved() / 1e9 if torch.cuda.is_available() else 0:.3g}G'
+        n_instances = (targets[..., 0] > 0).sum().item()
+        pbar.set_description(
+            ('%11s' * 2 + '%11.4g' * 8) %
+            (f'{epoch + 1}', mem, *running_loss.tolist(), n_instances, inputs.shape[-1])
+        )
+
+        # wandb gets the same running-mean numbers, logged every 100 batches
         if (batch_idx + 1) % 100 == 0:
-            n = num_batches
-            print(f"  [{batch_idx+1}/{len(train_loader)}] Loss={total_loss/n:.4f} Obj={total_obj_loss/n:.4f} NoObj={total_no_obj_loss/n:.4f} Pos={total_position_loss/n:.4f} Dir={total_direction_loss/n:.4f} Temp={total_temporal_loss/n:.4f}", flush=True)
             wandb.log({
-                'batch/total_loss':     total_loss / n,
-                'batch/object_loss':    total_obj_loss / n,
-                'batch/no_object_loss': total_no_obj_loss / n,
-                'batch/position_loss':  total_position_loss / n,
-                'batch/direction_loss': total_direction_loss / n,
-                'batch/temporal_loss':  total_temporal_loss / n,
+                'batch/total_loss':     running_loss[0].item(),
+                'batch/object_loss':    running_loss[1].item(),
+                'batch/no_object_loss': running_loss[2].item(),
+                'batch/position_loss':  running_loss[3].item(),
+                'batch/direction_loss': running_loss[4].item(),
+                'batch/temporal_loss':  running_loss[5].item(),
                 'batch/lr':            optimizer.param_groups[0]['lr'],
                 'batch/step':          epoch * len(train_loader) + batch_idx,
             })
-    
-    # Calculate averages
-    avg_val_loss = total_loss / num_batches
-    avg_obj_loss = total_obj_loss / num_batches
-    avg_no_obj_loss = total_no_obj_loss / num_batches
-    avg_position_loss = total_position_loss / num_batches
-    avg_direction_loss = total_direction_loss / num_batches
-    avg_temporal_loss = total_temporal_loss / num_batches
-    
-    return avg_val_loss, {
-    'train/total_loss':     avg_val_loss,
-    'train/object_loss':    avg_obj_loss,
-    'train/no_object_loss': avg_no_obj_loss,
-    'train/position_loss':  avg_position_loss,
-    'train/direction_loss': avg_direction_loss,
-    'train/temporal_loss':  avg_temporal_loss,
-    'learning_rate':        optimizer.param_groups[0]['lr']
+
+    return running_loss[0].item(), {
+        'train/total_loss':     running_loss[0].item(),
+        'train/object_loss':    running_loss[1].item(),
+        'train/no_object_loss': running_loss[2].item(),
+        'train/position_loss':  running_loss[3].item(),
+        'train/direction_loss': running_loss[4].item(),
+        'train/temporal_loss':  running_loss[5].item(),
+        'learning_rate':        optimizer.param_groups[0]['lr']
     }
