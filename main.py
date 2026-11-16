@@ -262,13 +262,20 @@ def main(args):
 
     ema = EMA(model, decay=config['train']['ema_decay'], device=device)
 
+    warmup_epochs = config['train']['warmup_epochs']
+    total_epochs = config['train']['epochs']
+    pct_start = min(warmup_epochs / total_epochs, 0.9)
+    if warmup_epochs / total_epochs > 0.9:
+        print(f"  [warn] warmup_epochs={warmup_epochs} is almost as long as (or longer than) "
+              f"total_epochs={total_epochs}; capping warmup to 90% of training instead.")
+
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=config['train']['lr'],
         steps_per_epoch=len(train_loader),
-        epochs=config['train']['epochs'],
+        epochs=total_epochs,
         anneal_strategy='cos',
-        pct_start=config['train']['warmup_ratio']
+        pct_start=pct_start
     )
     yolocriteria = WaggleDetectionLoss(lambda_obj=config["loss"]["lambda_obj"],
                                        lambda_coord=config["loss"]["lambda_coord"],
@@ -319,13 +326,17 @@ def main(args):
 
         if args.reset_scheduler:
             remaining_epochs = config['train']['epochs'] - start_epoch
+            reset_pct_start = min(warmup_epochs / remaining_epochs, 0.9)
+            if warmup_epochs / remaining_epochs > 0.9:
+                print(f"  [warn] warmup_epochs={warmup_epochs} is almost as long as (or longer than) "
+                      f"remaining_epochs={remaining_epochs}; capping warmup to 90% of the remainder instead.")
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 optimizer,
                 max_lr=config['train']['lr'],
                 steps_per_epoch=len(train_loader),
                 epochs=remaining_epochs,
                 anneal_strategy='cos',
-                pct_start=config['train']['warmup_ratio']
+                pct_start=reset_pct_start
             )
             print(f"Scheduler RESET for {remaining_epochs} remaining epochs (new steps_per_epoch={len(train_loader)})")
         else:

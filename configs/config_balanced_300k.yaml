@@ -81,7 +81,7 @@ train:
   weight_decay: 0.0005
   val_freq: 1
   use_amp: true
-  warmup_ratio: 0.03
+  warmup_epochs: 3  # fixed number of warmup epochs, regardless of total epochs
   num_workers: 4
   save_model: true
   betas:
